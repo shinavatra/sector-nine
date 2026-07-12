@@ -77,6 +77,10 @@ const toProfile = (u: any) => {
     steamAvatar: u.steam_avatar,
     steamProfileUrl: u.steam_profile_url,
     steamVerified: u.steam_verified || false,
+    ownsHL1: u.owns_hl1 || false,
+    vacBanned: u.vac_banned || false,
+    gameBanned: u.game_banned || false,
+    lastSteamCheck: u.last_steam_check,
     wins,
     losses,
     winStreak: u.win_streak,
@@ -225,17 +229,14 @@ app.get('/user/profile', requireAuth, async (req: AuthRequest, res) => {
   }
 })
 
-// PUT /user/profile — now accepts bio, profileVisibility, showOnlineStatus, steamVerified
+// PUT /user/profile
+// Steam fields are intentionally excluded: only the backend Steam verification flow may change them.
 app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
   try {
     // Allowed DB columns → frontend field names (camelCase or snake_case both accepted)
     const fieldMap: Record<string, string> = {
       display_name:       'displayName',
       bio:                'bio',
-      steam_id:           'steamId',
-      steam_avatar:       'steamAvatar',
-      steam_profile_url:  'steamProfileUrl',
-      steam_verified:     'steamVerified',
       profile_visibility: 'profileVisibility',
       show_online_status: 'showOnlineStatus',
     }
@@ -291,20 +292,6 @@ app.get('/stats/platform', async (_req, res) => {
       activeMatches:     parseInt(active.rows[0].count),
       activeTournaments: parseInt(tournaments.rows[0].count),
     })
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message })
-  }
-})
-
-// POST /user/steam/link
-app.post('/user/steam/link', requireAuth, async (req: AuthRequest, res) => {
-  try {
-    const { steamId, steamAvatar, steamProfileUrl } = req.body
-    const result = await pool.query(
-      `UPDATE users SET steam_id=$1, steam_avatar=$2, steam_profile_url=$3 WHERE id=$4 RETURNING *`,
-      [steamId, steamAvatar, steamProfileUrl, req.userId]
-    )
-    return res.json({ profile: toProfile(result.rows[0]) })
   } catch (err: any) {
     return res.status(500).json({ error: err.message })
   }
@@ -960,86 +947,247 @@ app.post('/ban', requireAuth, async (req: AuthRequest, res) => {
 // STEAM
 // =====================================================
 
-// POST /steam/verify-game — checks if user owns Half-Life 1 (App ID 70)
-// FIX: now also returns ownsHL1 and vacStatus so SteamCallback gets the right shape
-app.post('/steam/verify-game', requireAuth, async (req: AuthRequest, res) => {
-  try {
-    const { steamId, appId = 70 } = req.body
-    const apiKey = process.env.STEAM_API_KEY
-    if (!apiKey) return res.status(500).json({ error: 'Steam API key not configured' })
+const STEAM_CACHE_HOURS = 24
 
-    const [gamesRes, banRes] = await Promise.all([
-      fetch(`https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${apiKey}&steamid=${steamId}&appids_filter[0]=${appId}`),
-      fetch(`https://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?key=${apiKey}&steamids=${steamId}`),
-    ])
-    const gamesData: any = await gamesRes.json()
-    const banData: any = await banRes.json()
+type SteamCheckResult = {
+  steamId: string
+  steamAvatar: string | null
+  steamProfileUrl: string | null
+  ownsHL1: boolean
+  hasVacBan: boolean
+  hasGameBan: boolean
+  lastSteamCheck: Date
+}
 
-    const games = gamesData.response?.games || []
-    const ownsHL1 = games.length > 0
-    const playerBan = banData.players?.[0]
-    const hasVacBan = playerBan?.VACBanned || false
-    const hasGameBan = playerBan?.NumberOfGameBans > 0
+const isFreshSteamCheck = (lastSteamCheck: Date | string | null | undefined) => {
+  if (!lastSteamCheck) return false
+  const checkedAt = new Date(lastSteamCheck).getTime()
+  if (Number.isNaN(checkedAt)) return false
+  return Date.now() - checkedAt < STEAM_CACHE_HOURS * 60 * 60 * 1000
+}
 
-    return res.json({ ownsGame: ownsHL1, ownsHL1, hasVacBan, hasGameBan, games })
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message })
+const fetchSteamJson = async (url: string) => {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Steam API request failed with HTTP ${response.status}`)
   }
+  return response.json() as Promise<any>
+}
+
+const fetchSteamData = async (steamId: string): Promise<SteamCheckResult> => {
+  const apiKey = process.env.STEAM_API_KEY
+  if (!apiKey) throw new Error('Steam API key not configured')
+
+  const encodedKey = encodeURIComponent(apiKey)
+  const encodedSteamId = encodeURIComponent(steamId)
+
+  const [profileData, gamesData, banData] = await Promise.all([
+    fetchSteamJson(
+      `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${encodedKey}&steamids=${encodedSteamId}`
+    ),
+    fetchSteamJson(
+      `https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${encodedKey}&steamid=${encodedSteamId}&appids_filter[0]=70`
+    ),
+    fetchSteamJson(
+      `https://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?key=${encodedKey}&steamids=${encodedSteamId}`
+    ),
+  ])
+
+  const player = profileData.response?.players?.[0]
+  if (!player) {
+    throw new Error('Steam profile not found or is unavailable')
+  }
+
+  const games = gamesData.response?.games || []
+  const playerBan = banData.players?.[0]
+
+  return {
+    steamId,
+    steamAvatar: player.avatarfull || null,
+    steamProfileUrl: player.profileurl || null,
+    ownsHL1: games.some((game: any) => Number(game.appid) === 70),
+    hasVacBan: Boolean(playerBan?.VACBanned),
+    hasGameBan: Number(playerBan?.NumberOfGameBans || 0) > 0,
+    lastSteamCheck: new Date(),
+  }
+}
+
+const saveSteamData = async (userId: string, steam: SteamCheckResult) => {
+  // steam_verified means eligible for Sector Nine matchmaking:
+  // valid profile + owns HL1 + no VAC or game ban.
+  const steamVerified = steam.ownsHL1 && !steam.hasVacBan && !steam.hasGameBan
+
+  const result = await pool.query(
+    `UPDATE users SET
+       steam_id=$1,
+       steam_avatar=$2,
+       steam_profile_url=$3,
+       steam_verified=$4,
+       owns_hl1=$5,
+       vac_banned=$6,
+       game_banned=$7,
+       last_steam_check=$8
+     WHERE id=$9
+     RETURNING *`,
+    [
+      steam.steamId,
+      steam.steamAvatar,
+      steam.steamProfileUrl,
+      steamVerified,
+      steam.ownsHL1,
+      steam.hasVacBan,
+      steam.hasGameBan,
+      steam.lastSteamCheck,
+      userId,
+    ]
+  )
+
+  return result.rows[0]
+}
+
+const steamResultFromUser = (user: any): SteamCheckResult => ({
+  steamId: user.steam_id,
+  steamAvatar: user.steam_avatar || null,
+  steamProfileUrl: user.steam_profile_url || null,
+  ownsHL1: Boolean(user.owns_hl1),
+  hasVacBan: Boolean(user.vac_banned),
+  hasGameBan: Boolean(user.game_banned),
+  lastSteamCheck: new Date(user.last_steam_check),
 })
 
-app.get('/steam/profile/:steamId', async (req, res) => {
+// POST /steam/link
+// Links a SteamID64, fetches profile/ownership/ban data once, and caches it for 24 hours.
+const linkSteamHandler = async (req: AuthRequest, res: Response) => {
   try {
-    const apiKey = process.env.STEAM_API_KEY
-    if (!apiKey) return res.status(500).json({ error: 'Steam API key not configured' })
-    const response = await fetch(
-      `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${apiKey}&steamids=${req.params.steamId}`
-    )
-    const data: any = await response.json()
-    return res.json({ profile: data.response?.players?.[0] || null })
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message })
-  }
-})
+    const steamId = String(req.body?.steamId || '').trim()
 
-// POST /steam/link — links Steam ID and fetches+saves the full Steam profile automatically
-app.post('/steam/link', requireAuth, async (req: AuthRequest, res) => {
-  try {
-    const { steamId } = req.body
-    if (!steamId) return res.status(400).json({ error: 'steamId required' })
-
-    const apiKey = process.env.STEAM_API_KEY
-    let steamAvatar = null
-    let steamProfileUrl = null
-    let ownsHL1 = false
-    let hasVacBan = false
-
-    if (apiKey) {
-      // Fetch Steam profile + ownership + bans in parallel
-      const [profileRes, gamesRes, banRes] = await Promise.all([
-        fetch(`https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${apiKey}&steamids=${steamId}`),
-        fetch(`https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${apiKey}&steamid=${steamId}&appids_filter[0]=70`),
-        fetch(`https://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?key=${apiKey}&steamids=${steamId}`),
-      ])
-      const [profileData, gamesData, banData]: [any, any, any] = await Promise.all([
-        profileRes.json(), gamesRes.json(), banRes.json()
-      ])
-
-      const player = profileData.response?.players?.[0]
-      steamAvatar = player?.avatarfull || null
-      steamProfileUrl = player?.profileurl || null
-      ownsHL1 = (gamesData.response?.games || []).length > 0
-      hasVacBan = banData.players?.[0]?.VACBanned || false
+    if (!/^\d{17}$/.test(steamId)) {
+      return res.status(400).json({ error: 'A valid 17-digit SteamID64 is required' })
     }
 
-    const result = await pool.query(
-      `UPDATE users SET steam_id=$1, steam_avatar=$2, steam_profile_url=$3, steam_verified=true
-       WHERE id=$4 RETURNING *`,
-      [steamId, steamAvatar, steamProfileUrl, req.userId]
+    const existing = await pool.query('SELECT * FROM users WHERE id=$1', [req.userId])
+    const user = existing.rows[0]
+    if (!user) return res.status(404).json({ error: 'User not found' })
+
+    // Avoid spending more Steam API calls when the same account was checked recently.
+    if (user.steam_id === steamId && isFreshSteamCheck(user.last_steam_check)) {
+      const cached = steamResultFromUser(user)
+      return res.json({
+        profile: toProfile(user),
+        ownsHL1: cached.ownsHL1,
+        hasVacBan: cached.hasVacBan,
+        hasGameBan: cached.hasGameBan,
+        cached: true,
+      })
+    }
+
+    const steam = await fetchSteamData(steamId)
+    const updatedUser = await saveSteamData(req.userId!, steam)
+
+    return res.json({
+      profile: toProfile(updatedUser),
+      ownsHL1: steam.ownsHL1,
+      hasVacBan: steam.hasVacBan,
+      hasGameBan: steam.hasGameBan,
+      cached: false,
+    })
+  } catch (err: any) {
+    console.error('steam link error:', err.message)
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+app.post('/steam/link', requireAuth, linkSteamHandler)
+
+// Backwards-compatible alias for older frontend code.
+app.post('/user/steam/link', requireAuth, linkSteamHandler)
+
+// POST /steam/verify-game
+// Uses the database cache when possible. A force=true body field refreshes Steam immediately.
+app.post('/steam/verify-game', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const requestedSteamId = String(req.body?.steamId || '').trim()
+    const force = req.body?.force === true
+
+    const userResult = await pool.query('SELECT * FROM users WHERE id=$1', [req.userId])
+    const user = userResult.rows[0]
+    if (!user) return res.status(404).json({ error: 'User not found' })
+
+    const steamId = requestedSteamId || user.steam_id
+    if (!steamId || !/^\d{17}$/.test(steamId)) {
+      return res.status(400).json({ error: 'A valid 17-digit SteamID64 is required' })
+    }
+
+    if (!force && user.steam_id === steamId && isFreshSteamCheck(user.last_steam_check)) {
+      const cached = steamResultFromUser(user)
+      return res.json({
+        ownsGame: cached.ownsHL1,
+        ownsHL1: cached.ownsHL1,
+        hasVacBan: cached.hasVacBan,
+        hasGameBan: cached.hasGameBan,
+        cached: true,
+        lastSteamCheck: user.last_steam_check,
+      })
+    }
+
+    const steam = await fetchSteamData(steamId)
+
+    // Save only to the authenticated user's own profile.
+    const updatedUser = await saveSteamData(req.userId!, steam)
+
+    return res.json({
+      ownsGame: steam.ownsHL1,
+      ownsHL1: steam.ownsHL1,
+      hasVacBan: steam.hasVacBan,
+      hasGameBan: steam.hasGameBan,
+      cached: false,
+      lastSteamCheck: updatedUser.last_steam_check,
+    })
+  } catch (err: any) {
+    console.error('steam verify error:', err.message)
+    return res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /steam/profile/:steamId
+// Public profile lookup. Uses the local cache only for an already-linked account.
+app.get('/steam/profile/:steamId', async (req, res) => {
+  try {
+    const steamId = String(req.params.steamId || '').trim()
+    if (!/^\d{17}$/.test(steamId)) {
+      return res.status(400).json({ error: 'A valid 17-digit SteamID64 is required' })
+    }
+
+    const cachedUser = await pool.query(
+      `SELECT steam_id, steam_avatar, steam_profile_url, last_steam_check
+       FROM users
+       WHERE steam_id=$1
+       LIMIT 1`,
+      [steamId]
     )
 
-    // Return ownsHL1 and vacStatus so SteamCallback can check them
-    return res.json({ profile: toProfile(result.rows[0]), ownsHL1, hasVacBan })
+    const cached = cachedUser.rows[0]
+    if (cached && isFreshSteamCheck(cached.last_steam_check)) {
+      return res.json({
+        profile: {
+          steamid: cached.steam_id,
+          avatarfull: cached.steam_avatar,
+          profileurl: cached.steam_profile_url,
+        },
+        cached: true,
+      })
+    }
+
+    const apiKey = process.env.STEAM_API_KEY
+    if (!apiKey) return res.status(500).json({ error: 'Steam API key not configured' })
+
+    const data = await fetchSteamJson(
+      `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${encodeURIComponent(apiKey)}&steamids=${encodeURIComponent(steamId)}`
+    )
+
+    return res.json({ profile: data.response?.players?.[0] || null, cached: false })
   } catch (err: any) {
+    console.error('steam profile error:', err.message)
     return res.status(500).json({ error: err.message })
   }
 })
@@ -1048,8 +1196,8 @@ app.post('/steam/link', requireAuth, async (req: AuthRequest, res) => {
 // START
 // =====================================================
 
-app.listen(PORT, () => {
-  console.log(`\n🐘 Sector Nine running on http://localhost:${PORT}`)
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n🐘 Sector Nine running on port ${PORT}`)
   console.log(`   DB: ${process.env.DATABASE_URL?.replace(/:.*@/, ':***@') || 'not set'}`)
 })
 
