@@ -478,6 +478,51 @@ app.post('/matchmaking/join', requireAuth, async (req: AuthRequest, res) => {
     const { gameMode, selectedMaps } = req.body
     const userId = req.userId!
 
+
+// Check Steam eligibility before allowing matchmaking
+const userCheck = await pool.query(
+  `SELECT steam_id, steam_verified, owns_hl1, vac_banned, game_banned
+   FROM users
+   WHERE id=$1`,
+  [userId]
+)
+
+const user = userCheck.rows[0]
+
+if (!user) {
+  return res.status(404).json({
+    error: 'User not found'
+  })
+}
+
+if (!user.steam_id) {
+  return res.status(403).json({
+    error: 'Connect your Steam account before joining matchmaking',
+    code: 'STEAM_NOT_LINKED'
+  })
+}
+
+if (!user.owns_hl1) {
+  return res.status(403).json({
+    error: 'Half-Life 1 is required to join matchmaking',
+    code: 'HL1_NOT_OWNED'
+  })
+}
+
+if (user.vac_banned || user.game_banned) {
+  return res.status(403).json({
+    error: 'This Steam account is not eligible for matchmaking',
+    code: 'STEAM_BANNED'
+  })
+}
+
+if (!user.steam_verified) {
+  return res.status(403).json({
+    error: 'Steam verification is required before joining matchmaking',
+    code: 'STEAM_NOT_VERIFIED'
+  })
+}
+
     // Check if banned
     const banCheck = await pool.query(
       `SELECT * FROM bans WHERE user_id=$1 AND is_active=true AND expires_at > NOW() LIMIT 1`,
