@@ -26,7 +26,7 @@ export function Hub({ onNavigate }: HubProps) {
   // Create player data from user context
   const playerData = {
     name: user?.username || "Operative",
-    avatar: user?.steamAvatar || "",
+    avatar: user?.resolvedAvatar || "",
     rank: user?.isPremium ? "VIP RESEARCHER" : `LEVEL ${user?.level || 0} RESEARCHER`,
     level: user?.level || 0,
     experience: user?.experience || 0,

@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { PlayerProfile } from "../components/PlayerProfile";
 import { SteamIntegration } from "../components/SteamIntegration";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -9,9 +9,12 @@ import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Progress } from "../components/ui/progress";
-import { Settings, Edit, Award, Trophy, Target, Zap, Calendar, Users, MessageCircle, UserPlus, Send, Twitter, Youtube, Twitch, ExternalLink, Upload, Camera, Lock } from "lucide-react";
+import { Switch } from "../components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "../components/ui/alert-dialog";
+import { Settings, Edit, Award, Trophy, Target, Zap, Calendar, Users, MessageCircle, UserPlus, Send, Twitter, Youtube, Twitch, ExternalLink, Upload, Camera, Lock, Instagram, Globe, LogOut, Loader2 } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
-import { userAPI } from "../utils/api";
+import { authAPI, userAPI } from "../utils/api";
 import { toast } from "sonner";
 import { avatarBadges, profileFrames, getRarityColor, getRarityGlow } from "../utils/badgeData";
 
@@ -99,19 +102,24 @@ interface ProfileProps {
 }
 
 export function Profile({ onNavigate, isPremium }: ProfileProps) {
-  const { user, refreshProfile, updateProfile } = useUser();
+  const { user, refreshProfile, updateProfile, logout } = useUser();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isEditingBio, setIsEditingBio] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [bioText, setBioText] = useState(user?.bio || "No bio set yet. Click edit to add your story!");
   const [displayName, setDisplayName] = useState(user?.username || "");
+  const [profileVisibility, setProfileVisibility] = useState<'public' | 'friends' | 'private'>(user?.profileVisibility || 'public');
+  const [showOnlineStatus, setShowOnlineStatus] = useState(user?.showOnlineStatus !== false);
+  const [customAvatarUrl, setCustomAvatarUrl] = useState(user?.customAvatarUrl || '');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [socialLinks, setSocialLinks] = useState({
-    steam: user?.steamProfileUrl || '',
-    twitter: '',
-    youtube: '',
-    twitch: '',
-    discord: ''
+    twitter: user?.socialLinks.twitter || '',
+    youtube: user?.socialLinks.youtube || '',
+    twitch: user?.socialLinks.twitch || '',
+    discord: user?.socialLinks.discord || '',
+    instagram: user?.socialLinks.instagram || '',
+    website: user?.socialLinks.website || ''
   });
   const [isSavingSocial, setIsSavingSocial] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -120,6 +128,24 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [isEquippingBadge, setIsEquippingBadge] = useState(false);
   const [isEquippingFrame, setIsEquippingFrame] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    setBioText(user.bio || '');
+    setDisplayName(user.displayName || user.username);
+    setProfileVisibility(user.profileVisibility);
+    setShowOnlineStatus(user.showOnlineStatus);
+    setCustomAvatarUrl(user.customAvatarUrl || '');
+    setSocialLinks({
+      twitter: user.socialLinks.twitter || '', youtube: user.socialLinks.youtube || '',
+      twitch: user.socialLinks.twitch || '', discord: user.socialLinks.discord || '',
+      instagram: user.socialLinks.instagram || '', website: user.socialLinks.website || ''
+    });
+  }, [user]);
   
   const handleAvatarClick = () => {
     fileInputRef.current?.click();
@@ -156,10 +182,10 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
       return;
     }
 
-    // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
+    // Data images are stored in PostgreSQL; keep the payload bounded.
+    if (file.size > 1024 * 1024) {
       toast.error('File too large', {
-        description: 'Maximum file size is 5MB',
+        description: 'Maximum file size is 1MB',
         className: 'bg-red-900/90 border-red-700 text-red-100'
       });
       return;
@@ -175,10 +201,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
         
         try {
           // Avatar upload via file not supported — avatar comes from Steam
-          toast.info('Avatar comes from Steam', { description: 'Link your Steam account to set your avatar' });
-          setIsUploadingAvatar(false);
-          return;
-          await refreshProfile();
+          await updateProfile({ customAvatarUrl: base64Data, avatarSource: 'custom' });
           toast.success('Avatar updated', {
             description: 'Your profile picture has been updated successfully',
             className: 'bg-green-900/90 border-green-700 text-green-100'
@@ -239,11 +262,58 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
       setIsEquippingFrame(false);
     }
   };
+
+  const saveResearcherInfo = async () => {
+    if (displayName.trim().length > 80 || bioText.length > 500) {
+      toast.error('Invalid profile', { description: 'Display name or bio is too long' });
+      return;
+    }
+    setIsSavingSettings(true);
+    try {
+      await updateProfile({ displayName: displayName.trim() || null, bio: bioText, profileVisibility, showOnlineStatus });
+      setIsEditingProfile(false);
+      toast.success('Profile updated');
+    } catch (error) {
+      toast.error('Update failed', { description: error instanceof Error ? error.message : 'Unable to save profile' });
+    } finally { setIsSavingSettings(false); }
+  };
+
+  const cancelResearcherEdit = () => {
+    if (!user) return;
+    setDisplayName(user.displayName || user.username);
+    setBioText(user.bio || '');
+    setProfileVisibility(user.profileVisibility);
+    setShowOnlineStatus(user.showOnlineStatus);
+    setIsEditingProfile(false);
+  };
+
+  const saveSocialLinks = async () => {
+    setIsSavingSocial(true);
+    try {
+      await updateProfile({ socialLinks: Object.fromEntries(Object.entries(socialLinks).map(([key, value]) => [key, value.trim() || null])) as any });
+      toast.success('Social links updated');
+    } catch (error) {
+      toast.error('Update failed', { description: error instanceof Error ? error.message : 'Unable to save social links' });
+    } finally { setIsSavingSocial(false); }
+  };
+
+  const changePassword = async () => {
+    if (newPassword.length < 8) return toast.error('New password must be at least 8 characters');
+    if (newPassword !== confirmPassword) return toast.error('New password confirmation does not match');
+    setIsChangingPassword(true);
+    try {
+      await authAPI.changePassword(currentPassword, newPassword);
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
+      toast.success('Password changed');
+    } catch (error) {
+      toast.error('Password change failed', { description: error instanceof Error ? error.message : 'Unable to change password' });
+    } finally { setIsChangingPassword(false); }
+  };
   
   // Create player data from user context
   const playerData = {
-    name: user?.username || "Guest",
-    avatar: user?.steamAvatar || "",
+    name: user?.displayName || user?.username || "Guest",
+    avatar: user?.resolvedAvatar || "",
     rank: isPremium ? "VIP RESEARCHER" : `LEVEL ${user?.level || 0} RESEARCHER`,
     level: user?.level || 0,
     experience: user?.experience || 0,
@@ -297,11 +367,11 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
               <CardTitle className="text-orange-400 font-mono">SOCIAL LINKS</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              {socialLinks.steam ? (
+              {user?.steamProfileUrl ? (
                 <Button 
                   variant="outline" 
                   className="w-full justify-start border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono"
-                  onClick={() => window.open(socialLinks.steam, '_blank')}
+                  onClick={() => window.open(user.steamProfileUrl!, '_blank', 'noopener,noreferrer')}
                 >
                   <svg className="w-5 h-5 mr-3" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
@@ -315,7 +385,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                 <Button 
                   variant="outline" 
                   className="w-full justify-start border-blue-900/30 text-blue-400 hover:bg-blue-900/10 font-mono"
-                  onClick={() => window.open(`https://twitter.com/${socialLinks.twitter.replace('@', '')}`, '_blank')}
+                  onClick={() => window.open(socialLinks.twitter, '_blank', 'noopener,noreferrer')}
                 >
                   <Twitter className="w-5 h-5 mr-3" />
                   <span>Twitter</span>
@@ -327,7 +397,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                 <Button 
                   variant="outline" 
                   className="w-full justify-start border-red-900/30 text-red-400 hover:bg-red-900/10 font-mono"
-                  onClick={() => window.open(`https://youtube.com/@${socialLinks.youtube}`, '_blank')}
+                  onClick={() => window.open(socialLinks.youtube, '_blank', 'noopener,noreferrer')}
                 >
                   <Youtube className="w-5 h-5 mr-3" />
                   <span>YouTube</span>
@@ -339,7 +409,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                 <Button 
                   variant="outline" 
                   className="w-full justify-start border-purple-900/30 text-purple-400 hover:bg-purple-900/10 font-mono"
-                  onClick={() => window.open(`https://twitch.tv/${socialLinks.twitch}`, '_blank')}
+                  onClick={() => window.open(socialLinks.twitch, '_blank', 'noopener,noreferrer')}
                 >
                   <Twitch className="w-5 h-5 mr-3" />
                   <span>Twitch</span>
@@ -351,15 +421,18 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                 <Button 
                   variant="outline" 
                   className="w-full justify-start border-indigo-900/30 text-indigo-400 hover:bg-indigo-900/10 font-mono"
-                  onClick={() => navigator.clipboard.writeText(socialLinks.discord)}
+                  onClick={() => window.open(socialLinks.discord, '_blank', 'noopener,noreferrer')}
                 >
                   <MessageCircle className="w-5 h-5 mr-3" />
                   <span>Discord</span>
-                  <span className="ml-auto text-xs text-gray-500">Click to copy</span>
+                  <ExternalLink className="w-3 h-3 ml-auto" />
                 </Button>
               ) : null}
+
+              {socialLinks.instagram ? <Button variant="outline" className="w-full justify-start" onClick={() => window.open(socialLinks.instagram, '_blank', 'noopener,noreferrer')}><Instagram className="w-5 h-5 mr-3" />Instagram<ExternalLink className="w-3 h-3 ml-auto" /></Button> : null}
+              {socialLinks.website ? <Button variant="outline" className="w-full justify-start" onClick={() => window.open(socialLinks.website, '_blank', 'noopener,noreferrer')}><Globe className="w-5 h-5 mr-3" />Website<ExternalLink className="w-3 h-3 ml-auto" /></Button> : null}
               
-              {!socialLinks.steam && !socialLinks.twitter && !socialLinks.youtube && !socialLinks.twitch && !socialLinks.discord ? (
+              {!user?.steamProfileUrl && !Object.values(socialLinks).some(Boolean) ? (
                 <div className="text-center py-4">
                   <p className="text-gray-400 font-mono text-sm">No social links added</p>
                   <p className="text-gray-500 font-mono text-xs mt-1">Add links in Settings tab</p>
@@ -476,16 +549,24 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                       size="sm" 
                       variant="outline" 
                       className="border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono"
-                      onClick={() => {
-                        // Scroll to settings tab
-                        const settingsTab = document.querySelector('[value="settings"]') as HTMLElement;
-                        settingsTab?.click();
-                      }}
+                      onClick={() => setIsEditingProfile(true)}
                     >
                       <Edit className="w-4 h-4 mr-2" />
                       EDIT
                     </Button>
                   </div>
+
+                  {isEditingProfile && (
+                    <div className="pt-4 border-t border-orange-900/20 space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div><label className="text-sm text-gray-400 font-mono">Display Name</label><Input value={displayName} maxLength={80} onChange={(e) => setDisplayName(e.target.value)} className="mt-1 bg-black/20 border-orange-900/20" /></div>
+                        <div><label className="text-sm text-gray-400 font-mono">Profile Visibility</label><Select value={profileVisibility} onValueChange={(value) => setProfileVisibility(value as typeof profileVisibility)}><SelectTrigger className="mt-1 bg-black/20 border-orange-900/20"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="public">Public</SelectItem><SelectItem value="friends">Friends</SelectItem><SelectItem value="private">Private</SelectItem></SelectContent></Select></div>
+                      </div>
+                      <div><label className="text-sm text-gray-400 font-mono">Bio</label><Textarea value={bioText} maxLength={500} onChange={(e) => setBioText(e.target.value)} className="mt-1 bg-black/20 border-orange-900/20" /></div>
+                      <div className="flex items-center justify-between"><label className="text-sm text-gray-400 font-mono">Show Online Status</label><Switch checked={showOnlineStatus} onCheckedChange={setShowOnlineStatus} /></div>
+                      <div className="flex gap-3 justify-end"><Button variant="outline" onClick={cancelResearcherEdit}>CANCEL</Button><Button onClick={saveResearcherInfo} disabled={isSavingSettings}>{isSavingSettings ? <Loader2 className="w-4 h-4 animate-spin" /> : 'SAVE'}</Button></div>
+                    </div>
+                  )}
                   
                   <div className="pt-4 border-t border-orange-900/20">
                     <div className="flex items-center justify-between mb-2">
@@ -1000,16 +1081,16 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                       <label className="text-sm text-gray-400 font-mono">Privacy Settings</label>
                       <div className="mt-2 space-y-2">
                         <label className="flex items-center space-x-2">
-                          <input type="checkbox" defaultChecked className="form-checkbox" />
+                          <input type="checkbox" checked={showOnlineStatus} onChange={(e) => setShowOnlineStatus(e.target.checked)} className="form-checkbox" />
                           <span className="text-gray-300 font-mono text-sm">Show online status</span>
                         </label>
                         <label className="flex items-center space-x-2">
-                          <input type="checkbox" defaultChecked className="form-checkbox" />
-                          <span className="text-gray-300 font-mono text-sm">Allow friend requests</span>
+                          <input type="checkbox" disabled className="form-checkbox" />
+                          <span className="text-gray-500 font-mono text-sm">Allow friend requests (not available)</span>
                         </label>
                         <label className="flex items-center space-x-2">
-                          <input type="checkbox" className="form-checkbox" />
-                          <span className="text-gray-300 font-mono text-sm">Show match history</span>
+                          <input type="checkbox" disabled className="form-checkbox" />
+                          <span className="text-gray-500 font-mono text-sm">Show match history (not available)</span>
                         </label>
                       </div>
                     </div>
@@ -1020,9 +1101,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                       onClick={async () => {
                         setIsSavingSettings(true);
                         try {
-                          await updateProfile({ 
-                            bio: bioText 
-                          });
+                          await updateProfile({ bio: bioText, showOnlineStatus });
                           toast.success('Bio updated', {
                             description: 'Your profile bio has been updated successfully',
                             className: 'bg-green-900/90 border-green-700 text-green-100'
@@ -1057,6 +1136,33 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                 </CardContent>
               </Card>
 
+              <Card className="bg-black/40 border-orange-900/20">
+                <CardHeader><CardTitle className="text-orange-400 font-mono">AVATAR SETTINGS</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <Input value={customAvatarUrl} onChange={(e) => setCustomAvatarUrl(e.target.value)} placeholder="https://example.com/avatar.png" className="bg-black/20 border-orange-900/20" />
+                  <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={handleFileChange} />
+                  <div className="flex flex-wrap gap-3">
+                    <Button onClick={async () => { try { await updateProfile({ customAvatarUrl: customAvatarUrl.trim(), avatarSource: 'custom' }); toast.success('Custom avatar selected'); } catch (error) { toast.error('Avatar update failed', { description: error instanceof Error ? error.message : undefined }); } }}>USE CUSTOM URL</Button>
+                    <Button variant="outline" onClick={handleAvatarClick}>UPLOAD IMAGE</Button>
+                    <Button variant="outline" disabled={!user?.steamAvatar} onClick={async () => { await updateProfile({ avatarSource: 'steam' }); toast.success('Steam avatar selected'); }}>USE STEAM AVATAR</Button>
+                  </div>
+                  <p className="text-xs text-gray-500 font-mono">Changing the active avatar never overwrites the stored Steam avatar.</p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-black/40 border-orange-900/20">
+                <CardHeader><CardTitle className="text-orange-400 font-mono">SECURITY & SESSION</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <Input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Current password" className="bg-black/20 border-orange-900/20" />
+                  <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New password (8+ characters)" className="bg-black/20 border-orange-900/20" />
+                  <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm new password" className="bg-black/20 border-orange-900/20" />
+                  <div className="flex flex-wrap gap-3">
+                    <Button onClick={changePassword} disabled={isChangingPassword || !currentPassword || !newPassword}>{isChangingPassword ? 'CHANGING...' : 'CHANGE PASSWORD'}</Button>
+                    <AlertDialog><AlertDialogTrigger asChild><Button variant="destructive"><LogOut className="w-4 h-4 mr-2" />LOG OUT</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Log out of Sector Nine?</AlertDialogTitle><AlertDialogDescription>Your local session token will be cleared.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>CANCEL</AlertDialogCancel><AlertDialogAction onClick={() => { logout(); onNavigate?.('auth'); }}>LOG OUT</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+                  </div>
+                </CardContent>
+              </Card>
+
               {/* Social Media Settings */}
               <Card className="bg-black/40 border-orange-900/20">
                 <CardHeader>
@@ -1069,74 +1175,60 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                   <div>
                     <label className="text-sm text-gray-400 font-mono">Steam Profile URL</label>
                     <Input 
-                      value={socialLinks.steam}
-                      onChange={(e) => setSocialLinks({...socialLinks, steam: e.target.value})}
+                      value={user?.steamProfileUrl || ''}
+                      disabled
                       placeholder="https://steamcommunity.com/id/your_profile"
                       className="mt-1 bg-black/20 border-orange-900/20 text-gray-300 font-mono"
                     />
                   </div>
                   <div>
-                    <label className="text-sm text-gray-400 font-mono">Twitter Username</label>
+                    <label className="text-sm text-gray-400 font-mono">X/Twitter URL</label>
                     <Input 
                       value={socialLinks.twitter}
                       onChange={(e) => setSocialLinks({...socialLinks, twitter: e.target.value})}
-                      placeholder="@your_username"
+                      placeholder="https://x.com/your_username"
                       className="mt-1 bg-black/20 border-orange-900/20 text-gray-300 font-mono"
                     />
                   </div>
                   <div>
-                    <label className="text-sm text-gray-400 font-mono">YouTube Channel</label>
+                    <label className="text-sm text-gray-400 font-mono">YouTube URL</label>
                     <Input 
                       value={socialLinks.youtube}
                       onChange={(e) => setSocialLinks({...socialLinks, youtube: e.target.value})}
-                      placeholder="Your channel name"
+                      placeholder="https://youtube.com/@channel"
                       className="mt-1 bg-black/20 border-orange-900/20 text-gray-300 font-mono"
                     />
                   </div>
                   <div>
-                    <label className="text-sm text-gray-400 font-mono">Twitch Username</label>
+                    <label className="text-sm text-gray-400 font-mono">Twitch URL</label>
                     <Input 
                       value={socialLinks.twitch}
                       onChange={(e) => setSocialLinks({...socialLinks, twitch: e.target.value})}
-                      placeholder="your_twitch_name"
+                      placeholder="https://twitch.tv/your_name"
                       className="mt-1 bg-black/20 border-orange-900/20 text-gray-300 font-mono"
                     />
                   </div>
                   <div>
-                    <label className="text-sm text-gray-400 font-mono">Discord Tag</label>
+                    <label className="text-sm text-gray-400 font-mono">Discord URL</label>
                     <Input 
                       value={socialLinks.discord}
                       onChange={(e) => setSocialLinks({...socialLinks, discord: e.target.value})}
-                      placeholder="username#1234"
+                      placeholder="https://discord.com/users/..."
                       className="mt-1 bg-black/20 border-orange-900/20 text-gray-300 font-mono"
                     />
                   </div>
+                  <div><label className="text-sm text-gray-400 font-mono">Instagram URL</label><Input value={socialLinks.instagram} onChange={(e) => setSocialLinks({...socialLinks, instagram: e.target.value})} placeholder="https://instagram.com/your_name" className="mt-1 bg-black/20 border-orange-900/20 text-gray-300 font-mono" /></div>
+                  <div><label className="text-sm text-gray-400 font-mono">Personal Website</label><Input value={socialLinks.website} onChange={(e) => setSocialLinks({...socialLinks, website: e.target.value})} placeholder="https://example.com" className="mt-1 bg-black/20 border-orange-900/20 text-gray-300 font-mono" /></div>
                   
                   <div className="pt-4 border-t border-orange-900/20 flex space-x-4">
                     <Button 
-                      onClick={async () => {
-                        setIsSavingSocial(true);
-                        try {
-                          // Social links not yet stored in DB — coming soon
-                          toast.info('Coming soon', { description: 'Social link storage will be added in a future update' });
-                          toast.success('Links updated', {
-                            description: 'Social media links saved successfully',
-                            className: 'bg-green-900/90 border-green-700 text-green-100'
-                          });
-                        } catch (error) {
-                          toast.error('Update failed', {
-                            description: 'Failed to save social media links',
-                            className: 'bg-red-900/90 border-red-700 text-red-100'
-                          });
-                        } finally {
-                          setIsSavingSocial(false);
-                        }
-                      }}
+                      onClick={saveSocialLinks}
                       disabled={isSavingSocial}
                       className="bg-green-900/20 border border-green-900/30 text-green-400 hover:bg-green-900/30 font-mono disabled:opacity-50"
                     >
                       {isSavingSocial ? 'UPDATING...' : 'UPDATE LINKS'}
                     </Button>
+                    <Button variant="outline" onClick={() => user && setSocialLinks({ twitter: user.socialLinks.twitter || '', youtube: user.socialLinks.youtube || '', twitch: user.socialLinks.twitch || '', discord: user.socialLinks.discord || '', instagram: user.socialLinks.instagram || '', website: user.socialLinks.website || '' })}>CANCEL</Button>
                   </div>
                 </CardContent>
               </Card>

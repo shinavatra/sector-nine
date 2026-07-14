@@ -79,7 +79,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
                           ? 'border-yellow-400/50' 
                           : 'border-orange-900/30'
                     }`}>
-                      <AvatarImage src={user?.avatar || "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=face"} alt={user?.username || "Player"} />
+                      <AvatarImage src={user?.resolvedAvatar} alt={user?.username || "Player"} />
                       <AvatarFallback className="bg-orange-900/20 text-orange-400">
                         {user?.username?.[0]?.toUpperCase() || 'P'}
                       </AvatarFallback>

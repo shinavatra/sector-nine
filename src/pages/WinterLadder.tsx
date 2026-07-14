@@ -166,7 +166,7 @@ export function WinterLadder({ onNavigate }: WinterLadderProps) {
               <div className="flex items-center space-x-4">
                 <div className="text-2xl text-blue-400 font-mono">{userRank ? `#${userRank}` : "--"}</div>
                 <Avatar className="h-12 w-12 border-2 border-blue-900/30">
-                  <AvatarImage src={user.steamAvatar || ""} alt={user.username} />
+                  <AvatarImage src={user.resolvedAvatar} alt={user.username} />
                   <AvatarFallback className="bg-blue-900/20 text-blue-400">
                     {user.username.slice(0, 2)}
                   </AvatarFallback>

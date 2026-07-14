@@ -18,7 +18,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'sector-nine-dev-secret-change-in-p
 const JWT_EXPIRES = '7d'
 
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] }))
-app.use(express.json())
+app.use(express.json({ limit: '2mb' }))
 
 // =====================================================
 // AUTH MIDDLEWARE
@@ -57,6 +57,10 @@ const toProfile = (u: any) => {
   const deaths = u.total_deaths || 0
   const matchesPlayed = wins + losses
 
+  const customAvatarUrl = u.custom_avatar_url || null
+  const avatarSource = u.avatar_source === 'custom' ? 'custom' : 'steam'
+  const resolvedAvatar = avatarSource === 'custom' && customAvatarUrl ? customAvatarUrl : (u.steam_avatar || null)
+
   return {
     id: u.id,
     email: u.email,
@@ -75,7 +79,11 @@ const toProfile = (u: any) => {
     ownedFrames: u.owned_frames || [],
     steamId: u.steam_id,
     steamAvatar: u.steam_avatar,
+    customAvatarUrl,
+    avatarSource,
+    resolvedAvatar,
     steamProfileUrl: u.steam_profile_url,
+    socialLinks: u.social_links || {},
     steamVerified: u.steam_verified || false,
     ownsHL1: u.owns_hl1 || false,
     vacBanned: u.vac_banned || false,
@@ -213,6 +221,31 @@ app.post('/auth/update-password', async (req, res) => {
   }
 })
 
+app.post('/auth/change-password', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body
+    if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
+      return res.status(400).json({ error: 'Current and new passwords are required' })
+    }
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      return res.status(400).json({ error: 'New password must be between 8 and 128 characters' })
+    }
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: 'New password must be different from the current password' })
+    }
+    const result = await pool.query('SELECT password_hash FROM users WHERE id=$1', [req.userId])
+    if (!result.rows[0] || !(await bcrypt.compare(currentPassword, result.rows[0].password_hash))) {
+      return res.status(401).json({ error: 'Current password is incorrect' })
+    }
+    const passwordHash = await bcrypt.hash(newPassword, 12)
+    await pool.query('UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2', [passwordHash, req.userId])
+    return res.json({ message: 'Password changed successfully' })
+  } catch (err: any) {
+    console.error('change password error:', err.message)
+    return res.status(500).json({ error: 'Failed to change password' })
+  }
+})
+
 // =====================================================
 // USER / PROFILE
 // =====================================================
@@ -233,12 +266,65 @@ app.get('/user/profile', requireAuth, async (req: AuthRequest, res) => {
 // Steam fields are intentionally excluded: only the backend Steam verification flow may change them.
 app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
   try {
+    const normalizeUrl = (value: unknown, key: string): string | null => {
+      if (value === null || value === '') return null
+      if (typeof value !== 'string' || value.length > 2048) throw new Error(`Invalid ${key} URL`)
+      const trimmed = value.trim()
+      const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+      let parsed: URL
+      try { parsed = new URL(withProtocol) } catch { throw new Error(`Invalid ${key} URL`) }
+      if (parsed.protocol !== 'https:') throw new Error(`${key} URL must use HTTPS`)
+      return parsed.toString()
+    }
+
+    if (req.body.displayName !== undefined &&
+        (typeof req.body.displayName !== 'string' || req.body.displayName.trim().length > 80)) {
+      return res.status(400).json({ error: 'Display name must be 80 characters or fewer' })
+    }
+    if (req.body.bio !== undefined && (typeof req.body.bio !== 'string' || req.body.bio.length > 500)) {
+      return res.status(400).json({ error: 'Bio must be 500 characters or fewer' })
+    }
+    if (req.body.profileVisibility !== undefined && !['public', 'friends', 'private'].includes(req.body.profileVisibility)) {
+      return res.status(400).json({ error: 'Invalid profile visibility' })
+    }
+    if (req.body.showOnlineStatus !== undefined && typeof req.body.showOnlineStatus !== 'boolean') {
+      return res.status(400).json({ error: 'Invalid online-status preference' })
+    }
+    if (req.body.avatarSource !== undefined && !['steam', 'custom'].includes(req.body.avatarSource)) {
+      return res.status(400).json({ error: 'Invalid avatar source' })
+    }
+    if (req.body.customAvatarUrl !== undefined) {
+      const avatar = req.body.customAvatarUrl
+      const validDataImage = typeof avatar === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(avatar)
+      if (avatar !== null && avatar !== '' && !validDataImage) {
+        try { req.body.customAvatarUrl = normalizeUrl(avatar, 'custom avatar') }
+        catch (error: any) { return res.status(400).json({ error: error.message }) }
+      }
+      if (typeof req.body.customAvatarUrl === 'string' && req.body.customAvatarUrl.length > 1_500_000) {
+        return res.status(400).json({ error: 'Custom avatar is too large' })
+      }
+    }
+    if (req.body.socialLinks !== undefined) {
+      if (!req.body.socialLinks || typeof req.body.socialLinks !== 'object' || Array.isArray(req.body.socialLinks)) {
+        return res.status(400).json({ error: 'Invalid social links' })
+      }
+      try {
+        const keys = ['discord', 'youtube', 'twitch', 'twitter', 'instagram', 'website']
+        req.body.socialLinks = Object.fromEntries(keys.map((key) => [key, normalizeUrl(req.body.socialLinks[key], key)]))
+      } catch (error: any) {
+        return res.status(400).json({ error: error.message })
+      }
+    }
+
     // Allowed DB columns → frontend field names (camelCase or snake_case both accepted)
     const fieldMap: Record<string, string> = {
       display_name:       'displayName',
       bio:                'bio',
       profile_visibility: 'profileVisibility',
       show_online_status: 'showOnlineStatus',
+      custom_avatar_url:  'customAvatarUrl',
+      avatar_source:      'avatarSource',
+      social_links:       'socialLinks',
     }
     const updates: string[] = []
     const values: any[] = []
@@ -247,7 +333,7 @@ app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
       const val = req.body[col] !== undefined ? req.body[col] : req.body[camel]
       if (val !== undefined) {
         updates.push(`${col}=$${i++}`)
-        values.push(val)
+        values.push(col === 'display_name' && typeof val === 'string' ? val.trim() || null : val)
       }
     }
     if (updates.length === 0) return res.status(400).json({ error: 'No valid fields to update' })
@@ -441,8 +527,8 @@ app.get('/matches/history', requireAuth, async (req: AuthRequest, res) => {
   try {
     const result = await pool.query(
       `SELECT m.*,
-        p1.username AS player1_username, p1.steam_avatar AS player1_avatar, p1.level AS player1_level,
-        p2.username AS player2_username, p2.steam_avatar AS player2_avatar, p2.level AS player2_level
+        p1.username AS player1_username, COALESCE(CASE WHEN p1.avatar_source='custom' THEN NULLIF(p1.custom_avatar_url,'') END,p1.steam_avatar) AS player1_avatar, p1.level AS player1_level,
+        p2.username AS player2_username, COALESCE(CASE WHEN p2.avatar_source='custom' THEN NULLIF(p2.custom_avatar_url,'') END,p2.steam_avatar) AS player2_avatar, p2.level AS player2_level
        FROM matches m
        JOIN users p1 ON m.player1_id = p1.id
        JOIN users p2 ON m.player2_id = p2.id
@@ -671,7 +757,7 @@ app.get('/tournaments/:id', async (req, res) => {
     const t = await pool.query('SELECT * FROM tournaments WHERE id=$1', [req.params.id])
     if (!t.rows[0]) return res.status(404).json({ error: 'Tournament not found' })
     const p = await pool.query(
-      `SELECT tp.*, u.username, u.steam_avatar, u.level, u.is_premium
+      `SELECT tp.*, u.username, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar, u.level, u.is_premium
        FROM tournament_participants tp JOIN users u ON tp.user_id=u.id
        WHERE tp.tournament_id=$1 ORDER BY tp.placement NULLS LAST, tp.wins DESC`,
       [req.params.id]
@@ -685,7 +771,7 @@ app.get('/tournaments/:id', async (req, res) => {
 app.get('/tournament/:id/participants', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT tp.*, u.username, u.steam_avatar, u.level, u.is_premium
+      `SELECT tp.*, u.username, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar, u.level, u.is_premium
        FROM tournament_participants tp JOIN users u ON tp.user_id=u.id
        WHERE tp.tournament_id=$1 ORDER BY tp.wins DESC`,
       [req.params.id]
@@ -747,7 +833,7 @@ app.get('/ladder/:season', async (req, res) => {
     }
     const s = seasonResult.rows[0]
     const entries = await pool.query(
-      `SELECT le.*, u.username, u.steam_avatar, u.level, u.is_premium,
+      `SELECT le.*, u.username, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar, u.level, u.is_premium,
               ROW_NUMBER() OVER (ORDER BY le.points DESC) as rank
        FROM ladder_entries le
        JOIN users u ON le.user_id = u.id
@@ -823,7 +909,7 @@ app.delete('/chat/:room/:messageId', requireAuth, async (req: AuthRequest, res) 
 app.get('/friends', requireAuth, async (req: AuthRequest, res) => {
   try {
     const result = await pool.query(
-      `SELECT f.*, u.username, u.steam_avatar, u.level, u.is_premium, u.last_seen
+      `SELECT f.*, u.username, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar, u.level, u.is_premium, u.last_seen
        FROM friendships f
        JOIN users u ON (CASE WHEN f.user_id=$1 THEN f.friend_id ELSE f.user_id END) = u.id
        WHERE f.user_id=$1 OR f.friend_id=$1`,
@@ -840,7 +926,7 @@ app.get('/friends/search', requireAuth, async (req: AuthRequest, res) => {
     const q = req.query.q as string
     if (!q || q.length < 2) return res.json({ users: [] })
     const result = await pool.query(
-      `SELECT id, username, steam_avatar, level, is_premium
+      `SELECT id, username, COALESCE(CASE WHEN avatar_source='custom' THEN NULLIF(custom_avatar_url,'') END,steam_avatar) AS steam_avatar, level, is_premium
        FROM users WHERE username ILIKE $1 AND id != $2 LIMIT 20`,
       [`%${q}%`, req.userId]
     )

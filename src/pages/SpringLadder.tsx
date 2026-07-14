@@ -152,7 +152,7 @@ export function SpringLadder({ onNavigate }: SpringLadderProps) {
               <div className="flex items-center space-x-4">
                 <div className="text-2xl text-pink-400 font-mono">{userRank ? `#${userRank}` : "--"}</div>
                 <Avatar className="h-12 w-12 border-2 border-pink-900/30">
-                  <AvatarImage src={user.steamAvatar || ""} alt={user.username} />
+                  <AvatarImage src={user.resolvedAvatar} alt={user.username} />
                   <AvatarFallback className="bg-pink-900/20 text-pink-400">
                     {user.username.slice(0, 2)}
                   </AvatarFallback>

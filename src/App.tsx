@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { UserProvider, useUser } from "./contexts/UserContext";
 import { Header } from "./components/Header";
 import { AnimatedBackground } from "./components/AnimatedBackground";
+import { CrowbarLogo } from "./components/CrowbarLogo";
 import { Hub } from "./pages/Hub";
 
 import { Stats } from "./pages/Stats";
@@ -233,6 +234,17 @@ const handleLogin = async (isNewUser: boolean = false) => {
           : <Auth onLogin={handleLogin} onNavigate={setCurrentPage} />;
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center font-mono">
+          <CrowbarLogo className="w-16 h-16 mx-auto text-orange-400 animate-pulse" />
+          <p className="mt-4 text-orange-400">RESTORING PERSONNEL SESSION...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background relative">

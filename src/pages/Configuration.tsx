@@ -23,7 +23,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   const { user, updateProfile } = useUser();
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
-  const [profileVisibility, setProfileVisibility] = useState("friends");
+  const [profileVisibility, setProfileVisibility] = useState<'public' | 'friends' | 'private'>("friends");
   const [showOnlineStatus, setShowOnlineStatus] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   
@@ -36,7 +36,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
 
   useEffect(() => {
     if (user) {
-      setDisplayName(user.username || "");
+      setDisplayName(user.displayName || user.username || "");
       setBio(user.bio || "");
       setProfileVisibility(user.profileVisibility || "friends");
       setShowOnlineStatus(user.showOnlineStatus !== false);
@@ -53,9 +53,14 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   }, [user]);
 
   const handleSaveSettings = async () => {
+    if (displayName.trim().length > 80) {
+      toast.error('Display name must be 80 characters or fewer');
+      return;
+    }
     setIsSaving(true);
     try {
       await updateProfile({
+        displayName: displayName.trim() || null,
         bio,
         profileVisibility,
         showOnlineStatus,
@@ -135,11 +140,12 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
                   <Label className="text-gray-400 font-mono">Display Name</Label>
                   <Input
                     value={displayName}
-                    disabled
-                    className="bg-black/20 border-orange-900/20 text-gray-500 font-mono cursor-not-allowed"
+                    onChange={(event) => setDisplayName(event.target.value)}
+                    maxLength={80}
+                    className="bg-black/20 border-orange-900/20 text-gray-300 font-mono"
                   />
                   <p className="text-xs text-gray-500 font-mono">
-                    Name changes require 1300 points
+                    Your username remains unchanged
                   </p>
                 </div>
                 
@@ -196,7 +202,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
                     <Label className="text-gray-400 font-mono">Profile Visibility</Label>
                     <p className="text-xs text-gray-500 font-mono">Control who can view your profile</p>
                   </div>
-                  <Select value={profileVisibility} onValueChange={setProfileVisibility}>
+                  <Select value={profileVisibility} onValueChange={(value) => setProfileVisibility(value as typeof profileVisibility)}>
                     <SelectTrigger className="w-32 bg-black/20 border-orange-900/20 text-gray-300 font-mono">
                       <SelectValue />
                     </SelectTrigger>

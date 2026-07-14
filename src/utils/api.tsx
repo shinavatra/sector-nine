@@ -73,6 +73,9 @@ export const authAPI = {
   updatePassword: async (resetToken: string, newPassword: string) =>
     apiFetch('/auth/update-password', { method: 'POST', body: JSON.stringify({ resetToken, newPassword }) }),
 
+  changePassword: async (currentPassword: string, newPassword: string) =>
+    apiFetch('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
+
   signout: () => setSessionToken(null),
 }
 

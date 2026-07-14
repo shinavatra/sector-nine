@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { authAPI, userAPI } from '../utils/api';
+const defaultAvatar = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%230b0b0b"/%3E%3Ctext x="50" y="68" text-anchor="middle" font-size="62" fill="%23fb923c"%3E%CE%BB%3C/text%3E%3C/svg%3E';
 
 // =====================================================
 // TYPES — must match toProfile() in src/server/index.ts
@@ -43,7 +44,11 @@ export interface UserProfile {
   // Steam
   steamId: string | null;
   steamAvatar: string | null;
+  customAvatarUrl: string | null;
+  avatarSource: 'steam' | 'custom';
+  resolvedAvatar: string;
   steamProfileUrl: string | null;
+  socialLinks: SocialLinks;
   steamVerified: boolean;
   ownsHL1: boolean;
   vacBanned: boolean;
@@ -67,6 +72,15 @@ export interface UserProfile {
 
   // Computed stats block
   stats: UserStats;
+}
+
+export interface SocialLinks {
+  discord: string | null;
+  youtube: string | null;
+  twitch: string | null;
+  twitter: string | null;
+  instagram: string | null;
+  website: string | null;
 }
 
 interface UserContextType {
@@ -158,6 +172,13 @@ export function useUser() {
 // =====================================================
 
 function normalizeProfile(raw: any): UserProfile {
+  const customAvatarUrl = raw.customAvatarUrl ?? null;
+  const avatarSource = raw.avatarSource === 'custom' ? 'custom' : 'steam';
+  const resolvedAvatar = avatarSource === 'custom' && customAvatarUrl
+    ? customAvatarUrl
+    : raw.steamAvatar || defaultAvatar;
+  const socialLinks = raw.socialLinks || {};
+
   return {
     id:                raw.id ?? '',
     email:             raw.email ?? '',
@@ -176,7 +197,18 @@ function normalizeProfile(raw: any): UserProfile {
     ownedFrames:       raw.ownedFrames ?? [],
     steamId:           raw.steamId ?? null,
     steamAvatar:       raw.steamAvatar ?? null,
+    customAvatarUrl,
+    avatarSource,
+    resolvedAvatar,
     steamProfileUrl:   raw.steamProfileUrl ?? null,
+    socialLinks: {
+      discord: socialLinks.discord ?? null,
+      youtube: socialLinks.youtube ?? null,
+      twitch: socialLinks.twitch ?? null,
+      twitter: socialLinks.twitter ?? null,
+      instagram: socialLinks.instagram ?? null,
+      website: socialLinks.website ?? null,
+    },
     steamVerified:     raw.steamVerified ?? false,
     ownsHL1:           raw.ownsHL1 ?? false,
     vacBanned:         raw.vacBanned ?? false,

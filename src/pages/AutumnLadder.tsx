@@ -152,7 +152,7 @@ export function AutumnLadder({ onNavigate }: AutumnLadderProps) {
               <div className="flex items-center space-x-4">
                 <div className="text-2xl text-amber-400 font-mono">{userRank ? `#${userRank}` : "--"}</div>
                 <Avatar className="h-12 w-12 border-2 border-amber-900/30">
-                  <AvatarImage src={user.steamAvatar || ""} alt={user.username} />
+                  <AvatarImage src={user.resolvedAvatar} alt={user.username} />
                   <AvatarFallback className="bg-amber-900/20 text-amber-400">
                     {user.username.slice(0, 2)}
                   </AvatarFallback>
