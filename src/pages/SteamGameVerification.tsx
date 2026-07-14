@@ -15,7 +15,7 @@ interface SteamGameVerificationProps {
 }
 
 export function SteamGameVerification({ onNavigate, onComplete }: SteamGameVerificationProps) {
-  const { user, updateProfile } = useUser();
+  const { user, refreshProfile } = useUser();
   const [verificationStep, setVerificationStep] = useState<'connecting' | 'scanning' | 'found' | 'not-found' | 'manual'>('connecting');
   const [progress, setProgress] = useState(0);
   const [canSkip, setCanSkip] = useState(false);
@@ -52,13 +52,11 @@ export function SteamGameVerification({ onNavigate, onComplete }: SteamGameVerif
         
         // Step 3: Verify Half-Life ownership
         const hasGame = await verifyHalfLifeOwnership(user.steamId);
-        
+
         if (hasGame) {
           setVerificationStep('found');
           setProgress(100);
-          
-          // Update user profile to mark Steam as verified
-          await updateProfile({ steamVerified: true });
+          await refreshProfile();
         } else {
           setVerificationStep('not-found');
           setProgress(100);
