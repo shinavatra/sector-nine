@@ -1100,6 +1100,104 @@ const steamResultFromUser = (user: any): SteamCheckResult => ({
   lastSteamCheck: new Date(user.last_steam_check),
 })
 
+const getOptionalUserId = (req: Request): string | null => {
+  const header = req.headers.authorization
+  if (!header) return null
+  if (!header.startsWith('Bearer ')) throw new Error('INVALID_SESSION')
+
+  try {
+    const payload = jwt.verify(header.slice('Bearer '.length), JWT_SECRET) as { sub: string }
+    return payload.sub
+  } catch {
+    throw new Error('INVALID_SESSION')
+  }
+}
+
+const verifySteamOpenIdResponse = async (callbackParams: unknown): Promise<string> => {
+  if (!callbackParams || typeof callbackParams !== 'object' || Array.isArray(callbackParams)) {
+    throw new Error('INVALID_STEAM_CALLBACK')
+  }
+
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(callbackParams as Record<string, unknown>)) {
+    if (key.startsWith('openid.') && typeof value === 'string') params.set(key, value)
+  }
+
+  if (params.get('openid.mode') !== 'id_res') throw new Error('INVALID_STEAM_CALLBACK')
+
+  const claimedId = params.get('openid.claimed_id')
+  const identity = params.get('openid.identity')
+  const claimedMatch = claimedId?.match(/^https:\/\/steamcommunity\.com\/openid\/id\/(\d{17})$/)
+  if (!claimedMatch || identity !== claimedId) throw new Error('INVALID_STEAM_CALLBACK')
+
+  params.set('openid.mode', 'check_authentication')
+  const response = await fetch('https://steamcommunity.com/openid/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  })
+  if (!response.ok) throw new Error('STEAM_OPENID_UNAVAILABLE')
+
+  const verification = await response.text()
+  const isValid = verification
+    .split(/\r?\n/)
+    .some((line) => line.trim().toLowerCase() === 'is_valid:true')
+  if (!isValid) throw new Error('INVALID_STEAM_CALLBACK')
+
+  return claimedMatch[1]
+}
+
+// POST /steam/auth
+// Verifies Steam's signed OpenID callback before either signing in an existing
+// linked user or linking Steam to the currently authenticated email account.
+app.post('/steam/auth', async (req, res) => {
+  try {
+    const authenticatedUserId = getOptionalUserId(req)
+    const steamId = await verifySteamOpenIdResponse(req.body)
+
+    const linkedResult = await pool.query('SELECT * FROM users WHERE steam_id=$1 LIMIT 1', [steamId])
+    let user = linkedResult.rows[0]
+
+    if (!user) {
+      if (!authenticatedUserId) {
+        return res.status(404).json({
+          error: 'Register or sign in with email/password, then connect this Steam account.',
+          code: 'STEAM_ACCOUNT_NOT_LINKED',
+        })
+      }
+
+      const authenticatedResult = await pool.query('SELECT * FROM users WHERE id=$1', [authenticatedUserId])
+      user = authenticatedResult.rows[0]
+      if (!user) return res.status(401).json({ error: 'Invalid session', code: 'INVALID_SESSION' })
+    }
+
+    // A fresh linked record already contains the profile, ownership, and ban data.
+    // Otherwise make exactly one parallel Steam Web API refresh and cache it.
+    if (user.steam_id !== steamId || !isFreshSteamCheck(user.last_steam_check)) {
+      const steam = await fetchSteamData(steamId)
+      user = await saveSteamData(user.id, steam)
+    }
+
+    await pool.query('UPDATE users SET last_seen=NOW() WHERE id=$1', [user.id])
+    const profile = toProfile(user)
+    const token = jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, { expiresIn: JWT_EXPIRES })
+
+    return res.json({ user: profile, profile, session: { access_token: token } })
+  } catch (err: any) {
+    if (err.message === 'INVALID_SESSION') {
+      return res.status(401).json({ error: 'Invalid or expired token', code: 'INVALID_SESSION' })
+    }
+    if (err.message === 'INVALID_STEAM_CALLBACK') {
+      return res.status(401).json({ error: 'Steam OpenID verification failed', code: 'INVALID_STEAM_CALLBACK' })
+    }
+    if (err.message === 'STEAM_OPENID_UNAVAILABLE') {
+      return res.status(502).json({ error: 'Steam OpenID verification is unavailable', code: err.message })
+    }
+    console.error('steam auth error:', err.message)
+    return res.status(500).json({ error: 'Steam authentication failed' })
+  }
+})
+
 // POST /steam/link
 // Links a SteamID64, fetches profile/ownership/ban data once, and caches it for 24 hours.
 const linkSteamHandler = async (req: AuthRequest, res: Response) => {

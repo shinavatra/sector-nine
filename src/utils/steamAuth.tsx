@@ -166,6 +166,15 @@ export const linkSteamAccount = async (steamId: string): Promise<any> => {
   }
 };
 
+export const authenticateSteamCallback = async (url: string): Promise<any> => {
+  const callbackUrl = new URL(url);
+  const callbackParams: Record<string, string> = {};
+  callbackUrl.searchParams.forEach((value, key) => {
+    if (key.startsWith('openid.')) callbackParams[key] = value;
+  });
+  return steamAPI.authenticate(callbackParams);
+};
+
 export const isSteamRunning = async (): Promise<boolean> => {
   try {
     await fetch('http://localhost:27060/status', { method: 'GET', mode: 'no-cors' });

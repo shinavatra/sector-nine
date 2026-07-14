@@ -45,6 +45,9 @@ export interface UserProfile {
   steamAvatar: string | null;
   steamProfileUrl: string | null;
   steamVerified: boolean;
+  ownsHL1: boolean;
+  vacBanned: boolean;
+  gameBanned: boolean;
 
   // Match history totals
   wins: number;
@@ -91,6 +94,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
       setUser(normalizeProfile(profile));
     } catch (error) {
       console.error('Failed to refresh profile:', error);
+      setUser(null);
+      throw error;
     }
   };
 
@@ -109,7 +114,11 @@ export function UserProvider({ children }: { children: ReactNode }) {
       try {
         const token = localStorage.getItem('session_token');
         if (token) {
-          await refreshProfile();
+          try {
+            await refreshProfile();
+          } catch {
+            authAPI.signout();
+          }
         }
       } catch (error) {
         console.error('Failed to initialize user:', error);
@@ -169,6 +178,9 @@ function normalizeProfile(raw: any): UserProfile {
     steamAvatar:       raw.steamAvatar ?? null,
     steamProfileUrl:   raw.steamProfileUrl ?? null,
     steamVerified:     raw.steamVerified ?? false,
+    ownsHL1:           raw.ownsHL1 ?? false,
+    vacBanned:         raw.vacBanned ?? false,
+    gameBanned:        raw.gameBanned ?? false,
     wins:              raw.wins ?? 0,
     losses:            raw.losses ?? 0,
     winStreak:         raw.winStreak ?? 0,

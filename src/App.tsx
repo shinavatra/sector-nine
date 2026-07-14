@@ -44,9 +44,8 @@ import { Toaster } from "./components/ui/sonner";
 import { reportAPI } from "./utils/api";
 
 function AppContent() {
-  const { user, isLoading, refreshProfile, logout } = useUser();
+  const { user, isLoading, isAuthenticated, refreshProfile, logout } = useUser();
   const [currentPage, setCurrentPage] = useState<string>('auth');
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [hasCompletedSteamVerification, setHasCompletedSteamVerification] = useState<boolean>(false);
   const [matchReady, setMatchReady] = useState<{
     isOpen: boolean;
@@ -80,13 +79,12 @@ useEffect(() => {
 
 
 useEffect(() => {
-  if (!isLoading) {
-    setIsAuthenticated(Boolean(user));
+  if (!isLoading && isAuthenticated && currentPage === 'auth') {
+    setCurrentPage('hub');
   }
-}, [user, isLoading]);
+}, [isAuthenticated, isLoading, currentPage]);
 
 const handleLogin = async (isNewUser: boolean = false) => {
-  setIsAuthenticated(true);
   await refreshProfile();
 
   if (isNewUser) {
@@ -98,7 +96,6 @@ const handleLogin = async (isNewUser: boolean = false) => {
 };
   const handleLogout = () => {
     logout();
-    setIsAuthenticated(false);
     setHasCompletedSteamVerification(false);
     setCurrentPage('auth');
   };

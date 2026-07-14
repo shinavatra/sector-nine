@@ -32,9 +32,16 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Request failed' }))
-    throw new Error(error.error || `HTTP ${response.status}`)
+    throw new ApiError(error.error || `HTTP ${response.status}`, response.status, error.code)
   }
   return response.json()
+}
+
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public code?: string) {
+    super(message)
+    this.name = 'ApiError'
+  }
 }
 
 // =====================================================
@@ -249,6 +256,15 @@ export const reportAPI = {
 // =====================================================
 
 export const steamAPI = {
+  authenticate: async (callbackParams: Record<string, string>) => {
+    const data = await apiFetch('/steam/auth', {
+      method: 'POST',
+      body: JSON.stringify(callbackParams),
+    })
+    if (data.session?.access_token) setSessionToken(data.session.access_token)
+    return data
+  },
+
   // Checks if a Steam ID owns a game (appId 70 = Half-Life 1)
   verifyGameOwnership: async (steamId: string, appId: number = 70) =>
     apiFetch('/steam/verify-game', { method: 'POST', body: JSON.stringify({ steamId, appId }) }),

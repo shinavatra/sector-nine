@@ -3,8 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { CheckCircle, XCircle, Loader2, Shield } from "lucide-react";
-import { linkSteamAccount } from "../utils/steamAuth";
-import { validateSteamCallback } from "../utils/steamDebug";
+import { authenticateSteamCallback } from "../utils/steamAuth";
+import { ApiError, getSessionToken } from "../utils/api";
 import { toast } from "sonner";
 
 interface SteamCallbackProps {
@@ -43,77 +43,15 @@ export function SteamCallback({
 
   const handleSteamCallback = async () => {
     try {
-      console.log("Processing Steam callback:", window.location.href);
-
-      const validation = validateSteamCallback(window.location.href);
-
-      if (!validation.isValid) {
-        const errorMessage =
-          validation.errors[0] || "Invalid Steam callback";
-
-        setStatus("error");
-        setMessage(errorMessage);
-
-        toast.error("Steam authentication failed", {
-          description: errorMessage,
-          className: "bg-red-900/90 border-red-700 text-red-100",
-        });
-
-        // Ne brišemo sesiju. Vraćamo korisnika na hub.
-        returnToHub();
-        return;
-      }
-
-      const steamId = validation.steamId;
-
-      if (!steamId) {
-        setStatus("error");
-        setMessage("Failed to extract Steam ID");
-
-        toast.error("Steam authentication failed", {
-          description: "Could not retrieve Steam ID",
-          className: "bg-red-900/90 border-red-700 text-red-100",
-        });
-
-        returnToHub();
-        return;
-      }
-
-      setMessage(`Steam ID found: ${steamId}`);
-
-      /*
-       * Jedan backend poziv sada:
-       * - učita Steam profil
-       * - provjeri HL1
-       * - provjeri VAC/game ban
-       * - sačuva rezultat u PostgreSQL
-       */
-      const linkResult = await linkSteamAccount(steamId);
-
-      if (!linkResult?.profile) {
-        setStatus("error");
-        setMessage(
-          "Steam account could not be linked. Make sure you are logged in."
-        );
-
-        toast.error("Steam linking failed", {
-          description:
-            "Your Steam account could not be linked to this Sector Nine account.",
-          className: "bg-red-900/90 border-red-700 text-red-100",
-        });
-
-        // Ne pozivamo logout.
-        returnToHub();
-        return;
-      }
-
+      // The server verifies Steam's signed OpenID response before returning a JWT.
+      const linkResult = await authenticateSteamCallback(window.location.href);
       const profile = linkResult.profile;
-      const hasHalfLife = linkResult.ownsHL1 === true;
-      const isVacBanned = linkResult.hasVacBan === true;
-      const isGameBanned = linkResult.hasGameBan === true;
+      const hasHalfLife = profile.ownsHL1 === true;
+      const isVacBanned = profile.vacBanned === true;
+      const isGameBanned = profile.gameBanned === true;
 
       setSteamProfile({
-        steamId: profile.steamId || steamId,
+        steamId: profile.steamId,
         username:
           profile.displayName ||
           profile.username ||
@@ -177,23 +115,24 @@ export function SteamCallback({
         onLogin(false);
       }, 2000);
     } catch (error) {
-      console.error("Steam callback error:", error);
-
+      const isUnlinked = error instanceof ApiError && error.code === "STEAM_ACCOUNT_NOT_LINKED";
       setStatus("error");
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "An unexpected Steam error occurred"
-      );
+      setMessage(isUnlinked
+        ? "This Steam account is not linked. Register or sign in with email/password, then connect Steam."
+        : error instanceof Error ? error.message : "An unexpected Steam error occurred");
 
       toast.error("Steam authentication failed", {
-        description:
-          "Your Sector Nine session remains active. Please try again later.",
+        description: isUnlinked
+          ? "No account was created. Sign in with email/password and connect Steam from your profile."
+          : "Your existing Sector Nine session remains active. Please try again later.",
         className: "bg-red-900/90 border-red-700 text-red-100",
       });
 
-      // Nikakav logout i nikakav redirect na auth.
-      returnToHub();
+      window.setTimeout(() => {
+        if (isUnlinked) onNavigate("auth");
+        else if (getSessionToken()) returnToHub(0);
+        else onNavigate("auth");
+      }, 4000);
     }
   };
 
