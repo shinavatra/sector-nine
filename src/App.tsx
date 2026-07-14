@@ -62,34 +62,40 @@ function AppContent() {
     totalPlayers: 0
   });
 
-  // Check for Steam callback and password reset token on first load
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('openid.mode') === 'id_res') {
-      setCurrentPage('steam-callback');
-      return;
-    }
+ // Check for Steam callback and password reset token on first load
+useEffect(() => {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('openid.mode') === 'id_res') {
+    setCurrentPage('steam-callback');
+    return;
+  }
 
-    // Password reset link puts token in URL hash (legacy Supabase behaviour)
-    // Our new flow uses a reset token in the URL query param instead
-    const hash = window.location.hash;
-    if (hash && hash.includes('access_token')) {
-      setCurrentPage('new-password');
-    }
-  }, []);
+  // Password reset link puts token in URL hash (legacy Supabase behaviour)
+  // Our new flow uses a reset token in the URL query param instead
+  const hash = window.location.hash;
+  if (hash && hash.includes('access_token')) {
+    setCurrentPage('new-password');
+  }
+}, []);
 
-  const handleLogin = async (isNewUser: boolean = false) => {
-    setIsAuthenticated(true);
-    await refreshProfile();
 
-    if (isNewUser) {
-      // New users go through Steam verification first
-      setCurrentPage('steam-game-verification');
-    } else {
-      setCurrentPage('hub');
-    }
-  };
+useEffect(() => {
+  if (!isLoading) {
+    setIsAuthenticated(Boolean(user));
+  }
+}, [user, isLoading]);
 
+const handleLogin = async (isNewUser: boolean = false) => {
+  setIsAuthenticated(true);
+  await refreshProfile();
+
+  if (isNewUser) {
+    // New users go through Steam verification first
+    setCurrentPage('steam-game-verification');
+  } else {
+    setCurrentPage('hub');
+  }
+};
   const handleLogout = () => {
     logout();
     setIsAuthenticated(false);
@@ -181,7 +187,7 @@ function AppContent() {
       case 'instagib-mode':
         return <InstagibMode onNavigate={setCurrentPage} />;
       case 'matches':
-        return <Matches onNavigate={setCurrentPage} />;
+        return <Matches />;
 
       case 'store':
         return <Store onNavigate={setCurrentPage} isPremium={user?.isPremium || false} />;

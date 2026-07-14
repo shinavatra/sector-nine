@@ -36,10 +36,10 @@ export function SteamCallback({
   }, []);
 
   const returnToHub = (delay = 4000) => {
-    window.setTimeout(() => {
-      onNavigate("hub");
-    }, delay);
-  };
+  window.setTimeout(() => {
+    onLogin(false);
+  }, delay);
+};
 
   const handleSteamCallback = async () => {
     try {
