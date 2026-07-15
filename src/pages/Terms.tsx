@@ -80,7 +80,7 @@ export function Terms({ onNavigate }: TermsProps) {
             </div>
             <div className="text-gray-300 font-mono text-sm space-y-3 leading-relaxed">
               <p>
-                Users are assigned <span className="text-purple-400">ONE PERMANENT DISPLAY NAME</span> upon registration. Display name changes require <span className="text-orange-400">1300 PLATFORM POINTS</span> and are limited to premium members.
+                Users are assigned a permanent username upon registration. Display name changes require <span className="text-orange-400">1500 PLATFORM POINTS</span>.
               </p>
               <p>
                 Account credentials must remain confidential. Users are responsible for all activity conducted through their accounts. Account sharing or credential trading is prohibited.

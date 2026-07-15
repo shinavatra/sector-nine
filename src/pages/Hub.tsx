@@ -53,7 +53,6 @@ export function Hub({ onNavigate }: HubProps) {
           <div className="max-w-3xl">
             <div className="text-green-400 font-mono text-sm mb-2">SYSTEM STATUS: OPERATIONAL</div>
             <h1 className="text-5xl font-bold mb-4 text-orange-400">SECTOR NINE INITIATIVE</h1>
-            <h2 className="text-2xl mb-4 text-gray-300">FREE REGISTRATION AVAILABLE</h2>
             <p className="text-lg text-gray-400 font-mono leading-relaxed">
               QUANTUM GAMING PROTOCOLS ONLINE.<br />
               COMPETITIVE MATCHMAKING & TOURNAMENTS.

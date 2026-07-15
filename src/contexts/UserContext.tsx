@@ -65,6 +65,7 @@ export interface UserProfile {
   // Privacy settings
   profileVisibility: 'public' | 'friends' | 'private';
   showOnlineStatus: boolean;
+  notificationPreferences: NotificationPreferences;
 
   // Timestamps
   createdAt: string;
@@ -83,12 +84,21 @@ export interface SocialLinks {
   website: string | null;
 }
 
+export interface NotificationPreferences {
+  matchFound: boolean;
+  friendRequests: boolean;
+  tournaments: boolean;
+  messages: boolean;
+  social: boolean;
+}
+
 interface UserContextType {
   user: UserProfile | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   refreshProfile: () => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
+  changeDisplayName: (displayName: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -115,6 +125,11 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const updateProfile = async (updates: Partial<UserProfile>) => {
     const { profile } = await userAPI.updateProfile(updates);
+    setUser(normalizeProfile(profile));
+  };
+
+  const changeDisplayName = async (displayName: string) => {
+    const { profile } = await userAPI.changeDisplayName(displayName);
     setUser(normalizeProfile(profile));
   };
 
@@ -150,6 +165,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
       isAuthenticated: user !== null,
       refreshProfile,
       updateProfile,
+      changeDisplayName,
       logout,
     }}>
       {children}
@@ -178,6 +194,7 @@ function normalizeProfile(raw: any): UserProfile {
     ? customAvatarUrl
     : raw.steamAvatar || defaultAvatar;
   const socialLinks = raw.socialLinks || {};
+  const notificationPreferences = raw.notificationPreferences || {};
 
   return {
     id:                raw.id ?? '',
@@ -221,6 +238,13 @@ function normalizeProfile(raw: any): UserProfile {
     totalDeaths:       raw.totalDeaths ?? 0,
     profileVisibility: raw.profileVisibility ?? 'public',
     showOnlineStatus:  raw.showOnlineStatus ?? true,
+    notificationPreferences: {
+      matchFound: notificationPreferences.matchFound ?? true,
+      friendRequests: notificationPreferences.friendRequests ?? true,
+      tournaments: notificationPreferences.tournaments ?? true,
+      messages: notificationPreferences.messages ?? true,
+      social: notificationPreferences.social ?? true,
+    },
     createdAt:         raw.createdAt ?? new Date().toISOString(),
     lastSeen:          raw.lastSeen ?? null,
     stats: {

@@ -5,7 +5,7 @@ import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { ArrowLeft, HelpCircle, MessageCircle, FileText, Send, Search, AlertTriangle, CheckCircle, Clock, ExternalLink } from "lucide-react";
+import { ArrowLeft, HelpCircle, MessageCircle, FileText, Send, Search, Clock } from "lucide-react";
 import { useState } from "react";
 
 const faqItems = [
@@ -36,11 +36,7 @@ const faqItems = [
   }
 ];
 
-const ticketStatuses = [
-  { id: "#S9-2025-001", subject: "Login Issues", status: "Open", priority: "High", created: "2 hours ago" },
-  { id: "#S9-2025-002", subject: "Map Loading Problem", status: "In Progress", priority: "Medium", created: "1 day ago" },
-  { id: "#S9-2025-003", subject: "Premium Billing", status: "Resolved", priority: "Low", created: "3 days ago" }
-];
+const ticketStatuses: Array<{ id: string; subject: string; status: string; priority: string; created: string }> = [];
 
 interface SupportProps {
   onNavigate?: (page: string) => void;
@@ -157,38 +153,10 @@ export function Support({ onNavigate }: SupportProps) {
               <CardTitle className="text-green-400 font-mono">QUICK SUPPORT LINKS</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Button 
-                  variant="outline" 
-                  className="border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
-                  onClick={() => onNavigate?.('tournament-rules')}
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  Tournament Rules
-                </Button>
-                <Button 
-                  variant="outline" 
-                  className="border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
-                  onClick={() => window.open('https://discord.gg/sector9', '_blank')}
-                >
-                  <ExternalLink className="w-4 h-4 mr-2" />
-                  Discord Community
-                </Button>
-                <Button 
-                  variant="outline" 
-                  className="border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  System Requirements
-                </Button>
-                <Button 
-                  variant="outline" 
-                  className="border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  Installation Guide
-                </Button>
-              </div>
+              <Button disabled variant="outline" className="w-full font-mono justify-start">
+                <Clock className="w-4 h-4 mr-2" />
+                Support links coming soon
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -200,35 +168,7 @@ export function Support({ onNavigate }: SupportProps) {
               <CardTitle className="text-orange-400 font-mono">MY SUPPORT TICKETS</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {ticketStatuses.map((ticket, index) => (
-                <Card key={index} className="bg-black/20 border-orange-900/20">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center space-x-3">
-                        <span className="text-blue-400 font-mono">{ticket.id}</span>
-                        <span className="text-orange-400 font-mono">{ticket.subject}</span>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Badge className={`font-mono text-xs ${getStatusColor(ticket.status)}`}>
-                          {ticket.status}
-                        </Badge>
-                        <Badge className={`font-mono text-xs ${getPriorityColor(ticket.priority)}`}>
-                          {ticket.priority}
-                        </Badge>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2 text-gray-400 font-mono text-xs">
-                        <Clock className="w-3 h-3" />
-                        <span>Created {ticket.created}</span>
-                      </div>
-                      <Button size="sm" className="bg-blue-900/20 border border-blue-900/30 text-blue-400 hover:bg-blue-900/30 font-mono">
-                        VIEW DETAILS
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+              {ticketStatuses.length === 0 && <p className="text-gray-500 font-mono text-center py-8">Support tickets coming soon</p>}
             </CardContent>
           </Card>
         </TabsContent>
@@ -239,7 +179,7 @@ export function Support({ onNavigate }: SupportProps) {
             <CardHeader>
               <CardTitle className="text-orange-400 font-mono">SUBMIT SUPPORT TICKET</CardTitle>
               <p className="text-gray-400 font-mono text-sm">
-                Describe your issue in detail and our technical team will assist you
+                Support ticket submission coming soon
               </p>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -247,7 +187,7 @@ export function Support({ onNavigate }: SupportProps) {
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <label className="text-sm text-gray-400 font-mono">Category</label>
-                    <Select value={ticketForm.category} onValueChange={(value) => setTicketForm({...ticketForm, category: value})}>
+                    <Select disabled value={ticketForm.category} onValueChange={(value) => setTicketForm({...ticketForm, category: value})}>
                       <SelectTrigger className="bg-black/20 border-orange-900/20 text-orange-400 font-mono">
                         <SelectValue placeholder="Select category" />
                       </SelectTrigger>
@@ -263,7 +203,7 @@ export function Support({ onNavigate }: SupportProps) {
 
                   <div className="space-y-2">
                     <label className="text-sm text-gray-400 font-mono">Priority Level</label>
-                    <Select value={ticketForm.priority} onValueChange={(value) => setTicketForm({...ticketForm, priority: value})}>
+                    <Select disabled value={ticketForm.priority} onValueChange={(value) => setTicketForm({...ticketForm, priority: value})}>
                       <SelectTrigger className="bg-black/20 border-orange-900/20 text-orange-400 font-mono">
                         <SelectValue placeholder="Select priority" />
                       </SelectTrigger>
@@ -281,6 +221,7 @@ export function Support({ onNavigate }: SupportProps) {
                   <div className="space-y-2">
                     <label className="text-sm text-gray-400 font-mono">Subject</label>
                     <Input
+                      disabled
                       placeholder="Brief description of the issue"
                       value={ticketForm.subject}
                       onChange={(e) => setTicketForm({...ticketForm, subject: e.target.value})}
@@ -303,6 +244,7 @@ export function Support({ onNavigate }: SupportProps) {
               <div className="space-y-2">
                 <label className="text-sm text-gray-400 font-mono">Description</label>
                 <Textarea
+                  disabled
                   placeholder="Provide detailed information about the issue including steps to reproduce, error messages, and any relevant screenshots..."
                   value={ticketForm.description}
                   onChange={(e) => setTicketForm({...ticketForm, description: e.target.value})}
@@ -312,12 +254,11 @@ export function Support({ onNavigate }: SupportProps) {
 
               <div className="flex items-center justify-between">
                 <div className="text-sm text-gray-400 font-mono">
-                  <AlertTriangle className="w-4 h-4 inline mr-2" />
-                  Expected response time: 2-24 hours
+                  Ticket submission is not available yet.
                 </div>
-                <Button className="bg-green-900/20 border border-green-900/30 text-green-400 hover:bg-green-900/30 font-mono">
+                <Button disabled className="bg-green-900/20 border border-green-900/30 text-green-400 font-mono">
                   <Send className="w-4 h-4 mr-2" />
-                  SUBMIT TICKET
+                  COMING SOON
                 </Button>
               </div>
             </CardContent>

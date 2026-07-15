@@ -133,6 +133,11 @@ export function SteamCallback({
         else if (getSessionToken()) returnToHub(0);
         else onNavigate("auth");
       }, 4000);
+    } finally {
+      // Steam signs the return_to URL, so clean it only after server verification.
+      // replaceState removes the sensitive OpenID response without reloading or
+      // changing the current Sector Nine session.
+      window.history.replaceState({}, document.title, '/');
     }
   };
 

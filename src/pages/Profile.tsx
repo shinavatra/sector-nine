@@ -102,7 +102,7 @@ interface ProfileProps {
 }
 
 export function Profile({ onNavigate, isPremium }: ProfileProps) {
-  const { user, refreshProfile, updateProfile, logout } = useUser();
+  const { user, refreshProfile, updateProfile, changeDisplayName, logout } = useUser();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isEditingBio, setIsEditingBio] = useState(false);
@@ -270,7 +270,12 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
     }
     setIsSavingSettings(true);
     try {
-      await updateProfile({ displayName: displayName.trim() || null, bio: bioText, profileVisibility, showOnlineStatus });
+      const savedDisplayName = user?.displayName || user?.username || '';
+      if (displayName.trim() !== savedDisplayName) {
+        if (!window.confirm('Change display name — 1500 points?')) return;
+        await changeDisplayName(displayName.trim());
+      }
+      await updateProfile({ bio: bioText, profileVisibility, showOnlineStatus });
       setIsEditingProfile(false);
       toast.success('Profile updated');
     } catch (error) {
@@ -1061,7 +1066,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                         className="mt-1 bg-black/20 border-orange-900/20 text-gray-500 font-mono cursor-not-allowed"
                       />
                       <p className="text-xs text-gray-500 font-mono mt-1">
-                        Name changes require 1300 platform points
+                        Change display name — 1500 points
                       </p>
                     </div>
                     <div>

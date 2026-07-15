@@ -65,7 +65,7 @@ function AppContent() {
  // Check for Steam callback and password reset token on first load
 useEffect(() => {
   const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('openid.mode') === 'id_res') {
+  if (urlParams.has('openid.mode')) {
     setCurrentPage('steam-callback');
     return;
   }

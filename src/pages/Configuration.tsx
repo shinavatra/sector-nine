@@ -6,7 +6,7 @@ import { Label } from "../components/ui/label";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { ArrowLeft, Settings, Shield, Bell, User, Users2, Save, Globe, ExternalLink, Loader2 } from "lucide-react";
+import { ArrowLeft, Settings, Shield, Bell, User, Users2, Save, Clock, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useUser } from "../contexts/UserContext";
 import { toast } from "sonner";
@@ -20,7 +20,7 @@ interface ConfigurationProps {
 }
 
 export function Configuration({ onNavigate }: ConfigurationProps) {
-  const { user, updateProfile } = useUser();
+  const { user, updateProfile, changeDisplayName } = useUser();
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
   const [profileVisibility, setProfileVisibility] = useState<'public' | 'friends' | 'private'>("friends");
@@ -40,16 +40,12 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
       setBio(user.bio || "");
       setProfileVisibility(user.profileVisibility || "friends");
       setShowOnlineStatus(user.showOnlineStatus !== false);
+      setNotifyMatchFound(user.notificationPreferences.matchFound);
+      setNotifyFriendRequests(user.notificationPreferences.friendRequests);
+      setNotifyTournaments(user.notificationPreferences.tournaments);
+      setNotifyMessages(user.notificationPreferences.messages);
+      setNotifySocial(user.notificationPreferences.social);
     }
-    // Load notification prefs from localStorage
-    try {
-      const prefs = JSON.parse(localStorage.getItem('notif_prefs') || '{}');
-      if (prefs.matchFound !== undefined) setNotifyMatchFound(prefs.matchFound);
-      if (prefs.friendRequests !== undefined) setNotifyFriendRequests(prefs.friendRequests);
-      if (prefs.tournaments !== undefined) setNotifyTournaments(prefs.tournaments);
-      if (prefs.messages !== undefined) setNotifyMessages(prefs.messages);
-      if (prefs.social !== undefined) setNotifySocial(prefs.social);
-    } catch {}
   }, [user]);
 
   const handleSaveSettings = async () => {
@@ -59,21 +55,23 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
     }
     setIsSaving(true);
     try {
+      const savedDisplayName = user?.displayName || user?.username || '';
+      if (displayName.trim() !== savedDisplayName) {
+        if (!window.confirm('Change display name — 1500 points?')) return;
+        await changeDisplayName(displayName.trim());
+      }
       await updateProfile({
-        displayName: displayName.trim() || null,
         bio,
         profileVisibility,
         showOnlineStatus,
-        // notification preferences stored locally only (no DB column yet)
+        notificationPreferences: {
+          matchFound: notifyMatchFound,
+          friendRequests: notifyFriendRequests,
+          tournaments: notifyTournaments,
+          messages: notifyMessages,
+          social: notifySocial,
+        },
       });
-      // save notification prefs to localStorage
-      localStorage.setItem('notif_prefs', JSON.stringify({
-        matchFound: notifyMatchFound,
-        friendRequests: notifyFriendRequests,
-        tournaments: notifyTournaments,
-        messages: notifyMessages,
-        social: notifySocial,
-      }));
       
       toast.success('Settings updated', {
         description: 'Your configuration has been saved',
@@ -145,7 +143,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
                     className="bg-black/20 border-orange-900/20 text-gray-300 font-mono"
                   />
                   <p className="text-xs text-gray-500 font-mono">
-                    Your username remains unchanged
+                    Change display name — 1500 points. Username remains unchanged.
                   </p>
                 </div>
                 
@@ -254,27 +252,10 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
               <CardTitle className="text-orange-400 font-mono">COMMUNITY LINKS</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Button
-                  variant="outline"
-                  className="border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
-                  onClick={() => window.open('https://discord.gg/sector9', '_blank')}
-                >
-                  <Globe className="w-4 h-4 mr-2" />
-                  OFFICIAL DISCORD
-                  <ExternalLink className="w-3 h-3 ml-auto" />
-                </Button>
-                
-                <Button
-                  variant="outline"
-                  className="border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
-                  onClick={() => window.open('https://reddit.com/r/sector9', '_blank')}
-                >
-                  <Globe className="w-4 h-4 mr-2" />
-                  REDDIT COMMUNITY
-                  <ExternalLink className="w-3 h-3 ml-auto" />
-                </Button>
-              </div>
+              <Button disabled variant="outline" className="w-full font-mono justify-start">
+                <Clock className="w-4 h-4 mr-2" />
+                COMMUNITY LINKS — COMING SOON
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>

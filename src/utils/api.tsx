@@ -90,6 +90,9 @@ export const userAPI = {
   updateProfile: async (updates: Record<string, any>) =>
     apiFetch('/user/profile', { method: 'PUT', body: JSON.stringify(updates) }),
 
+  changeDisplayName: async (displayName: string) =>
+    apiFetch('/user/display-name', { method: 'POST', body: JSON.stringify({ displayName }) }),
+
   upgradeToVIP: async (method: 'points' | 'payment' = 'points') =>
     apiFetch('/user/vip/purchase', { method: 'POST', body: JSON.stringify({ method }) }),
 

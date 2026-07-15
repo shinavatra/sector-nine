@@ -84,6 +84,13 @@ const toProfile = (u: any) => {
     resolvedAvatar,
     steamProfileUrl: u.steam_profile_url,
     socialLinks: u.social_links || {},
+    notificationPreferences: u.notification_preferences || {
+      matchFound: true,
+      friendRequests: true,
+      tournaments: true,
+      messages: true,
+      social: true,
+    },
     steamVerified: u.steam_verified || false,
     ownsHL1: u.owns_hl1 || false,
     vacBanned: u.vac_banned || false,
@@ -262,6 +269,39 @@ app.get('/user/profile', requireAuth, async (req: AuthRequest, res) => {
   }
 })
 
+// POST /user/display-name
+// The fixed 1500-point price is enforced atomically by PostgreSQL.
+app.post('/user/display-name', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (typeof req.body.displayName !== 'string') {
+      return res.status(400).json({ error: 'Display name is required' })
+    }
+    const displayName = req.body.displayName.trim() || null
+    if (displayName && displayName.length > 80) {
+      return res.status(400).json({ error: 'Display name must be 80 characters or fewer' })
+    }
+
+    const result = await pool.query(
+      `UPDATE users
+       SET display_name=$1,
+           points=CASE WHEN display_name IS DISTINCT FROM $1 THEN points-1500 ELSE points END,
+           updated_at=NOW()
+       WHERE id=$2
+         AND (display_name IS NOT DISTINCT FROM $1 OR points >= 1500)
+       RETURNING *`,
+      [displayName, req.userId]
+    )
+    if (result.rows[0]) return res.json({ profile: toProfile(result.rows[0]) })
+
+    const exists = await pool.query('SELECT id FROM users WHERE id=$1', [req.userId])
+    if (!exists.rows[0]) return res.status(404).json({ error: 'User not found' })
+    return res.status(400).json({ error: 'At least 1500 points are required to change display name', code: 'INSUFFICIENT_POINTS' })
+  } catch (err: any) {
+    console.error('display name change error:', err.message)
+    return res.status(500).json({ error: 'Failed to change display name' })
+  }
+})
+
 // PUT /user/profile
 // Steam fields are intentionally excluded: only the backend Steam verification flow may change them.
 app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
@@ -277,10 +317,6 @@ app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
       return parsed.toString()
     }
 
-    if (req.body.displayName !== undefined &&
-        (typeof req.body.displayName !== 'string' || req.body.displayName.trim().length > 80)) {
-      return res.status(400).json({ error: 'Display name must be 80 characters or fewer' })
-    }
     if (req.body.bio !== undefined && (typeof req.body.bio !== 'string' || req.body.bio.length > 500)) {
       return res.status(400).json({ error: 'Bio must be 500 characters or fewer' })
     }
@@ -315,16 +351,25 @@ app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
         return res.status(400).json({ error: error.message })
       }
     }
+    if (req.body.notificationPreferences !== undefined) {
+      const preferences = req.body.notificationPreferences
+      const keys = ['matchFound', 'friendRequests', 'tournaments', 'messages', 'social']
+      if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences) ||
+          Object.keys(preferences).some((key) => !keys.includes(key)) ||
+          keys.some((key) => typeof preferences[key] !== 'boolean')) {
+        return res.status(400).json({ error: 'Invalid notification preferences' })
+      }
+    }
 
     // Allowed DB columns → frontend field names (camelCase or snake_case both accepted)
     const fieldMap: Record<string, string> = {
-      display_name:       'displayName',
       bio:                'bio',
       profile_visibility: 'profileVisibility',
       show_online_status: 'showOnlineStatus',
       custom_avatar_url:  'customAvatarUrl',
       avatar_source:      'avatarSource',
       social_links:       'socialLinks',
+      notification_preferences: 'notificationPreferences',
     }
     const updates: string[] = []
     const values: any[] = []
@@ -333,7 +378,7 @@ app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
       const val = req.body[col] !== undefined ? req.body[col] : req.body[camel]
       if (val !== undefined) {
         updates.push(`${col}=$${i++}`)
-        values.push(col === 'display_name' && typeof val === 'string' ? val.trim() || null : val)
+        values.push(val)
       }
     }
     if (updates.length === 0) return res.status(400).json({ error: 'No valid fields to update' })

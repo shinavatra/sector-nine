@@ -113,7 +113,7 @@ export function Disclaimer({ onNavigate }: DisclaimerProps) {
               <div className="text-gray-300 font-mono text-sm space-y-3 leading-relaxed">
                 <p>
                   Display names are <span className="text-blue-400">PERMANENT</span> upon registration. 
-                  Name changes require <span className="text-orange-400">1300 PLATFORM POINTS</span> and are limited to one change.
+                  Display name changes require <span className="text-orange-400">1500 PLATFORM POINTS</span>.
                 </p>
                 <p>
                   Social media links can be updated freely in your profile. Links are displayed publicly if your profile visibility is set to "Public".
