@@ -29,19 +29,6 @@
 
 .admin-menu-button { display: none !important; }
 
-.admin-avatar {
-  width: 32px !important;
-  height: 32px !important;
-  min-width: 32px;
-  overflow: hidden;
-}
-
-.admin-avatar img {
-  width: 100% !important;
-  height: 100% !important;
-  object-fit: cover;
-}
-
 .admin-sidebar-scroll {
   min-height: 0;
   flex: 1 1 auto;
@@ -120,7 +107,7 @@
   .admin-metrics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 1199px) {
   .admin-menu-button { display: inline-flex !important; }
   .admin-sidebar {
     position: fixed !important;
@@ -132,4 +119,11 @@
   }
 
   .admin-sidebar.admin-sidebar--open { transform: translateX(0) !important; }
+  .admin-main { width: 100%; }
+  .admin-content { padding: 16px; }
+}
+
+@media (max-width: 640px) {
+  .admin-content { padding: 12px; }
+  .admin-quick-actions { grid-template-columns: 1fr; }
 }

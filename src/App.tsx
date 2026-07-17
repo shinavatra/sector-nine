@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { toast } from "sonner";
 import { UserProvider, useUser } from "./contexts/UserContext";
 import { Header } from "./components/Header";
 import { AnimatedBackground } from "./components/AnimatedBackground";
@@ -42,7 +43,7 @@ import { Disclaimer } from "./pages/Disclaimer";
 import { GlobalChat } from "./components/GlobalChat";
 import { MatchReadyAlert } from "./components/MatchReadyAlert";
 import { Toaster } from "./components/ui/sonner";
-import { reportAPI } from "./utils/api";
+import { notificationsAPI, reportAPI } from "./utils/api";
 import { Admin } from "./pages/Admin";
 
 const pagePaths: Record<string, string> = {
@@ -60,6 +61,9 @@ function AppContent() {
   const { user, isLoading, isAuthenticated, refreshProfile, logout } = useUser();
   const [currentPage, setCurrentPageState] = useState<string>(() => pageFromPath(window.location.pathname));
   const [hasCompletedSteamVerification, setHasCompletedSteamVerification] = useState<boolean>(false);
+  const [notificationUnreadCount,setNotificationUnreadCount]=useState(0);
+  const seenFriendNotifications=useRef(new Set<string>());
+  const notificationsInitialized=useRef(false);
   const [matchReady, setMatchReady] = useState<{
     isOpen: boolean;
     matchType: string;
@@ -80,6 +84,8 @@ function AppContent() {
     setCurrentPageState(page);
   }, []);
   const setCurrentPage = navigate;
+
+  useEffect(()=>{if(!isAuthenticated){setNotificationUnreadCount(0);seenFriendNotifications.current.clear();notificationsInitialized.current=false;return}let active=true;const poll=async()=>{try{const data:any=await notificationsAPI.getNotifications();if(!active)return;const items=Array.isArray(data?.notifications)?data.notifications:[];const unread=items.filter((item:any)=>!item.read);setNotificationUnreadCount(unread.length);for(const item of unread.filter((entry:any)=>entry.type==='friend_request')){const id=String(item.id);if(seenFriendNotifications.current.has(id))continue;seenFriendNotifications.current.add(id);if(notificationsInitialized.current)toast(item.message||'New friend request',{action:{label:'Open',onClick:()=>{void notificationsAPI.markAsRead(id).catch(()=>undefined);sessionStorage.setItem('open_friend_requests','1');navigate('profile')}}})}notificationsInitialized.current=true}catch{/* Keep the last valid badge during transient failures. */}};void poll();const interval=window.setInterval(poll,7000);return()=>{active=false;window.clearInterval(interval)}},[isAuthenticated,navigate]);
 
  // Check for Steam callback and password reset token on first load
 useEffect(() => {
@@ -298,6 +304,7 @@ const handleLogin = async (isNewUser: boolean = false) => {
         <Header
           onNavigate={setCurrentPage}
           currentPage={currentPage}
+          notificationUnreadCount={notificationUnreadCount}
           onLogout={handleLogout}
           isPremium={user?.isPremium || false}
         />

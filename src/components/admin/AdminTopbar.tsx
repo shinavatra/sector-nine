@@ -1,6 +1,4 @@
 import { Menu, Plus, RefreshCw, Search } from 'lucide-react'
-import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar'
-import { FramedAvatar } from '../FramedAvatar'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import type { UserProfile } from '../../contexts/UserContext'
@@ -16,6 +14,6 @@ export function AdminTopbar({section,user,search,onSearch,onMenu,onRefresh,onCre
     <div className="relative min-w-0 flex-1 md:max-w-md"><Input value={search} onChange={e=>onSearch(e.target.value)} placeholder="Search records…" className="h-9 border-orange-900/25 bg-black/40 pr-10 text-sm focus-visible:ring-orange-500/30"/><Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-600" size={16}/></div>
     {createType&&<Button size="sm" onClick={()=>onCreate(createType)} className="shrink-0 gap-2"><Plus size={15}/><span className="hidden lg:inline">Create {createType}</span></Button>}
     <Button variant="ghost" size="icon" onClick={onRefresh} disabled={loading} className="text-slate-400 hover:text-orange-300"><RefreshCw size={17} className={loading?'animate-spin':''}/></Button>
-    <div className="flex shrink-0 items-center gap-3 border-l border-orange-900/25 pl-3"><FramedAvatar frameId={user.equippedFrame}><Avatar className="admin-avatar size-8 border border-orange-500/30"><AvatarImage src={user.resolvedAvatar}/><AvatarFallback className="bg-orange-500/10 text-xs text-orange-300">{user.username?.[0]?.toUpperCase()}</AvatarFallback></Avatar></FramedAvatar><div className="hidden max-w-36 sm:block"><p className="truncate text-xs font-medium text-slate-200">{user.displayName||user.username}</p><p className="text-[10px] uppercase tracking-wider text-orange-500">Administrator</p></div></div>
+    <div className="hidden shrink-0 border-l border-orange-900/25 pl-3 sm:block"><p className="max-w-36 truncate text-xs font-medium text-slate-200">{user.displayName||user.username}</p><p className="text-[10px] uppercase tracking-wider text-orange-500">Administrator</p></div>
   </div></header>
 }

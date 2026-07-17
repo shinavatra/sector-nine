@@ -8,6 +8,7 @@ import { Switch } from "../components/ui/switch";
 import { Bell, AlertTriangle, Trophy, Users, Calendar, Settings, Check, X, Eye, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useUser } from "../contexts/UserContext";
+import { notificationsAPI } from "../utils/api";
 
 // Initial notifications will be empty - data will come from backend
 const initialNotifications: any[] = [];
@@ -22,6 +23,8 @@ interface NotificationsProps {
 export function Notifications({ onNavigate }: NotificationsProps) {
   const { user, updateProfile } = useUser();
   const [notifications, setNotifications] = useState(initialNotifications);
+  const [notificationsLoading,setNotificationsLoading]=useState(true);
+  const [notificationsError,setNotificationsError]=useState('');
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
   const [preferences, setPreferences] = useState({
     matchNotifications: true,
@@ -44,27 +47,29 @@ export function Notifications({ onNavigate }: NotificationsProps) {
     });
   }, [user]);
 
-  const handleMarkAllRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, unread: false })));
+  useEffect(()=>{if(!user)return;let active=true;setNotificationsLoading(true);notificationsAPI.getNotifications().then((data:any)=>{if(!active)return;setNotifications((data.notifications||[]).map((item:any)=>({...item,unread:!item.read,time:new Date(item.created_at).toLocaleString(),type:item.type==='friend_request'?'friend':item.type,action:item.type==='friend_request'&&!item.read?'OPEN REQUESTS':undefined})));setNotificationsError('')}).catch((error:any)=>active&&setNotificationsError(error.message||'Unable to load notifications')).finally(()=>active&&setNotificationsLoading(false));return()=>{active=false}},[user?.id]);
+
+  const handleMarkAllRead = async () => {
+    try{await notificationsAPI.markAllAsRead();setNotifications(prev => prev.map(n => ({ ...n, unread: false })))}catch(error:any){return void toast.error('Unable to mark notifications read',{description:error.message})}
     toast.success("All notifications marked as read", {
       className: "bg-green-900/90 border-green-700 text-green-100"
     });
   };
 
-  const handleMarkRead = (id: number) => {
-    setNotifications(prev => prev.map(n => 
+  const handleMarkRead = async (id: string) => {
+    await notificationsAPI.markAsRead(id);setNotifications(prev => prev.map(n =>
       n.id === id ? { ...n, unread: false } : n
     ));
   };
 
-  const handleDismiss = (id: number) => {
-    setNotifications(prev => prev.filter(n => n.id !== id));
+  const handleDismiss = async (id: string) => {
+    try{await handleMarkRead(id)}catch(error:any){return void toast.error('Unable to dismiss notification',{description:error.message})}
     toast.info("Notification dismissed", {
       className: "bg-orange-900/90 border-orange-700 text-orange-100"
     });
   };
 
-  const handleAcceptFriend = (id: number, name: string) => {
+  const handleAcceptFriend = (id: string, name: string) => {
     handleDismiss(id);
     toast.success("Friend request accepted", {
       description: `${name} is now your friend`,
@@ -72,19 +77,15 @@ export function Notifications({ onNavigate }: NotificationsProps) {
     });
   };
 
-  const handleDeclineFriend = (id: number) => {
+  const handleDeclineFriend = (id: string) => {
     handleDismiss(id);
     toast.info("Friend request declined", {
       className: "bg-orange-900/90 border-orange-700 text-orange-100"
     });
   };
 
-  const handleJoinMatch = (id: number) => {
-    handleMarkRead(id);
-    toast.success("Joining match...", {
-      className: "bg-green-900/90 border-green-700 text-green-100"
-    });
-    // Navigate to match or handle match joining logic
+  const handleJoinMatch = async (id: string) => {
+    const notification=notifications.find(item=>item.id===id);try{await handleMarkRead(id)}catch(error:any){return void toast.error('Unable to open notification',{description:error.message})}if(notification?.type==='friend'){sessionStorage.setItem('open_friend_requests','1');onNavigate?.('profile');return}
   };
 
   const handleSavePreferences = async () => {
@@ -202,6 +203,9 @@ export function Notifications({ onNavigate }: NotificationsProps) {
         </TabsList>
 
         <TabsContent value="notifications" className="space-y-4">
+          {notificationsLoading&&<Card className="border-orange-900/20 bg-black/40"><CardContent className="p-6 font-mono text-sm text-gray-400">Loading notifications…</CardContent></Card>}
+          {notificationsError&&<Card className="border-red-700/40 bg-red-950/10"><CardContent className="p-6 font-mono text-sm text-red-300">{notificationsError}</CardContent></Card>}
+          {!notificationsLoading&&!notificationsError&&!notifications.length&&<Card className="border-orange-900/20 bg-black/40"><CardContent className="p-6 font-mono text-sm text-gray-500">No notifications.</CardContent></Card>}
           {notifications.map((notification) => (
             <Card 
               key={notification.id} 

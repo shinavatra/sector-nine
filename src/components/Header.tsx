@@ -13,9 +13,10 @@ interface HeaderProps {
   currentPage?: string;
   onLogout?: () => void;
   isPremium?: boolean;
+  notificationUnreadCount?: number;
 }
 
-export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = false }: HeaderProps) {
+export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = false, notificationUnreadCount = 0 }: HeaderProps) {
   const { user } = useUser();
   
   // Get equipped badge
@@ -70,7 +71,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
               className="rounded-md p-2 text-gray-300 hover:text-orange-400 hover:bg-orange-900/10"
               onClick={(event) => follow(event, 'notifications')}
             >
-              <Bell className="w-5 h-5" />
+              <span className="relative block"><Bell className="w-5 h-5" />{notificationUnreadCount>0&&<span className="absolute -right-2 -top-2 min-w-4 rounded-full bg-red-500 px-1 text-center text-[10px] font-bold leading-4 text-white">{notificationUnreadCount>99?'99+':notificationUnreadCount}</span>}</span>
             </a>
 
             <DropdownMenu>

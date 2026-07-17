@@ -1157,44 +1157,50 @@ app.get('/friends/search', requireAuth, async (req: AuthRequest, res) => {
 })
 
 app.post('/friends/request', requireAuth, async (req: AuthRequest, res) => {
+  const db=await pool.connect()
   try {
+    await db.query('BEGIN')
     const { targetUserId } = req.body
-    if(targetUserId===req.userId)return res.status(400).json({error:'You cannot send a friend request to yourself'})
-    const target=await pool.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL',[targetUserId])
-    if(!target.rows[0])return res.status(404).json({error:'User not found'})
-    const existing=await pool.query(`SELECT id,status FROM friendships WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1)`,[req.userId,targetUserId])
-    if(existing.rows[0]&&existing.rows[0].status!=='declined')return res.status(409).json({error:existing.rows[0].status==='accepted'?'You are already friends':'A friend request is already pending'})
+    if(targetUserId===req.userId){await db.query('ROLLBACK');return res.status(400).json({error:'You cannot send a friend request to yourself'})}
+    const target=await db.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL',[targetUserId])
+    if(!target.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'User not found'})}
+    const existing=await db.query(`SELECT id,status FROM friendships WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1) FOR UPDATE`,[req.userId,targetUserId])
+    if(existing.rows[0]&&existing.rows[0].status!=='declined'){await db.query('ROLLBACK');return res.status(409).json({error:existing.rows[0].status==='accepted'?'You are already friends':'A friend request is already pending'})}
     const request=existing.rows[0]
-      ?await pool.query(`UPDATE friendships SET user_id=$1,friend_id=$2,status='pending',updated_at=NOW() WHERE id=$3 RETURNING *`,[req.userId,targetUserId,existing.rows[0].id])
-      :await pool.query(`INSERT INTO friendships(user_id,friend_id,status) VALUES($1,$2,'pending') RETURNING *`,[req.userId,targetUserId])
-    const uResult = await pool.query('SELECT username FROM users WHERE id=$1', [req.userId])
-    await pool.query(
-      `INSERT INTO notifications (user_id, type, title, message, related_user_id)
-       VALUES ($1,'friend_request','Friend Request',$2,$3)`,
-      [targetUserId, `${uResult.rows[0]?.username} sent you a friend request`, req.userId]
+      ?await db.query(`UPDATE friendships SET user_id=$1,friend_id=$2,status='pending',updated_at=NOW() WHERE id=$3 RETURNING *`,[req.userId,targetUserId,existing.rows[0].id])
+      :await db.query(`INSERT INTO friendships(user_id,friend_id,status) VALUES($1,$2,'pending') RETURNING *`,[req.userId,targetUserId])
+    const uResult = await db.query('SELECT username FROM users WHERE id=$1', [req.userId])
+    await db.query(
+      `INSERT INTO notifications (user_id,type,title,message,related_user_id,related_friendship_id,read)
+       VALUES ($1,'friend_request','Friend Request',$2,$3,$4,false)
+       ON CONFLICT (related_friendship_id) WHERE related_friendship_id IS NOT NULL
+       DO UPDATE SET user_id=EXCLUDED.user_id,message=EXCLUDED.message,related_user_id=EXCLUDED.related_user_id,read=false,created_at=NOW()`,
+      [targetUserId, `${uResult.rows[0]?.username} sent you a friend request`, req.userId,request.rows[0].id]
     )
+    await db.query('COMMIT')
     return res.status(201).json({ request:request.rows[0] })
   } catch (err: any) {
-    return res.status(500).json({ error: err.message })
-  }
+    await db.query('ROLLBACK');return sendDatabaseError(res,err)
+  }finally{db.release()}
 })
 
 app.post('/friends/accept', requireAuth, async (req: AuthRequest, res) => {
-  try {
+  const db=await pool.connect();try {await db.query('BEGIN')
     const { requestId } = req.body
-    const result=await pool.query(
+    const result=await db.query(
       `UPDATE friendships SET status='accepted',updated_at=NOW() WHERE id=$1 AND friend_id=$2 AND status='pending' RETURNING *`,
       [requestId, req.userId]
     )
-    if(!result.rows[0])return res.status(404).json({error:'Pending request not found or not addressed to you'})
+    if(!result.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'Pending request not found or not addressed to you'})}
+    await db.query("UPDATE notifications SET read=true WHERE user_id=$1 AND related_friendship_id=$2 AND type='friend_request'",[req.userId,requestId]);await db.query('COMMIT')
     return res.json({ friendship:result.rows[0] })
   } catch (err: any) {
-    return res.status(500).json({ error: err.message })
-  }
+    await db.query('ROLLBACK');return sendDatabaseError(res,err)
+  }finally{db.release()}
 })
 
-app.post('/friends/requests/:requestId/decline',requireAuth,async(req:AuthRequest,res)=>{try{const result=await pool.query(`UPDATE friendships SET status='declined',updated_at=NOW() WHERE id=$1 AND friend_id=$2 AND status='pending' RETURNING *`,[req.params.requestId,req.userId]);if(!result.rows[0])return res.status(404).json({error:'Pending request not found or not addressed to you'});return res.json({request:result.rows[0]})}catch(err:any){return sendDatabaseError(res,err)}})
-app.delete('/friends/requests/:requestId',requireAuth,async(req:AuthRequest,res)=>{try{const result=await pool.query(`DELETE FROM friendships WHERE id=$1 AND user_id=$2 AND status='pending' RETURNING id`,[req.params.requestId,req.userId]);if(!result.rows[0])return res.status(404).json({error:'Outgoing request not found'});return res.json({ok:true})}catch(err:any){return sendDatabaseError(res,err)}})
+app.post('/friends/requests/:requestId/decline',requireAuth,async(req:AuthRequest,res)=>{const db=await pool.connect();try{await db.query('BEGIN');const result=await db.query(`UPDATE friendships SET status='declined',updated_at=NOW() WHERE id=$1 AND friend_id=$2 AND status='pending' RETURNING *`,[req.params.requestId,req.userId]);if(!result.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'Pending request not found or not addressed to you'})}await db.query("UPDATE notifications SET read=true WHERE user_id=$1 AND related_friendship_id=$2 AND type='friend_request'",[req.userId,req.params.requestId]);await db.query('COMMIT');return res.json({request:result.rows[0]})}catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}})
+app.delete('/friends/requests/:requestId',requireAuth,async(req:AuthRequest,res)=>{const db=await pool.connect();try{await db.query('BEGIN');const result=await db.query(`DELETE FROM friendships WHERE id=$1 AND user_id=$2 AND status='pending' RETURNING id,friend_id`,[req.params.requestId,req.userId]);if(!result.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'Outgoing request not found'})}await db.query("UPDATE notifications SET read=true WHERE user_id=$1 AND related_friendship_id=$2 AND type='friend_request'",[result.rows[0].friend_id,req.params.requestId]);await db.query('COMMIT');return res.json({ok:true})}catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}})
 app.delete('/friends/:friendshipId',requireAuth,async(req:AuthRequest,res)=>{try{const result=await pool.query(`DELETE FROM friendships WHERE id=$1 AND status='accepted' AND (user_id=$2 OR friend_id=$2) RETURNING id`,[req.params.friendshipId,req.userId]);if(!result.rows[0])return res.status(404).json({error:'Accepted friendship not found'});return res.json({ok:true})}catch(err:any){return sendDatabaseError(res,err)}})
 
 // =====================================================
