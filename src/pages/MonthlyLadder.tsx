@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
+import { FramedAvatar } from "../components/FramedAvatar";
 import { Trophy, Calendar, TrendingUp, Medal, Crown, Star, ArrowLeft } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
 import { statsAPI } from "../utils/api";
@@ -128,12 +129,12 @@ export function MonthlyLadder({ onNavigate }: MonthlyLadderProps) {
             <div className="flex items-center justify-between p-4 bg-orange-900/10 rounded border border-orange-900/30">
               <div className="flex items-center space-x-4">
                 <div className="text-2xl text-orange-400 font-mono">{userRank ? `#${userRank}` : "--"}</div>
-                <Avatar className="h-12 w-12 border-2 border-orange-900/30">
+                <FramedAvatar frameId={user.equippedFrame}><Avatar className="h-12 w-12 border-2 border-orange-900/30">
                   <AvatarImage src={user.resolvedAvatar} alt={user.username} />
                   <AvatarFallback className="bg-orange-900/20 text-orange-400">
                     {user.username.slice(0, 2)}
                   </AvatarFallback>
-                </Avatar>
+                </Avatar></FramedAvatar>
                 <div>
                   <div className="text-orange-400 font-mono">{user.username}</div>
                   <div className="text-xs text-green-400 font-mono">Level {user.level || 0}</div>
@@ -184,12 +185,12 @@ export function MonthlyLadder({ onNavigate }: MonthlyLadderProps) {
                     <div className="w-12 flex items-center justify-center">
                       {getRankIcon(index + 1)}
                     </div>
-                    <Avatar className="h-10 w-10 border-2 border-orange-900/30">
-                      <AvatarImage src={player.steam_avatar || ""} alt={player.username} />
+                    <FramedAvatar frameId={player.equippedFrame}><Avatar className="h-10 w-10 border-2 border-orange-900/30">
+                      <AvatarImage src={player.resolvedAvatar || player.steam_avatar || ""} alt={player.username} />
                       <AvatarFallback className="bg-orange-900/20 text-orange-400">
                         {(player.username || "??").slice(0, 2)}
                       </AvatarFallback>
-                    </Avatar>
+                    </Avatar></FramedAvatar>
                     <div>
                       <div className="text-orange-400 font-mono">{player.username}</div>
                       <div className="text-xs text-green-400 font-mono">Level {player.level}</div>

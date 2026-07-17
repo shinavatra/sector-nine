@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { MessageCircle, Send, X, Users, UserPlus, Settings, Volume2, VolumeX, Minimize2 } from "lucide-react";
 import { friendsAPI, chatAPI } from "../utils/api";
 import { toast } from "sonner";
+import { useUser } from "../contexts/UserContext";
 
 interface Friend {
   id: string;
@@ -37,6 +38,7 @@ interface ChatRoom {
 }
 
 export function GlobalChat() {
+  const { onlineFriends } = useUser();
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [activeTab, setActiveTab] = useState("chats");
@@ -46,12 +48,66 @@ export function GlobalChat() {
   const [chatRooms, setChatRooms] = useState<ChatRoom[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const seenNotificationIds = useRef(new Set<string>());
+  const unreadInitialized = useRef(false);
+  const originalTitle = useRef(document.title);
+
+  useEffect(() => {
+    let active = true;
+    const pollUnread = async () => {
+      try {
+        const { unread } = await chatAPI.getUnread();
+        if (!active) return;
+        const items = Array.isArray(unread) ? unread : [];
+        const counts = new Map<string, { count: number; username: string }>();
+        for (const item of items) {
+          const current = counts.get(item.sender_id) || { count: 0, username: item.sender_username || 'Unknown' };
+          current.count += 1;
+          counts.set(item.sender_id, current);
+        }
+        setChatRooms(prev => {
+          const next = prev.map(room => ({ ...room, unreadCount: counts.get(room.id)?.count || 0 }));
+          for (const [senderId, value] of counts) {
+            if (!next.some(room => room.id === senderId)) next.push({
+              id: senderId,
+              name: value.username,
+              type: 'friend',
+              participants: [value.username],
+              messages: [],
+              unreadCount: value.count
+            });
+          }
+          return next;
+        });
+        for (const item of items) {
+          if (seenNotificationIds.current.has(item.notification_id)) continue;
+          seenNotificationIds.current.add(item.notification_id);
+          if (unreadInitialized.current) toast('New secure message', {
+            description: `${item.sender_username || 'A user'} sent you a message`,
+            action: { label: 'Open', onClick: () => openConversation(item.sender_id, item.sender_username || 'Unknown') }
+          });
+        }
+        unreadInitialized.current = true;
+      } catch {
+        // Keep the last known unread state during transient polling failures.
+      }
+    };
+    void pollUnread();
+    const interval = window.setInterval(pollUnread, 7000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
       loadFriends();
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    const onlineIds = new Set(onlineFriends.map(friend => friend.id));
+    setFriends(prev => prev.map(friend => ({ ...friend, status: onlineIds.has(friend.id) ? 'online' : 'offline' })));
+  }, [onlineFriends]);
 
   const loadFriends = async () => {
     setIsLoading(true);
@@ -62,8 +118,8 @@ export function GlobalChat() {
       const mappedFriends: Friend[] = friendsData.map((f: any) => ({
         id: f.userId,
         name: f.username || 'Unknown',
-        status: 'offline', // Can be enhanced with online status tracking
-        avatar: f.avatar || '',
+        status: f.isOnline ? 'online' : 'offline',
+        avatar: f.resolvedAvatar || f.steam_avatar || '',
         lastSeen: f.lastSeen || 'Recently'
       }));
       
@@ -91,7 +147,7 @@ export function GlobalChat() {
                 id: m.id,
                 sender: m.username,
                 message: m.message,
-                timestamp: new Date(m.createdAt).toLocaleTimeString('en-US', { 
+                timestamp: new Date(m.created_at ?? m.createdAt).toLocaleTimeString('en-US', {
                   hour12: false, 
                   hour: '2-digit', 
                   minute: '2-digit' 
@@ -127,9 +183,9 @@ export function GlobalChat() {
   };
 
   const handleSendMessage = async () => {
-    if (messageInput.trim() && selectedChat) {
-      const messageText = messageInput.trim();
-      setMessageInput("");
+    const messageText = messageInput.trim();
+    if (!messageText || !selectedChat || isSending) return;
+    setIsSending(true);
 
       try {
         const { message: sentMessage } = await chatAPI.sendMessage(selectedChat, messageText);
@@ -138,7 +194,7 @@ export function GlobalChat() {
           id: sentMessage.id,
           sender: 'You',
           message: sentMessage.message,
-          timestamp: new Date(sentMessage.createdAt).toLocaleTimeString('en-US', { 
+          timestamp: new Date(sentMessage.created_at ?? sentMessage.createdAt).toLocaleTimeString('en-US', {
             hour12: false, 
             hour: '2-digit', 
             minute: '2-digit' 
@@ -151,15 +207,15 @@ export function GlobalChat() {
             ? { ...room, messages: [...room.messages, newMessage] }
             : room
         ));
+        setMessageInput("");
       } catch (error) {
-        console.error('Failed to send message:', error);
         toast.error('Failed to send message', {
+          description: error instanceof Error ? error.message : 'The server rejected the message',
           className: 'bg-red-900/90 border-red-700 text-red-100'
         });
-        // Restore the message input
-        setMessageInput(messageText);
+      } finally {
+        setIsSending(false);
       }
-    }
   };
 
   const handleDeleteMessage = async (messageId: string) => {
@@ -185,11 +241,35 @@ export function GlobalChat() {
     }
   };
 
-  const markChatAsRead = (chatId: string) => {
+  const markChatAsRead = async (chatId: string) => {
     setChatRooms(prev => prev.map(room =>
       room.id === chatId ? { ...room, unreadCount: 0 } : room
     ));
+    try {
+      await chatAPI.markConversationRead(chatId);
+    } catch (error) {
+      toast.error('Unable to mark conversation read', {
+        description: error instanceof Error ? error.message : 'The server rejected the update'
+      });
+    }
   };
+
+  function openConversation(friendId: string, friendName: string) {
+    setChatRooms(prev => prev.some(room => room.id === friendId) ? prev : [...prev, {
+      id: friendId,
+      name: friendName,
+      type: 'friend',
+      participants: [friendName],
+      unreadCount: 0,
+      messages: []
+    }]);
+    setIsOpen(true);
+    setIsMinimized(false);
+    setSelectedChat(friendId);
+    setActiveTab('chats');
+    void markChatAsRead(friendId);
+    void loadChatMessages(friendId);
+  }
 
   const startChat = (friendId: string) => {
     const friend = friends.find(f => f.id === friendId);
@@ -197,29 +277,20 @@ export function GlobalChat() {
 
     const existingChat = chatRooms.find(room => room.id === friendId);
     if (existingChat) {
-      setSelectedChat(existingChat.id);
-      markChatAsRead(existingChat.id);
-      loadChatMessages(existingChat.id);
-      setActiveTab("chats");
+      openConversation(existingChat.id, existingChat.name);
       return;
     }
-
-    const newChat: ChatRoom = {
-      id: friendId,
-      name: friend.name,
-      type: 'friend',
-      participants: [friend.name],
-      unreadCount: 0,
-      messages: []
-    };
-
-    setChatRooms(prev => [...prev, newChat]);
-    setSelectedChat(newChat.id);
-    loadChatMessages(friendId);
-    setActiveTab("chats");
+    openConversation(friendId, friend.name);
   };
 
   const totalUnreadMessages = chatRooms.reduce((total, room) => total + room.unreadCount, 0);
+
+  useEffect(() => {
+    document.title = totalUnreadMessages > 0
+      ? `(${totalUnreadMessages}) ${originalTitle.current}`
+      : originalTitle.current;
+    return () => { document.title = originalTitle.current; };
+  }, [totalUnreadMessages]);
 
   if (!isOpen) {
     return (
@@ -292,7 +363,7 @@ export function GlobalChat() {
                   CHATS {totalUnreadMessages > 0 && `(${totalUnreadMessages})`}
                 </TabsTrigger>
                 <TabsTrigger value="friends" className="font-mono data-[state=active]:bg-orange-900/20 data-[state=active]:text-orange-400">
-                  FRIENDS ({friends.filter(f => f.status === 'online').length})
+                  FRIENDS ({onlineFriends.length})
                 </TabsTrigger>
               </TabsList>
 
@@ -355,14 +426,16 @@ export function GlobalChat() {
                           onChange={(e) => setMessageInput(e.target.value)}
                           placeholder="Type message..."
                           className="flex-1 bg-black/20 border-orange-900/20 text-gray-300 font-mono text-xs"
-                          onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                          disabled={isSending}
+                          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSendMessage(); } }}
                         />
                         <Button
                           size="sm"
                           className="bg-orange-900/20 border border-orange-900/30 text-orange-400 hover:bg-orange-900/30 font-mono"
                           onClick={handleSendMessage}
+                          disabled={isSending || !messageInput.trim()}
                         >
-                          <Send className="w-4 h-4" />
+                          <Send className={`w-4 h-4 ${isSending ? 'animate-pulse' : ''}`} />
                         </Button>
                       </div>
                     </div>
@@ -375,10 +448,7 @@ export function GlobalChat() {
                         <div
                           key={room.id}
                           className="flex items-center space-x-3 p-2 bg-black/20 border border-orange-900/20 rounded cursor-pointer hover:bg-orange-900/10"
-                          onClick={() => {
-                            setSelectedChat(room.id);
-                            markChatAsRead(room.id);
-                          }}
+                          onClick={() => openConversation(room.id, room.name)}
                         >
                           <Avatar className="w-8 h-8">
                             <AvatarImage src={friends.find(f => f.name === room.name)?.avatar} />

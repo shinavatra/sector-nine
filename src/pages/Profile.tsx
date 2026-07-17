@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { PlayerProfile } from "../components/PlayerProfile";
 import { SteamIntegration } from "../components/SteamIntegration";
+import { FramedAvatar } from "../components/FramedAvatar";
+import { Friends } from "../components/Friends";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -132,6 +134,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const canChangeDisplayName = (user?.points ?? 0) >= 1500;
 
   useEffect(() => {
     if (!user) return;
@@ -255,7 +258,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
       });
     } catch (error) {
       toast.error('Equip failed', {
-        description: 'Failed to equip frame',
+        description: error instanceof Error ? error.message : 'Failed to equip frame',
         className: 'bg-red-900/90 border-red-700 text-red-100'
       });
     } finally {
@@ -264,22 +267,33 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
   };
 
   const saveResearcherInfo = async () => {
-    if (displayName.trim().length > 80 || bioText.length > 500) {
-      toast.error('Invalid profile', { description: 'Display name or bio is too long' });
+    if (bioText.length > 500) {
+      toast.error('Invalid profile', { description: 'Bio is too long' });
       return;
     }
     setIsSavingSettings(true);
     try {
-      const savedDisplayName = user?.displayName || user?.username || '';
-      if (displayName.trim() !== savedDisplayName) {
-        if (!window.confirm('Change display name — 1500 points?')) return;
-        await changeDisplayName(displayName.trim());
-      }
       await updateProfile({ bio: bioText, profileVisibility, showOnlineStatus });
       setIsEditingProfile(false);
       toast.success('Profile updated');
     } catch (error) {
       toast.error('Update failed', { description: error instanceof Error ? error.message : 'Unable to save profile' });
+    } finally { setIsSavingSettings(false); }
+  };
+
+  const saveDisplayName = async () => {
+    if (!canChangeDisplayName) return;
+    const nextName = displayName.trim();
+    const currentName = user?.displayName || user?.username || '';
+    if (nextName === currentName) return void toast.info('Display name is unchanged');
+    if (!nextName || nextName.length > 80) return void toast.error('Display name must be between 1 and 80 characters');
+    if (!window.confirm('Change display name — 1500 points?')) return;
+    setIsSavingSettings(true);
+    try {
+      await changeDisplayName(nextName);
+      toast.success('Display name changed', { description: '1500 points deducted' });
+    } catch (error) {
+      toast.error('Display-name change failed', { description: error instanceof Error ? error.message : 'Unable to change display name' });
     } finally { setIsSavingSettings(false); }
   };
 
@@ -328,7 +342,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
     kda: user?.stats?.kills && user?.stats?.deaths 
       ? (user.stats.kills / Math.max(user.stats.deaths, 1)).toFixed(2)
       : "0.00",
-    mainGames: ["Half-Life 1"]
+    mainGames: ["Half-Life 1"], equippedFrame:user?.equippedFrame, equippedBadge:user?.equippedBadge
   };
   
   const getRarityColor = (rarity: string) => {
@@ -354,7 +368,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-orange-400 font-mono">PERSONNEL FILE</h1>
+        <div className="flex flex-wrap items-center justify-between gap-4"><h1 className="text-3xl font-bold text-orange-400 font-mono">PERSONNEL FILE</h1>{user?.role==='admin'&&<Button asChild variant="outline" className="border-orange-500/40 text-orange-400 font-mono"><a href="/admin"><Settings className="mr-2 size-4"/>ADMINISTRATION PANEL</a></Button>}</div>
         <p className="text-gray-400 font-mono mt-1">Researcher profile and security clearance information</p>
       </div>
 
@@ -485,7 +499,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
         {/* Main Content */}
         <div className="lg:col-span-2">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-6 bg-black/40 border border-orange-900/20">
+            <TabsList className="grid w-full grid-cols-5 bg-black/40 border border-orange-900/20">
               <TabsTrigger value="overview" className="font-mono data-[state=active]:bg-orange-900/20 data-[state=active]:text-orange-400">
                 OVERVIEW
               </TabsTrigger>
@@ -501,9 +515,6 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
               <TabsTrigger value="friends" className="font-mono data-[state=active]:bg-orange-900/20 data-[state=active]:text-orange-400">
                 FRIENDS
               </TabsTrigger>
-              <TabsTrigger value="settings" className="font-mono data-[state=active]:bg-orange-900/20 data-[state=active]:text-orange-400">
-                SETTINGS
-              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="overview" className="space-y-6">
@@ -515,12 +526,12 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                 <CardContent className="space-y-4">
                   <div className="flex items-center space-x-4">
                     <div className="relative">
-                      <Avatar className="w-20 h-20 border-2 border-orange-900/30">
-                        <AvatarImage src={playerData.avatar} alt={playerData.name} />
-                        <AvatarFallback className="bg-orange-900/20 text-orange-400 text-xl">
-                          {playerData.name.slice(0, 2)}
-                        </AvatarFallback>
-                      </Avatar>
+                      <FramedAvatar frameId={user?.equippedFrame}>
+                        <Avatar className="w-20 h-20 border-2 border-orange-900/30">
+                          <AvatarImage src={playerData.avatar} alt={playerData.name} />
+                          <AvatarFallback className="bg-orange-900/20 text-orange-400 text-xl">{playerData.name.slice(0, 2)}</AvatarFallback>
+                        </Avatar>
+                      </FramedAvatar>
                       <Button
                         size="sm"
                         className="absolute -bottom-2 -right-2 h-8 w-8 rounded-full p-0 bg-orange-900/20 border border-orange-900/30 text-orange-400 hover:bg-orange-900/30"
@@ -550,21 +561,12 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                         Member since: {user?.createdAt ? new Date(user.createdAt).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Recently'} • Last seen: Online now
                       </div>
                     </div>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      className="border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono"
-                      onClick={() => setIsEditingProfile(true)}
-                    >
-                      <Edit className="w-4 h-4 mr-2" />
-                      EDIT
-                    </Button>
                   </div>
 
-                  {isEditingProfile && (
+                  {false && isEditingProfile && (
                     <div className="pt-4 border-t border-orange-900/20 space-y-4">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div><label className="text-sm text-gray-400 font-mono">Display Name</label><Input value={displayName} maxLength={80} onChange={(e) => setDisplayName(e.target.value)} className="mt-1 bg-black/20 border-orange-900/20" /></div>
+                        <div><label className="text-sm text-gray-400 font-mono">Display Name</label><Input value={displayName} disabled={!canChangeDisplayName || isSavingSettings} maxLength={80} onChange={(e) => setDisplayName(e.target.value)} className="mt-1 bg-black/20 border-orange-900/20" /><Button type="button" variant="outline" onClick={saveDisplayName} disabled={!canChangeDisplayName || isSavingSettings} title={!canChangeDisplayName ? 'You need 1500 points to change your display name.' : undefined} className="mt-2 w-full border-orange-900/30 text-orange-400 font-mono">EDIT DISPLAY NAME — 1500 POINTS</Button>{!canChangeDisplayName && <p className="mt-1 text-xs text-gray-500 font-mono">You need 1500 points to change your display name.</p>}</div>
                         <div><label className="text-sm text-gray-400 font-mono">Profile Visibility</label><Select value={profileVisibility} onValueChange={(value) => setProfileVisibility(value as typeof profileVisibility)}><SelectTrigger className="mt-1 bg-black/20 border-orange-900/20"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="public">Public</SelectItem><SelectItem value="friends">Friends</SelectItem><SelectItem value="private">Private</SelectItem></SelectContent></Select></div>
                       </div>
                       <div><label className="text-sm text-gray-400 font-mono">Bio</label><Textarea value={bioText} maxLength={500} onChange={(e) => setBioText(e.target.value)} className="mt-1 bg-black/20 border-orange-900/20" /></div>
@@ -575,8 +577,8 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                   
                   <div className="pt-4 border-t border-orange-900/20">
                     <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-mono text-green-400">BIO SECTION</h4>
-                      <Button
+                      <h4 className="font-mono text-green-400">BIO</h4>
+                      {false && <Button
                         size="sm"
                         variant="outline"
                         className="border-green-900/30 text-green-400 hover:bg-green-900/10 font-mono"
@@ -584,9 +586,9 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                       >
                         <Edit className="w-3 h-3 mr-1" />
                         {isEditingBio ? 'CANCEL' : 'EDIT'}
-                      </Button>
+                      </Button>}
                     </div>
-                    {isEditingBio ? (
+                    {false && isEditingBio ? (
                       <div className="space-y-2">
                         <Textarea
                           value={bioText}
@@ -949,6 +951,8 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
             </TabsContent>
 
             <TabsContent value="friends" className="space-y-6">
+              <Friends currentPlayerId={user?.id||''} currentPlayerName={user?.username||''}/>
+              <div className="hidden">
               {/* Friend Search */}
               <Card className="bg-black/40 border-orange-900/20">
                 <CardHeader>
@@ -1049,9 +1053,10 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                   </div>
                 </CardContent>
               </Card>
+              </div>
             </TabsContent>
 
-            <TabsContent value="settings" className="space-y-6">
+            <TabsContent value="moved-settings" className="hidden">
               <Card className="bg-black/40 border-orange-900/20">
                 <CardHeader>
                   <CardTitle className="text-orange-400 font-mono">ACCOUNT SETTINGS</CardTitle>

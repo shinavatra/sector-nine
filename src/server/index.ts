@@ -5,6 +5,8 @@ import jwt from 'jsonwebtoken'
 import pool from '../db'
 import dotenv from 'dotenv'
 import crypto from 'crypto'
+import { createAdminRouter } from './admin'
+import { onlineUserPredicate } from './presence'
 
 dotenv.config()
 
@@ -17,7 +19,15 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 3001
 const JWT_SECRET = process.env.JWT_SECRET || 'sector-nine-dev-secret-change-in-production'
 const JWT_EXPIRES = '7d'
 
-app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] }))
+const sendDatabaseError = (res: Response, error: any) => {
+  const migrationRequired = error?.code === '42703' || error?.code === '42P01'
+  return res.status(migrationRequired ? 503 : 500).json({
+    code: migrationRequired ? 'DATABASE_MIGRATION_REQUIRED' : 'DATABASE_ERROR',
+    error: error?.message || 'Database request failed',
+  })
+}
+
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] }))
 app.use(express.json({ limit: '2mb' }))
 
 // =====================================================
@@ -65,6 +75,7 @@ const toProfile = (u: any) => {
     id: u.id,
     email: u.email,
     username: u.username,
+    role: u.role || 'user',
     displayName: u.display_name,
     bio: u.bio || '',
     isPremium: u.is_premium,
@@ -90,6 +101,8 @@ const toProfile = (u: any) => {
       tournaments: true,
       messages: true,
       social: true,
+      systemMaintenance: true,
+      securityAlerts: true,
     },
     steamVerified: u.steam_verified || false,
     ownsHL1: u.owns_hl1 || false,
@@ -174,7 +187,7 @@ app.post('/auth/signin', async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({ error: 'email and password are required' })
     }
-    const result = await pool.query('SELECT * FROM users WHERE email=$1', [email.toLowerCase()])
+    const result = await pool.query('SELECT * FROM users WHERE email=$1 AND deleted_at IS NULL', [email.toLowerCase()])
     const user = result.rows[0]
     if (!user) return res.status(401).json({ error: 'Invalid credentials' })
 
@@ -182,6 +195,10 @@ app.post('/auth/signin', async (req, res) => {
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' })
 
     await pool.query('UPDATE users SET last_seen=NOW() WHERE id=$1', [user.id])
+    await pool.query(
+      `INSERT INTO login_history(user_id,method,success,ip,user_agent) VALUES($1,'password',true,$2,$3)`,
+      [user.id, req.ip || null, req.get('user-agent') || null]
+    ).catch(() => undefined)
     const token = jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, { expiresIn: JWT_EXPIRES })
     return res.json({ user: toProfile(user), session: { access_token: token }, profile: toProfile(user) })
   } catch (err: any) {
@@ -265,6 +282,12 @@ app.get('/user/profile', requireAuth, async (req: AuthRequest, res) => {
     await pool.query('UPDATE users SET last_seen=NOW() WHERE id=$1', [req.userId])
     return res.json({ profile: toProfile(result.rows[0]) })
   } catch (err: any) {
+    if (err?.code === '42703' && String(err.message).includes('notification_preferences')) {
+      return res.status(503).json({
+        error: 'Notification preferences are unavailable until database migration 008_notification_preferences_keys.sql is applied.',
+        code: 'NOTIFICATION_PREFERENCES_MIGRATION_REQUIRED',
+      })
+    }
     return res.status(500).json({ error: err.message })
   }
 })
@@ -339,6 +362,7 @@ app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
       if (typeof req.body.customAvatarUrl === 'string' && req.body.customAvatarUrl.length > 1_500_000) {
         return res.status(400).json({ error: 'Custom avatar is too large' })
       }
+      if (req.body.customAvatarUrl) req.body.avatarSource = 'custom'
     }
     if (req.body.socialLinks !== undefined) {
       if (!req.body.socialLinks || typeof req.body.socialLinks !== 'object' || Array.isArray(req.body.socialLinks)) {
@@ -353,7 +377,7 @@ app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
     }
     if (req.body.notificationPreferences !== undefined) {
       const preferences = req.body.notificationPreferences
-      const keys = ['matchFound', 'friendRequests', 'tournaments', 'messages', 'social']
+      const keys = ['matchFound', 'friendRequests', 'tournaments', 'messages', 'social', 'systemMaintenance', 'securityAlerts']
       if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences) ||
           Object.keys(preferences).some((key) => !keys.includes(key)) ||
           keys.some((key) => typeof preferences[key] !== 'boolean')) {
@@ -389,6 +413,12 @@ app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
     )
     return res.json({ profile: toProfile(result.rows[0]) })
   } catch (err: any) {
+    if (err?.code === '42703' && String(err.message).includes('notification_preferences')) {
+      return res.status(503).json({
+        error: 'Notification preferences are unavailable until database migration 008_notification_preferences_keys.sql is applied.',
+        code: 'NOTIFICATION_PREFERENCES_MIGRATION_REQUIRED',
+      })
+    }
     return res.status(500).json({ error: err.message })
   }
 })
@@ -512,17 +542,12 @@ app.post('/user/badge/purchase', requireAuth, async (req: AuthRequest, res) => {
 app.post('/user/frame/purchase', requireAuth, async (req: AuthRequest, res) => {
   try {
     const { frameId, pointsCost } = req.body
-    if (!frameId || pointsCost === undefined) return res.status(400).json({ error: 'Missing frameId or pointsCost' })
-    const userResult = await pool.query('SELECT * FROM users WHERE id=$1', [req.userId])
-    const user = userResult.rows[0]
-    if (!user) return res.status(404).json({ error: 'User not found' })
-    if (user.points < pointsCost) return res.status(400).json({ error: `Insufficient points. Have ${user.points}, need ${pointsCost}` })
-    if (user.owned_frames?.includes(frameId)) return res.status(400).json({ error: 'Frame already owned' })
-    const newFrames = [...(user.owned_frames || []), frameId]
+    if(typeof frameId!=='string'||!frameId||!Number.isInteger(pointsCost)||pointsCost<0)return res.status(400).json({error:'Invalid frame purchase'})
     const result = await pool.query(
-      `UPDATE users SET points=points-$1, owned_frames=$2 WHERE id=$3 RETURNING *`,
-      [pointsCost, newFrames, req.userId]
+      `UPDATE users SET points=points-$1,owned_frames=array_append(COALESCE(owned_frames,'{}'::text[]),$2) WHERE id=$3 AND points>=$1 AND NOT($2=ANY(COALESCE(owned_frames,'{}'::text[]))) RETURNING *`,
+      [pointsCost,frameId,req.userId]
     )
+    if(!result.rows[0]){const u=await pool.query('SELECT points,owned_frames FROM users WHERE id=$1',[req.userId]);if(!u.rows[0])return res.status(404).json({error:'User not found'});if(u.rows[0].owned_frames?.includes(frameId))return res.status(409).json({error:'Frame already owned'});return res.status(400).json({error:`Insufficient points. Have ${u.rows[0].points}, need ${pointsCost}`})}
     return res.json({ profile: toProfile(result.rows[0]) })
   } catch (err: any) {
     return res.status(500).json({ error: err.message })
@@ -555,13 +580,15 @@ app.post('/user/frame/equip', requireAuth, async (req: AuthRequest, res) => {
   }
 })
 
+app.get('/users/:userId/profile',async(req,res)=>{try{const result=await pool.query(`SELECT id,username,display_name,bio,level,experience,wins,losses,total_kills,total_deaths,equipped_badge,equipped_frame,COALESCE(CASE WHEN avatar_source='custom' THEN NULLIF(custom_avatar_url,'') END,steam_avatar) AS resolved_avatar FROM users WHERE id=$1 AND deleted_at IS NULL`,[req.params.userId]);const u=result.rows[0];if(!u)return res.status(404).json({error:'Profile not found'});return res.json({profile:{id:u.id,username:u.username,displayName:u.display_name,bio:u.bio,level:u.level,experience:u.experience,wins:u.wins,losses:u.losses,totalKills:u.total_kills,totalDeaths:u.total_deaths,equippedBadge:u.equipped_badge,equippedFrame:u.equipped_frame,resolvedAvatar:u.resolved_avatar}})}catch(err:any){return sendDatabaseError(res,err)}})
+
 // =====================================================
 // LEADERBOARD & MATCHES
 // =====================================================
 
 app.get('/leaderboard', async (_req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM leaderboard LIMIT 100')
+    const result = await pool.query(`SELECT l.*,COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS "resolvedAvatar",u.equipped_frame AS "equippedFrame" FROM leaderboard l JOIN users u ON u.id=l.id LIMIT 100`)
     return res.json({ leaderboard: result.rows })
   } catch (err: any) {
     return res.status(500).json({ error: err.message })
@@ -878,7 +905,7 @@ app.get('/ladder/:season', async (req, res) => {
     }
     const s = seasonResult.rows[0]
     const entries = await pool.query(
-      `SELECT le.*, u.username, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar, u.level, u.is_premium,
+      `SELECT le.*, u.username, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar,COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS "resolvedAvatar",u.equipped_frame AS "equippedFrame", u.level, u.is_premium,
               ROW_NUMBER() OVER (ORDER BY le.points DESC) as rank
        FROM ladder_entries le
        JOIN users u ON le.user_id = u.id
@@ -906,32 +933,128 @@ app.get('/ladder/seasons', async (_req, res) => {
 // CHAT
 // =====================================================
 
-app.get('/chat/:room', async (req, res) => {
+const directChatAccess = async (senderId: string, recipientId: string) => {
+  const relationship = await pool.query(
+    `SELECT 1 FROM friendships
+     WHERE status='accepted'
+       AND ((user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1))
+     LIMIT 1`,
+    [senderId, recipientId]
+  )
+  return relationship.rowCount === 1
+}
+
+const directChatRecipientExists = async (recipientId: string) => {
+  const result = await pool.query(
+    'SELECT 1 FROM users WHERE id=$1 AND deleted_at IS NULL',
+    [recipientId]
+  )
+  return result.rowCount === 1
+}
+
+const validUserId = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+
+app.get('/chat/unread', requireAuth, async (req: AuthRequest, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM chat_messages WHERE room=$1 ORDER BY created_at DESC LIMIT 50`,
-      [req.params.room]
+      `SELECT n.id AS notification_id, cm.id AS message_id,
+              cm.user_id AS sender_id, cm.username AS sender_username,
+              cm.created_at
+       FROM notifications n
+       JOIN chat_messages cm ON cm.id=n.related_chat_message_id
+       WHERE n.user_id=$1 AND n.type='message' AND n.read=false
+       ORDER BY cm.created_at ASC, cm.id ASC`,
+      [req.userId]
     )
-    return res.json({ messages: result.rows.reverse() })
+    return res.json({ unread: result.rows, count: result.rowCount || 0 })
+  } catch (err: any) {
+    return sendDatabaseError(res, err)
+  }
+})
+
+app.get('/chat/:recipientId', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const recipientId = req.params.recipientId
+    if (!validUserId(recipientId)) return res.status(400).json({ error: 'Invalid conversation recipient' })
+    if (recipientId === req.userId) return res.status(400).json({ error: 'A direct conversation requires another user' })
+    if (!(await directChatRecipientExists(recipientId))) return res.status(404).json({ error: 'Conversation recipient not found' })
+    if (!(await directChatAccess(req.userId!, recipientId))) return res.status(403).json({ error: 'An accepted friendship is required for this conversation' })
+    const result = await pool.query(
+      `SELECT * FROM (
+         SELECT * FROM chat_messages
+         WHERE (user_id=$1 AND recipient_id=$2) OR (user_id=$2 AND recipient_id=$1)
+         ORDER BY created_at DESC, id DESC
+         LIMIT 50
+       ) recent_messages
+       ORDER BY created_at ASC, id ASC`,
+      [req.userId, recipientId]
+    )
+    return res.json({ messages: result.rows })
   } catch (err: any) {
     return res.status(500).json({ error: err.message })
   }
 })
 
-app.post('/chat/:room', requireAuth, async (req: AuthRequest, res) => {
+app.post('/chat/:recipientId', requireAuth, async (req: AuthRequest, res) => {
   try {
     const { message } = req.body
-    if (!message?.trim()) return res.status(400).json({ error: 'Message cannot be empty' })
+    const recipientId = req.params.recipientId
+    if (!validUserId(recipientId)) return res.status(400).json({ error: 'Invalid conversation recipient' })
+    if (typeof message !== 'string' || !message.trim()) return res.status(400).json({ error: 'Message cannot be empty' })
+    if (message.trim().length > 2000) return res.status(400).json({ error: 'Message must be 2000 characters or fewer' })
+    if (recipientId === req.userId) return res.status(400).json({ error: 'A direct conversation requires another user' })
+    if (!(await directChatRecipientExists(recipientId))) return res.status(404).json({ error: 'Conversation recipient not found' })
+    if (!(await directChatAccess(req.userId!, recipientId))) return res.status(403).json({ error: 'An accepted friendship is required to send a message' })
     const uResult = await pool.query('SELECT username, is_premium FROM users WHERE id=$1', [req.userId])
     const u = uResult.rows[0]
-    const result = await pool.query(
-      `INSERT INTO chat_messages (user_id, username, message, room, is_premium)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [req.userId, u?.username || 'Unknown', message.trim(), req.params.room, u?.is_premium || false]
-    )
-    return res.json({ message: result.rows[0] })
+    if (!u) return res.status(404).json({ error: 'Sender not found' })
+    const room = `dm:${[req.userId!, recipientId].sort().join(':')}`
+    const db = await pool.connect()
+    try {
+      await db.query('BEGIN')
+      const result = await db.query(
+        `INSERT INTO chat_messages (user_id, recipient_id, username, message, room, is_premium)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+        [req.userId, recipientId, u.username, message.trim(), room, u.is_premium || false]
+      )
+      await db.query(
+        `INSERT INTO notifications
+           (user_id,type,title,message,related_user_id,related_chat_message_id)
+         VALUES ($1,'message','New secure message',$2,$3,$4)
+         ON CONFLICT (related_chat_message_id) WHERE related_chat_message_id IS NOT NULL DO NOTHING`,
+        [recipientId, `${u.username} sent you a message`, req.userId, result.rows[0].id]
+      )
+      await db.query('COMMIT')
+      return res.json({ message: result.rows[0] })
+    } catch (error) {
+      await db.query('ROLLBACK')
+      throw error
+    } finally {
+      db.release()
+    }
   } catch (err: any) {
-    return res.status(500).json({ error: err.message })
+    return sendDatabaseError(res, err)
+  }
+})
+
+app.put('/chat/:recipientId/read', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const recipientId = req.params.recipientId
+    if (!validUserId(recipientId)) return res.status(400).json({ error: 'Invalid conversation recipient' })
+    const result = await pool.query(
+      `UPDATE notifications n SET read=true
+       FROM chat_messages cm
+       WHERE n.related_chat_message_id=cm.id
+         AND n.user_id=$1
+         AND n.type='message'
+         AND n.read=false
+         AND cm.user_id=$2
+       RETURNING n.id`,
+      [req.userId, recipientId]
+    )
+    return res.json({ ok: true, markedRead: result.rowCount || 0 })
+  } catch (err: any) {
+    return sendDatabaseError(res, err)
   }
 })
 
@@ -954,15 +1077,67 @@ app.delete('/chat/:room/:messageId', requireAuth, async (req: AuthRequest, res) 
 app.get('/friends', requireAuth, async (req: AuthRequest, res) => {
   try {
     const result = await pool.query(
-      `SELECT f.*, u.username, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar, u.level, u.is_premium, u.last_seen
+      `SELECT f.id, f.status, f.created_at AS "addedAt", u.id AS "userId", u.username,
+              COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar,
+              u.level, u.is_premium AS "isPremium", u.last_seen AS "lastSeen",
+              (${onlineUserPredicate('u')}) AS "isOnline"
        FROM friendships f
-       JOIN users u ON (CASE WHEN f.user_id=$1 THEN f.friend_id ELSE f.user_id END) = u.id
-       WHERE f.user_id=$1 OR f.friend_id=$1`,
+       LEFT JOIN users u ON (CASE WHEN f.user_id=$1 THEN f.friend_id ELSE f.user_id END) = u.id
+       WHERE (f.user_id=$1 OR f.friend_id=$1) AND f.status='accepted' AND u.id IS NOT NULL AND u.deleted_at IS NULL`,
       [req.userId]
     )
-    return res.json({ friends: result.rows })
+    const requests = await pool.query(
+      `SELECT f.id,f.status,f.created_at AS "sentAt",f.user_id AS "senderId",f.friend_id AS "recipientId",
+              u.username,COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS avatar
+       FROM friendships f JOIN users u ON u.id=CASE WHEN f.user_id=$1 THEN f.friend_id ELSE f.user_id END
+       WHERE (f.user_id=$1 OR f.friend_id=$1) AND f.status='pending' AND u.deleted_at IS NULL
+       ORDER BY f.created_at DESC`,[req.userId])
+    return res.json({
+      friends: result.rows,
+      incomingRequests: requests.rows.filter(row=>row.recipientId===req.userId),
+      outgoingRequests: requests.rows.filter(row=>row.senderId===req.userId),
+    })
   } catch (err: any) {
-    return res.status(500).json({ error: err.message })
+    return sendDatabaseError(res,err)
+  }
+})
+
+app.get('/friends/online', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.id,u.username,u.display_name AS "displayName",
+              COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS "resolvedAvatar",
+              u.equipped_frame AS "equippedFrame",u.last_seen AS "lastSeen",TRUE AS "isOnline"
+       FROM friendships f
+       JOIN users u ON u.id=CASE WHEN f.user_id=$1 THEN f.friend_id ELSE f.user_id END
+       WHERE (f.user_id=$1 OR f.friend_id=$1)
+         AND f.status='accepted'
+         AND u.id<>$1
+         AND ${onlineUserPredicate('u')}
+       ORDER BY u.username`,
+      [req.userId]
+    )
+    return res.json({ onlineCount: result.rowCount || 0, friends: result.rows })
+  } catch (err: any) {
+    return sendDatabaseError(res, err)
+  }
+})
+
+app.post('/presence/heartbeat', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    await pool.query('UPDATE users SET last_seen=NOW() WHERE id=$1 AND deleted_at IS NULL', [req.userId])
+    return res.json({ ok: true })
+  } catch (err: any) {
+    return sendDatabaseError(res, err)
+  }
+})
+
+app.post('/presence/offline', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    await pool.query("UPDATE users SET last_seen=NOW()-INTERVAL '1 day' WHERE id=$1", [req.userId])
+    return res.json({ ok: true })
+  } catch (err: any) {
+    return sendDatabaseError(res, err)
   }
 })
 
@@ -972,30 +1147,33 @@ app.get('/friends/search', requireAuth, async (req: AuthRequest, res) => {
     if (!q || q.length < 2) return res.json({ users: [] })
     const result = await pool.query(
       `SELECT id, username, COALESCE(CASE WHEN avatar_source='custom' THEN NULLIF(custom_avatar_url,'') END,steam_avatar) AS steam_avatar, level, is_premium
-       FROM users WHERE username ILIKE $1 AND id != $2 LIMIT 20`,
+       FROM users WHERE username ILIKE $1 AND id != $2 AND deleted_at IS NULL LIMIT 20`,
       [`%${q}%`, req.userId]
     )
     return res.json({ users: result.rows })
   } catch (err: any) {
-    return res.status(500).json({ error: err.message })
+    return sendDatabaseError(res,err)
   }
 })
 
 app.post('/friends/request', requireAuth, async (req: AuthRequest, res) => {
   try {
     const { targetUserId } = req.body
-    await pool.query(
-      `INSERT INTO friendships (user_id, friend_id) VALUES ($1,$2)
-       ON CONFLICT (user_id, friend_id) DO NOTHING`,
-      [req.userId, targetUserId]
-    )
+    if(targetUserId===req.userId)return res.status(400).json({error:'You cannot send a friend request to yourself'})
+    const target=await pool.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL',[targetUserId])
+    if(!target.rows[0])return res.status(404).json({error:'User not found'})
+    const existing=await pool.query(`SELECT id,status FROM friendships WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1)`,[req.userId,targetUserId])
+    if(existing.rows[0]&&existing.rows[0].status!=='declined')return res.status(409).json({error:existing.rows[0].status==='accepted'?'You are already friends':'A friend request is already pending'})
+    const request=existing.rows[0]
+      ?await pool.query(`UPDATE friendships SET user_id=$1,friend_id=$2,status='pending',updated_at=NOW() WHERE id=$3 RETURNING *`,[req.userId,targetUserId,existing.rows[0].id])
+      :await pool.query(`INSERT INTO friendships(user_id,friend_id,status) VALUES($1,$2,'pending') RETURNING *`,[req.userId,targetUserId])
     const uResult = await pool.query('SELECT username FROM users WHERE id=$1', [req.userId])
     await pool.query(
       `INSERT INTO notifications (user_id, type, title, message, related_user_id)
        VALUES ($1,'friend_request','Friend Request',$2,$3)`,
       [targetUserId, `${uResult.rows[0]?.username} sent you a friend request`, req.userId]
     )
-    return res.json({ ok: true })
+    return res.status(201).json({ request:request.rows[0] })
   } catch (err: any) {
     return res.status(500).json({ error: err.message })
   }
@@ -1004,15 +1182,20 @@ app.post('/friends/request', requireAuth, async (req: AuthRequest, res) => {
 app.post('/friends/accept', requireAuth, async (req: AuthRequest, res) => {
   try {
     const { requestId } = req.body
-    await pool.query(
-      `UPDATE friendships SET status='accepted' WHERE id=$1 AND friend_id=$2`,
+    const result=await pool.query(
+      `UPDATE friendships SET status='accepted',updated_at=NOW() WHERE id=$1 AND friend_id=$2 AND status='pending' RETURNING *`,
       [requestId, req.userId]
     )
-    return res.json({ ok: true })
+    if(!result.rows[0])return res.status(404).json({error:'Pending request not found or not addressed to you'})
+    return res.json({ friendship:result.rows[0] })
   } catch (err: any) {
     return res.status(500).json({ error: err.message })
   }
 })
+
+app.post('/friends/requests/:requestId/decline',requireAuth,async(req:AuthRequest,res)=>{try{const result=await pool.query(`UPDATE friendships SET status='declined',updated_at=NOW() WHERE id=$1 AND friend_id=$2 AND status='pending' RETURNING *`,[req.params.requestId,req.userId]);if(!result.rows[0])return res.status(404).json({error:'Pending request not found or not addressed to you'});return res.json({request:result.rows[0]})}catch(err:any){return sendDatabaseError(res,err)}})
+app.delete('/friends/requests/:requestId',requireAuth,async(req:AuthRequest,res)=>{try{const result=await pool.query(`DELETE FROM friendships WHERE id=$1 AND user_id=$2 AND status='pending' RETURNING id`,[req.params.requestId,req.userId]);if(!result.rows[0])return res.status(404).json({error:'Outgoing request not found'});return res.json({ok:true})}catch(err:any){return sendDatabaseError(res,err)}})
+app.delete('/friends/:friendshipId',requireAuth,async(req:AuthRequest,res)=>{try{const result=await pool.query(`DELETE FROM friendships WHERE id=$1 AND status='accepted' AND (user_id=$2 OR friend_id=$2) RETURNING id`,[req.params.friendshipId,req.userId]);if(!result.rows[0])return res.status(404).json({error:'Accepted friendship not found'});return res.json({ok:true})}catch(err:any){return sendDatabaseError(res,err)}})
 
 // =====================================================
 // NOTIFICATIONS
@@ -1090,7 +1273,12 @@ app.get('/ban/status', requireAuth, async (req: AuthRequest, res) => {
 app.post('/ban', requireAuth, async (req: AuthRequest, res) => {
   try {
     const { userId, reason } = req.body
-    const targetId = userId || req.userId
+    // This public endpoint is a self-penalty used by match-ready decline.
+    // Targeting other accounts is reserved for role-gated /admin/bans.
+    if (userId && userId !== req.userId) {
+      return res.status(403).json({ error: 'Cannot ban another user', code: 'ADMIN_REQUIRED' })
+    }
+    const targetId = req.userId
 
     // Find current ban level to escalate
     const banHistory = await pool.query(
@@ -1286,7 +1474,7 @@ app.post('/steam/auth', async (req, res) => {
     const authenticatedUserId = getOptionalUserId(req)
     const steamId = await verifySteamOpenIdResponse(req.body)
 
-    const linkedResult = await pool.query('SELECT * FROM users WHERE steam_id=$1 LIMIT 1', [steamId])
+    const linkedResult = await pool.query('SELECT * FROM users WHERE steam_id=$1 AND deleted_at IS NULL LIMIT 1', [steamId])
     let user = linkedResult.rows[0]
 
     if (!user) {
@@ -1297,7 +1485,7 @@ app.post('/steam/auth', async (req, res) => {
         })
       }
 
-      const authenticatedResult = await pool.query('SELECT * FROM users WHERE id=$1', [authenticatedUserId])
+      const authenticatedResult = await pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [authenticatedUserId])
       user = authenticatedResult.rows[0]
       if (!user) return res.status(401).json({ error: 'Invalid session', code: 'INVALID_SESSION' })
     }
@@ -1310,6 +1498,10 @@ app.post('/steam/auth', async (req, res) => {
     }
 
     await pool.query('UPDATE users SET last_seen=NOW() WHERE id=$1', [user.id])
+    await pool.query(
+      `INSERT INTO login_history(user_id,method,success,ip,user_agent) VALUES($1,'steam',true,$2,$3)`,
+      [user.id, req.ip || null, req.get('user-agent') || null]
+    ).catch(() => undefined)
     const profile = toProfile(user)
     const token = jwt.sign({ sub: user.id, email: user.email }, JWT_SECRET, { expiresIn: JWT_EXPIRES })
 
@@ -1469,6 +1661,8 @@ app.get('/steam/profile/:steamId', async (req, res) => {
 // =====================================================
 // START
 // =====================================================
+
+app.use('/admin', createAdminRouter(pool, JWT_SECRET))
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🐘 Sector Nine running on port ${PORT}`)

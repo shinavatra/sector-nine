@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { authAPI, userAPI } from '../utils/api';
+import { authAPI, friendsAPI, presenceAPI, userAPI } from '../utils/api';
 const defaultAvatar = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%230b0b0b"/%3E%3Ctext x="50" y="68" text-anchor="middle" font-size="62" fill="%23fb923c"%3E%CE%BB%3C/text%3E%3C/svg%3E';
 
 // =====================================================
@@ -20,6 +20,7 @@ export interface UserStats {
 export interface UserProfile {
   // Identity
   id: string;
+  role: 'user' | 'admin';
   email: string;
   username: string;
   displayName: string | null;
@@ -90,6 +91,8 @@ export interface NotificationPreferences {
   tournaments: boolean;
   messages: boolean;
   social: boolean;
+  systemMaintenance: boolean;
+  securityAlerts: boolean;
 }
 
 interface UserContextType {
@@ -98,8 +101,23 @@ interface UserContextType {
   isAuthenticated: boolean;
   refreshProfile: () => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
+  adoptProfile: (profile: unknown) => void;
   changeDisplayName: (displayName: string) => Promise<void>;
   logout: () => void;
+  onlineFriends: OnlineFriend[];
+  onlineFriendsLoading: boolean;
+  onlineFriendsError: string | null;
+  refreshOnlineFriends: () => Promise<void>;
+}
+
+export interface OnlineFriend {
+  id: string;
+  username: string;
+  displayName: string | null;
+  resolvedAvatar: string | null;
+  equippedFrame: string | null;
+  lastSeen: string;
+  isOnline: true;
 }
 
 // =====================================================
@@ -111,6 +129,23 @@ const UserContext = createContext<UserContextType | undefined>(undefined);
 export function UserProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [onlineFriends, setOnlineFriends] = useState<OnlineFriend[]>([]);
+  const [onlineFriendsLoading, setOnlineFriendsLoading] = useState(false);
+  const [onlineFriendsError, setOnlineFriendsError] = useState<string | null>(null);
+
+  const refreshOnlineFriends = async () => {
+    setOnlineFriendsLoading(true);
+    try {
+      const result = await friendsAPI.getOnline();
+      setOnlineFriends(Array.isArray(result.friends) ? result.friends : []);
+      setOnlineFriendsError(null);
+    } catch (error) {
+      setOnlineFriendsError(error instanceof Error ? error.message : 'Unable to refresh online friends');
+      throw error;
+    } finally {
+      setOnlineFriendsLoading(false);
+    }
+  };
 
   const refreshProfile = async () => {
     try {
@@ -127,6 +162,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
     const { profile } = await userAPI.updateProfile(updates);
     setUser(normalizeProfile(profile));
   };
+  const adoptProfile = (profile: unknown) => setUser(normalizeProfile(profile));
 
   const changeDisplayName = async (displayName: string) => {
     const { profile } = await userAPI.changeDisplayName(displayName);
@@ -134,9 +170,28 @@ export function UserProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    void presenceAPI.offline().catch(() => undefined);
     authAPI.signout();
     setUser(null);
+    setOnlineFriends([]);
+    setOnlineFriendsError(null);
   };
+
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const poll = async () => { if (active) await refreshOnlineFriends().catch(() => undefined); };
+    const heartbeat = async () => { if (active) await presenceAPI.heartbeat().catch(() => undefined); };
+    void poll();
+    void heartbeat();
+    const presenceInterval = window.setInterval(poll, 15000);
+    const heartbeatInterval = window.setInterval(heartbeat, 90000);
+    return () => {
+      active = false;
+      window.clearInterval(presenceInterval);
+      window.clearInterval(heartbeatInterval);
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     const initUser = async () => {
@@ -165,8 +220,13 @@ export function UserProvider({ children }: { children: ReactNode }) {
       isAuthenticated: user !== null,
       refreshProfile,
       updateProfile,
+      adoptProfile,
       changeDisplayName,
       logout,
+      onlineFriends,
+      onlineFriendsLoading,
+      onlineFriendsError,
+      refreshOnlineFriends,
     }}>
       {children}
     </UserContext.Provider>
@@ -188,6 +248,10 @@ export function useUser() {
 // =====================================================
 
 function normalizeProfile(raw: any): UserProfile {
+  const finiteNumber = (value: unknown, fallback = 0) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  };
   const customAvatarUrl = raw.customAvatarUrl ?? null;
   const avatarSource = raw.avatarSource === 'custom' ? 'custom' : 'steam';
   const resolvedAvatar = avatarSource === 'custom' && customAvatarUrl
@@ -198,6 +262,7 @@ function normalizeProfile(raw: any): UserProfile {
 
   return {
     id:                raw.id ?? '',
+    role:              raw.role === 'admin' ? 'admin' : 'user',
     email:             raw.email ?? '',
     username:          raw.username ?? '',
     displayName:       raw.displayName ?? null,
@@ -205,9 +270,9 @@ function normalizeProfile(raw: any): UserProfile {
     isPremium:         raw.isPremium ?? false,
     vipSince:          raw.vipSince ?? null,
     vipMethod:         raw.vipMethod ?? null,
-    points:            raw.points ?? 0,
-    experience:        raw.experience ?? 0,
-    level:             raw.level ?? 1,
+    points:            finiteNumber(raw.points),
+    experience:        finiteNumber(raw.experience),
+    level:             finiteNumber(raw.level),
     equippedBadge:     raw.equippedBadge ?? null,
     equippedFrame:     raw.equippedFrame ?? null,
     ownedBadges:       raw.ownedBadges ?? [],
@@ -230,12 +295,12 @@ function normalizeProfile(raw: any): UserProfile {
     ownsHL1:           raw.ownsHL1 ?? false,
     vacBanned:         raw.vacBanned ?? false,
     gameBanned:        raw.gameBanned ?? false,
-    wins:              raw.wins ?? 0,
-    losses:            raw.losses ?? 0,
-    winStreak:         raw.winStreak ?? 0,
-    bestWinStreak:     raw.bestWinStreak ?? 0,
-    totalKills:        raw.totalKills ?? 0,
-    totalDeaths:       raw.totalDeaths ?? 0,
+    wins:              finiteNumber(raw.wins),
+    losses:            finiteNumber(raw.losses),
+    winStreak:         finiteNumber(raw.winStreak),
+    bestWinStreak:     finiteNumber(raw.bestWinStreak),
+    totalKills:        finiteNumber(raw.totalKills),
+    totalDeaths:       finiteNumber(raw.totalDeaths),
     profileVisibility: raw.profileVisibility ?? 'public',
     showOnlineStatus:  raw.showOnlineStatus ?? true,
     notificationPreferences: {
@@ -244,18 +309,20 @@ function normalizeProfile(raw: any): UserProfile {
       tournaments: notificationPreferences.tournaments ?? true,
       messages: notificationPreferences.messages ?? true,
       social: notificationPreferences.social ?? true,
+      systemMaintenance: notificationPreferences.systemMaintenance ?? true,
+      securityAlerts: notificationPreferences.securityAlerts ?? true,
     },
     createdAt:         raw.createdAt ?? new Date().toISOString(),
     lastSeen:          raw.lastSeen ?? null,
     stats: {
-      matchesPlayed: raw.stats?.matchesPlayed ?? 0,
-      wins:          raw.stats?.wins ?? 0,
-      losses:        raw.stats?.losses ?? 0,
-      kills:         raw.stats?.kills ?? 0,
-      deaths:        raw.stats?.deaths ?? 0,
-      rating:        raw.stats?.rating ?? 0,
-      winRate:       raw.stats?.winRate ?? 0,
-      kda:           raw.stats?.kda ?? '0.00',
+      matchesPlayed: finiteNumber(raw.stats?.matchesPlayed, finiteNumber(raw.wins) + finiteNumber(raw.losses)),
+      wins:          finiteNumber(raw.stats?.wins, finiteNumber(raw.wins)),
+      losses:        finiteNumber(raw.stats?.losses, finiteNumber(raw.losses)),
+      kills:         finiteNumber(raw.stats?.kills, finiteNumber(raw.totalKills)),
+      deaths:        finiteNumber(raw.stats?.deaths, finiteNumber(raw.totalDeaths)),
+      rating:        finiteNumber(raw.stats?.rating, finiteNumber(raw.experience)),
+      winRate:       finiteNumber(raw.stats?.winRate),
+      kda:           Number.isFinite(Number(raw.stats?.kda)) ? Number(raw.stats.kda).toFixed(2) : '0.00',
     },
   };
 }

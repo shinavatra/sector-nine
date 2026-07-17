@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
+import { FramedAvatar } from "./FramedAvatar";
 import { Badge } from "./ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Trophy, Medal, Award, Loader2 } from "lucide-react";
@@ -11,6 +12,8 @@ interface LeaderboardEntry {
   username: string;
   display_name: string | null;
   steam_avatar: string | null;
+  resolvedAvatar: string | null;
+  equippedFrame: string | null;
   is_premium: boolean;
   level: number;
   experience: number;
@@ -95,12 +98,12 @@ export function Leaderboard() {
               >
                 <div className="flex items-center space-x-3">
                   {getRankIcon(player.rank)}
-                  <Avatar className="w-10 h-10 border-2 border-orange-900/30">
-                    <AvatarImage src={player.steam_avatar || ""} alt={player.username} />
+                  <FramedAvatar frameId={player.equippedFrame}><Avatar className="w-10 h-10 border-2 border-orange-900/30">
+                    <AvatarImage src={player.resolvedAvatar || player.steam_avatar || ""} alt={player.username} />
                     <AvatarFallback className="bg-orange-900/20 text-orange-400">
                       {player.username.slice(0, 2).toUpperCase()}
                     </AvatarFallback>
-                  </Avatar>
+                  </Avatar></FramedAvatar>
                 </div>
 
                 <div className="flex-1">

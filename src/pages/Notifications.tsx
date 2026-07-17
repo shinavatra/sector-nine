@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Switch } from "../components/ui/switch";
-import { Bell, AlertTriangle, Trophy, Users, Calendar, Settings, Check, X, Eye } from "lucide-react";
+import { Bell, AlertTriangle, Trophy, Users, Calendar, Settings, Check, X, Eye, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useUser } from "../contexts/UserContext";
 
 // Initial notifications will be empty - data will come from backend
 const initialNotifications: any[] = [];
@@ -19,7 +20,9 @@ interface NotificationsProps {
 }
 
 export function Notifications({ onNavigate }: NotificationsProps) {
+  const { user, updateProfile } = useUser();
   const [notifications, setNotifications] = useState(initialNotifications);
+  const [isSavingPreferences, setIsSavingPreferences] = useState(false);
   const [preferences, setPreferences] = useState({
     matchNotifications: true,
     friendRequests: true,
@@ -28,6 +31,18 @@ export function Notifications({ onNavigate }: NotificationsProps) {
     systemMaintenance: true,
     securityAlerts: true
   });
+
+  useEffect(() => {
+    if (!user) return;
+    setPreferences({
+      matchNotifications: user.notificationPreferences.matchFound,
+      friendRequests: user.notificationPreferences.friendRequests,
+      tournamentUpdates: user.notificationPreferences.tournaments,
+      achievementAlerts: user.notificationPreferences.social,
+      systemMaintenance: user.notificationPreferences.systemMaintenance,
+      securityAlerts: user.notificationPreferences.securityAlerts,
+    });
+  }, [user]);
 
   const handleMarkAllRead = () => {
     setNotifications(prev => prev.map(n => ({ ...n, unread: false })));
@@ -72,12 +87,30 @@ export function Notifications({ onNavigate }: NotificationsProps) {
     // Navigate to match or handle match joining logic
   };
 
-  const handleSavePreferences = () => {
-    // Save preferences to localStorage
-    localStorage.setItem('notification_preferences', JSON.stringify(preferences));
-    toast.success("Preferences saved successfully", {
-      className: "bg-green-900/90 border-green-700 text-green-100"
-    });
+  const handleSavePreferences = async () => {
+    if (!user) return void toast.error('You must be signed in to save notification preferences');
+    setIsSavingPreferences(true);
+    try {
+      await updateProfile({ notificationPreferences: {
+        matchFound: preferences.matchNotifications,
+        friendRequests: preferences.friendRequests,
+        tournaments: preferences.tournamentUpdates,
+        messages: user.notificationPreferences.messages,
+        social: preferences.achievementAlerts,
+        systemMaintenance: preferences.systemMaintenance,
+        securityAlerts: preferences.securityAlerts,
+      } });
+      toast.success("Preferences saved successfully", {
+        className: "bg-green-900/90 border-green-700 text-green-100"
+      });
+    } catch (error) {
+      toast.error('Unable to save notification preferences', {
+        description: error instanceof Error ? error.message : 'The server rejected the update',
+        className: 'bg-red-900/90 border-red-700 text-red-100',
+      });
+    } finally {
+      setIsSavingPreferences(false);
+    }
   };
 
   const getTypeIcon = (type: string) => {
@@ -376,8 +409,9 @@ export function Notifications({ onNavigate }: NotificationsProps) {
                 <Button 
                   className="bg-orange-900/20 border border-orange-900/30 text-orange-400 hover:bg-orange-900/30 font-mono text-sm sm:text-base"
                   onClick={handleSavePreferences}
+                  disabled={isSavingPreferences || !user}
                 >
-                  SAVE PREFERENCES
+                  {isSavingPreferences ? <><Loader2 className="mr-2 size-4 animate-spin"/>SAVING...</> : 'SAVE PREFERENCES'}
                 </Button>
               </div>
             </CardContent>

@@ -87,6 +87,9 @@ export const userAPI = {
   getProfile: async () =>
     apiFetch('/user/profile'),
 
+  getPublicProfile: async (userId: string) =>
+    apiFetch(`/users/${userId}/profile`),
+
   updateProfile: async (updates: Record<string, any>) =>
     apiFetch('/user/profile', { method: 'PUT', body: JSON.stringify(updates) }),
 
@@ -142,6 +145,9 @@ export const friendsAPI = {
   getFriends: async () =>
     apiFetch('/friends'),
 
+  getOnline: async () =>
+    apiFetch('/friends/online'),
+
   searchUsers: async (searchTerm: string) =>
     apiFetch(`/friends/search?q=${encodeURIComponent(searchTerm)}`),
 
@@ -150,6 +156,23 @@ export const friendsAPI = {
 
   acceptRequest: async (requestId: string) =>
     apiFetch('/friends/accept', { method: 'POST', body: JSON.stringify({ requestId }) }),
+
+  declineRequest: async (requestId: string) =>
+    apiFetch(`/friends/requests/${requestId}/decline`, { method: 'POST' }),
+
+  cancelRequest: async (requestId: string) =>
+    apiFetch(`/friends/requests/${requestId}`, { method: 'DELETE' }),
+
+  removeFriend: async (friendshipId: string) =>
+    apiFetch(`/friends/${friendshipId}`, { method: 'DELETE' }),
+}
+
+export const presenceAPI = {
+  heartbeat: async () =>
+    apiFetch('/presence/heartbeat', { method: 'POST' }),
+
+  offline: async () =>
+    apiFetch('/presence/offline', { method: 'POST' }),
 }
 
 // =====================================================
@@ -157,6 +180,9 @@ export const friendsAPI = {
 // =====================================================
 
 export const chatAPI = {
+  getUnread: async () =>
+    apiFetch('/chat/unread'),
+
   getMessages: async (roomId: string) =>
     apiFetch(`/chat/${roomId}`),
 
@@ -165,6 +191,9 @@ export const chatAPI = {
 
   deleteMessage: async (roomId: string, messageId: string) =>
     apiFetch(`/chat/${roomId}/${messageId}`, { method: 'DELETE' }),
+
+  markConversationRead: async (recipientId: string) =>
+    apiFetch(`/chat/${recipientId}/read`, { method: 'PUT' }),
 }
 
 // =====================================================

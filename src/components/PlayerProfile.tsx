@@ -3,8 +3,8 @@ import { Badge } from "./ui/badge";
 import { Card, CardContent, CardHeader } from "./ui/card";
 import { Progress } from "./ui/progress";
 import { Trophy, Star, Target, Zap } from "lucide-react";
-import { useUser } from "../contexts/UserContext";
-import { avatarBadges, profileFrames } from "../utils/badgeData";
+import { FramedAvatar } from "./FramedAvatar";
+import { avatarBadges } from "../utils/badgeData";
 
 interface PlayerProfileProps {
   player: {
@@ -18,30 +18,32 @@ interface PlayerProfileProps {
     losses: number;
     kda: string;
     mainGames: string[];
+    equippedFrame?: string | null;
+    equippedBadge?: string | null;
   };
 }
 
 export function PlayerProfile({ player }: PlayerProfileProps) {
-  const { user } = useUser();
-  const winRate = Math.round((player.wins / (player.wins + player.losses)) * 100);
+  const wins = Number.isFinite(Number(player.wins)) ? Number(player.wins) : 0;
+  const losses = Number.isFinite(Number(player.losses)) ? Number(player.losses) : 0;
+  const matchesPlayed = wins + losses;
+  const winRate = matchesPlayed > 0 ? Math.round((wins / matchesPlayed) * 100) : 0;
+  const kda = Number.isFinite(Number(player.kda)) ? Number(player.kda).toFixed(2) : '0.00';
   
   // Get equipped badge and frame
-  const equippedBadge = avatarBadges.find(badge => badge.id === user?.equippedBadge);
-  const equippedFrame = profileFrames.find(frame => frame.id === user?.equippedFrame);
+  const equippedBadge = avatarBadges.find(badge => badge.id === player.equippedBadge);
   
   return (
     <Card className="w-full max-w-sm border-orange-900/20 bg-black/40">
       <CardHeader className="text-center">
         <div className="flex flex-col items-center space-y-2">
           <div className="relative">
-            <Avatar className={`w-20 h-20 border-2 ${
-              equippedFrame 
-                ? 'border-orange-400 shadow-lg shadow-orange-500/30' 
-                : 'border-orange-900/30'
-            }`}>
-              <AvatarImage src={player.avatar} alt={player.name} />
-              <AvatarFallback className="bg-orange-900/20 text-orange-400">{player.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-            </Avatar>
+            <FramedAvatar frameId={player.equippedFrame}>
+              <Avatar className="w-20 h-20 border-2 border-orange-900/30">
+                <AvatarImage src={player.avatar} alt={player.name} />
+                <AvatarFallback className="bg-orange-900/20 text-orange-400">{player.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+              </Avatar>
+            </FramedAvatar>
             {equippedBadge && (
               <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-black/90 border-2 border-orange-900/30 rounded-full flex items-center justify-center text-lg">
                 {equippedBadge.icon}
@@ -69,11 +71,11 @@ export function PlayerProfile({ player }: PlayerProfileProps) {
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div className="flex items-center space-x-1">
             <Target className="w-4 h-4 text-green-500" />
-            <span>{player.wins}W</span>
+            <span>{wins}W</span>
           </div>
           <div className="flex items-center space-x-1">
             <Star className="w-4 h-4 text-red-500" />
-            <span>{player.losses}L</span>
+            <span>{losses}L</span>
           </div>
           <div className="flex items-center space-x-1">
             <Zap className="w-4 h-4 text-blue-500" />
@@ -81,7 +83,7 @@ export function PlayerProfile({ player }: PlayerProfileProps) {
           </div>
           <div className="flex items-center space-x-1">
             <Trophy className="w-4 h-4 text-yellow-500" />
-            <span>{player.kda} KDA</span>
+            <span>{kda} KDA</span>
           </div>
         </div>
         
@@ -99,7 +101,4 @@ export function PlayerProfile({ player }: PlayerProfileProps) {
     </Card>
   );
 }
-
-
-
 

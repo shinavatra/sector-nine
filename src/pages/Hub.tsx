@@ -23,20 +23,27 @@ export function Hub({ onNavigate }: HubProps) {
       .catch(() => {/* non-critical */});
   }, []);
 
-  // Create player data from user context
+  const numberOrZero = (value: unknown) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  };
+  const wins = numberOrZero(user?.stats?.wins ?? user?.wins);
+  const losses = numberOrZero(user?.stats?.losses ?? user?.losses);
+  const kills = numberOrZero(user?.stats?.kills ?? user?.totalKills);
+  const deaths = numberOrZero(user?.stats?.deaths ?? user?.totalDeaths);
+
+  // Create player data from normalized, real profile values.
   const playerData = {
     name: user?.username || "Operative",
     avatar: user?.resolvedAvatar || "",
     rank: user?.isPremium ? "VIP RESEARCHER" : `LEVEL ${user?.level || 0} RESEARCHER`,
-    level: user?.level || 0,
-    experience: user?.experience || 0,
+    level: numberOrZero(user?.level),
+    experience: numberOrZero(user?.experience),
     maxExperience: 300, // 300 XP per level
-    wins: user?.stats?.wins || 0,
-    losses: user?.stats?.losses || 0,
-    kda: user?.stats?.kills && user?.stats?.deaths 
-      ? (user.stats.kills / Math.max(user.stats.deaths, 1)).toFixed(2)
-      : "0.00",
-    mainGames: ["Half-Life 1"]
+    wins,
+    losses,
+    kda: deaths > 0 ? (kills / deaths).toFixed(2) : kills > 0 ? kills.toFixed(2) : "0.00",
+    mainGames: ["Half-Life 1"], equippedFrame:user?.equippedFrame, equippedBadge:user?.equippedBadge
   };
   
   return (

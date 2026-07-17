@@ -15,7 +15,7 @@ interface StoreProps {
 }
 
 export function Store({ onNavigate, isPremium = false }: StoreProps) {
-  const { user, refreshProfile } = useUser();
+  const { user, refreshProfile, adoptProfile } = useUser();
   const [isUpgrading, setIsUpgrading] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [purchasingItem, setPurchasingItem] = useState<string | null>(null);
@@ -50,17 +50,13 @@ export function Store({ onNavigate, isPremium = false }: StoreProps) {
   const handlePurchaseFrame = async (frameId: string, pointsCost: number) => {
     setPurchasingItem(frameId);
     try {
-      console.log(`Attempting to purchase frame ${frameId} for ${pointsCost} points`);
-      console.log(`Current user points: ${userPoints}`);
-      await userAPI.purchaseFrame(frameId, pointsCost);
-      await refreshProfile();
+      const { profile } = await userAPI.purchaseFrame(frameId, pointsCost);
+      adoptProfile(profile);
       toast.success('Frame purchased!', {
         description: 'Frame unlocked successfully',
         className: 'bg-green-900/90 border-green-700 text-green-100'
       });
     } catch (error: any) {
-      console.error('Frame purchase error:', error);
-      console.error('Error message:', error.message);
       toast.error('Purchase failed', {
         description: error.message || 'Not enough points or frame already owned',
         className: 'bg-red-900/90 border-red-700 text-red-100'
