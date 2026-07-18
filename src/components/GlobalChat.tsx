@@ -25,6 +25,7 @@ interface Message {
   sender: string;
   message: string;
   timestamp: string;
+  createdAt: string;
   type: 'message' | 'system';
 }
 
@@ -37,8 +38,10 @@ interface ChatRoom {
   unreadCount: number;
 }
 
+const displayedChatNotificationIds = new Set<string>();
+
 export function GlobalChat() {
-  const { onlineFriends } = useUser();
+  const { onlineFriends, user } = useUser();
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [activeTab, setActiveTab] = useState("chats");
@@ -49,9 +52,15 @@ export function GlobalChat() {
   const [friends, setFriends] = useState<Friend[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const seenNotificationIds = useRef(new Set<string>());
+  const seenNotificationIds = useRef(displayedChatNotificationIds);
   const unreadInitialized = useRef(false);
   const originalTitle = useRef(document.title);
+  const selectedChatRef = useRef<string | null>(null);
+  const loadedConversationRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedChatRef.current = selectedChat;
+  }, [selectedChat]);
 
   useEffect(() => {
     let active = true;
@@ -62,7 +71,7 @@ export function GlobalChat() {
         const items = Array.isArray(unread) ? unread : [];
         const counts = new Map<string, { count: number; username: string }>();
         for (const item of items) {
-          const current = counts.get(item.sender_id) || { count: 0, username: item.sender_username || 'Unknown' };
+          const current = counts.get(item.sender_id) || { count: 0, username: item.sender_name || item.sender_username || 'Unknown' };
           current.count += 1;
           counts.set(item.sender_id, current);
         }
@@ -81,11 +90,12 @@ export function GlobalChat() {
           return next;
         });
         for (const item of items) {
-          if (seenNotificationIds.current.has(item.notification_id)) continue;
-          seenNotificationIds.current.add(item.notification_id);
+          const notificationId = String(item.notification_id);
+          if (seenNotificationIds.current.has(notificationId)) continue;
+          seenNotificationIds.current.add(notificationId);
           if (unreadInitialized.current) toast('New secure message', {
-            description: `${item.sender_username || 'A user'} sent you a message`,
-            action: { label: 'Open', onClick: () => openConversation(item.sender_id, item.sender_username || 'Unknown') }
+            description: `${item.sender_name || item.sender_username} sent you a message`,
+            action: { label: 'Open', onClick: () => openConversation(item.sender_id, item.sender_name || item.sender_username) }
           });
         }
         unreadInitialized.current = true;
@@ -134,33 +144,76 @@ export function GlobalChat() {
     }
   };
 
-  const loadChatMessages = async (roomId: string) => {
-    try {
-      const { messages } = await chatAPI.getMessages(roomId);
-      
-      // Update the specific chat room with loaded messages
-      setChatRooms(prev => prev.map(room =>
-        room.id === roomId
-          ? {
-              ...room,
-              messages: messages.map((m: any) => ({
-                id: m.id,
-                sender: m.username,
-                message: m.message,
-                timestamp: new Date(m.created_at ?? m.createdAt).toLocaleTimeString('en-US', {
-                  hour12: false, 
-                  hour: '2-digit', 
-                  minute: '2-digit' 
-                }),
-                type: 'message' as const
-              }))
-            }
-          : room
-      ));
-    } catch (error) {
-      console.error('Failed to load chat messages:', error);
-    }
+  const normalizeMessage = (message: any): Message => {
+    const createdAt = String(message.created_at ?? message.createdAt);
+    return {
+      id: String(message.id),
+      sender: message.user_id === user?.id || message.userId === user?.id ? 'You' : message.username,
+      message: message.message,
+      createdAt,
+      timestamp: new Date(createdAt).toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit'
+      }),
+      type: 'message'
+    };
   };
+
+  const mergeMessages = (current: Message[], incoming: Message[]) => {
+    const byId = new Map(current.map(message => [message.id, message]));
+    for (const message of incoming) byId.set(message.id, message);
+    return Array.from(byId.values()).sort((a, b) => {
+      const timeDifference = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      return timeDifference || a.id.localeCompare(b.id);
+    });
+  };
+
+  const loadChatMessages = async (roomId: string, shouldApply = () => true) => {
+    const { messages } = await chatAPI.getMessages(roomId);
+    if (!shouldApply()) return;
+    const normalized = (Array.isArray(messages) ? messages : []).map(normalizeMessage);
+    setChatRooms(prev => prev.map(room =>
+      room.id === roomId
+        ? { ...room, messages: mergeMessages(room.messages, normalized) }
+        : room
+    ));
+  };
+
+  useEffect(() => {
+    if (!isOpen || !selectedChat || !user) return;
+    const roomId = selectedChat;
+    let active = true;
+    let requestRunning = false;
+    const replaceInitialMessages = loadedConversationRef.current !== roomId;
+
+    if (replaceInitialMessages) {
+      loadedConversationRef.current = roomId;
+      setChatRooms(prev => prev.map(room => room.id === roomId ? { ...room, messages: [] } : room));
+    }
+
+    const pollConversation = async () => {
+      if (requestRunning) return;
+      requestRunning = true;
+      try {
+        if (!active || selectedChatRef.current !== roomId) return;
+        await loadChatMessages(roomId, () => active && selectedChatRef.current === roomId);
+      } catch (error) {
+        if (active && selectedChatRef.current === roomId) {
+          console.error('Failed to load chat messages:', error);
+        }
+      } finally {
+        requestRunning = false;
+      }
+    };
+
+    void pollConversation();
+    const interval = window.setInterval(() => void pollConversation(), 3000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [isOpen, selectedChat, user?.id]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -185,29 +238,19 @@ export function GlobalChat() {
   const handleSendMessage = async () => {
     const messageText = messageInput.trim();
     if (!messageText || !selectedChat || isSending) return;
+    const roomId = selectedChat;
     setIsSending(true);
 
       try {
-        const { message: sentMessage } = await chatAPI.sendMessage(selectedChat, messageText);
-        
-        const newMessage: Message = {
-          id: sentMessage.id,
-          sender: 'You',
-          message: sentMessage.message,
-          timestamp: new Date(sentMessage.created_at ?? sentMessage.createdAt).toLocaleTimeString('en-US', {
-            hour12: false, 
-            hour: '2-digit', 
-            minute: '2-digit' 
-          }),
-          type: 'message'
-        };
+        const { message: sentMessage } = await chatAPI.sendMessage(roomId, messageText);
+        const newMessage = normalizeMessage({ ...sentMessage, user_id: user?.id });
 
         setChatRooms(prev => prev.map(room => 
-          room.id === selectedChat 
-            ? { ...room, messages: [...room.messages, newMessage] }
+          room.id === roomId
+            ? { ...room, messages: mergeMessages(room.messages, [newMessage]) }
             : room
         ));
-        setMessageInput("");
+        if (selectedChatRef.current === roomId) setMessageInput("");
       } catch (error) {
         toast.error('Failed to send message', {
           description: error instanceof Error ? error.message : 'The server rejected the message',
@@ -268,7 +311,6 @@ export function GlobalChat() {
     setSelectedChat(friendId);
     setActiveTab('chats');
     void markChatAsRead(friendId);
-    void loadChatMessages(friendId);
   }
 
   const startChat = (friendId: string) => {

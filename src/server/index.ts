@@ -959,9 +959,11 @@ app.get('/chat/unread', requireAuth, async (req: AuthRequest, res) => {
     const result = await pool.query(
       `SELECT n.id AS notification_id, cm.id AS message_id,
               cm.user_id AS sender_id, cm.username AS sender_username,
+              COALESCE(NULLIF(sender.display_name, ''), sender.username, cm.username) AS sender_name,
               cm.created_at
        FROM notifications n
        JOIN chat_messages cm ON cm.id=n.related_chat_message_id
+       LEFT JOIN users sender ON sender.id=cm.user_id
        WHERE n.user_id=$1 AND n.type='message' AND n.read=false
        ORDER BY cm.created_at ASC, cm.id ASC`,
       [req.userId]
@@ -1005,9 +1007,10 @@ app.post('/chat/:recipientId', requireAuth, async (req: AuthRequest, res) => {
     if (recipientId === req.userId) return res.status(400).json({ error: 'A direct conversation requires another user' })
     if (!(await directChatRecipientExists(recipientId))) return res.status(404).json({ error: 'Conversation recipient not found' })
     if (!(await directChatAccess(req.userId!, recipientId))) return res.status(403).json({ error: 'An accepted friendship is required to send a message' })
-    const uResult = await pool.query('SELECT username, is_premium FROM users WHERE id=$1', [req.userId])
+    const uResult = await pool.query('SELECT username, display_name, is_premium FROM users WHERE id=$1', [req.userId])
     const u = uResult.rows[0]
     if (!u) return res.status(404).json({ error: 'Sender not found' })
+    const senderName = u.display_name?.trim() || u.username
     const room = `dm:${[req.userId!, recipientId].sort().join(':')}`
     const db = await pool.connect()
     try {
@@ -1022,7 +1025,7 @@ app.post('/chat/:recipientId', requireAuth, async (req: AuthRequest, res) => {
            (user_id,type,title,message,related_user_id,related_chat_message_id)
          VALUES ($1,'message','New secure message',$2,$3,$4)
          ON CONFLICT (related_chat_message_id) WHERE related_chat_message_id IS NOT NULL DO NOTHING`,
-        [recipientId, `${u.username} sent you a message`, req.userId, result.rows[0].id]
+        [recipientId, `${senderName} sent you a message`, req.userId, result.rows[0].id]
       )
       await db.query('COMMIT')
       return res.json({ message: result.rows[0] })
@@ -1200,7 +1203,7 @@ app.post('/friends/accept', requireAuth, async (req: AuthRequest, res) => {
 })
 
 app.post('/friends/requests/:requestId/decline',requireAuth,async(req:AuthRequest,res)=>{const db=await pool.connect();try{await db.query('BEGIN');const result=await db.query(`UPDATE friendships SET status='declined',updated_at=NOW() WHERE id=$1 AND friend_id=$2 AND status='pending' RETURNING *`,[req.params.requestId,req.userId]);if(!result.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'Pending request not found or not addressed to you'})}await db.query("UPDATE notifications SET read=true WHERE user_id=$1 AND related_friendship_id=$2 AND type='friend_request'",[req.userId,req.params.requestId]);await db.query('COMMIT');return res.json({request:result.rows[0]})}catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}})
-app.delete('/friends/requests/:requestId',requireAuth,async(req:AuthRequest,res)=>{const db=await pool.connect();try{await db.query('BEGIN');const result=await db.query(`DELETE FROM friendships WHERE id=$1 AND user_id=$2 AND status='pending' RETURNING id,friend_id`,[req.params.requestId,req.userId]);if(!result.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'Outgoing request not found'})}await db.query("UPDATE notifications SET read=true WHERE user_id=$1 AND related_friendship_id=$2 AND type='friend_request'",[result.rows[0].friend_id,req.params.requestId]);await db.query('COMMIT');return res.json({ok:true})}catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}})
+app.delete('/friends/requests/:requestId',requireAuth,async(req:AuthRequest,res)=>{const db=await pool.connect();try{await db.query('BEGIN');const pending=await db.query(`SELECT id,friend_id FROM friendships WHERE id=$1 AND user_id=$2 AND status='pending' FOR UPDATE`,[req.params.requestId,req.userId]);if(!pending.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'Outgoing request not found'})}await db.query("DELETE FROM notifications WHERE user_id=$1 AND related_friendship_id=$2 AND type='friend_request'",[pending.rows[0].friend_id,req.params.requestId]);await db.query(`DELETE FROM friendships WHERE id=$1 AND user_id=$2 AND status='pending'`,[req.params.requestId,req.userId]);await db.query('COMMIT');return res.json({ok:true})}catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}})
 app.delete('/friends/:friendshipId',requireAuth,async(req:AuthRequest,res)=>{try{const result=await pool.query(`DELETE FROM friendships WHERE id=$1 AND status='accepted' AND (user_id=$2 OR friend_id=$2) RETURNING id`,[req.params.friendshipId,req.userId]);if(!result.rows[0])return res.status(404).json({error:'Accepted friendship not found'});return res.json({ok:true})}catch(err:any){return sendDatabaseError(res,err)}})
 
 // =====================================================
@@ -1210,7 +1213,22 @@ app.delete('/friends/:friendshipId',requireAuth,async(req:AuthRequest,res)=>{try
 app.get('/notifications', requireAuth, async (req: AuthRequest, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50',
+      `SELECT
+         n.id, n.user_id, n.type, n.title,
+         CASE
+           WHEN n.type='message' AND cm.id IS NOT NULL
+             THEN COALESCE(NULLIF(sender.display_name, ''), sender.username, cm.username) || ' sent you a message'
+           ELSE n.message
+         END AS message,
+         n.read, n.related_user_id, n.related_match_id,
+         n.related_chat_message_id, n.related_friendship_id, n.created_at,
+         COALESCE(NULLIF(sender.display_name, ''), sender.username, cm.username) AS sender_name
+       FROM notifications n
+       LEFT JOIN chat_messages cm ON cm.id=n.related_chat_message_id
+       LEFT JOIN users sender ON sender.id=cm.user_id
+       WHERE n.user_id=$1
+       ORDER BY n.created_at DESC
+       LIMIT 50`,
       [req.userId]
     )
     return res.json({ notifications: result.rows })

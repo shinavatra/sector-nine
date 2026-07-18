@@ -45,6 +45,7 @@ export function Admin({onNavigate}:{onNavigate:(page:string)=>void}) {
   const [search,setSearch]=useState('')
   const [page,setPage]=useState(1)
   const [selected,setSelected]=useState<AdminRow|null>(null)
+  const [selectedUserId,setSelectedUserId]=useState<string|null>(null)
   const [confirmation,setConfirmation]=useState<Confirmation|null>(null)
   const [sidebarOpen,setSidebarOpen]=useState(false)
   const [createType,setCreateType]=useState<'user'|'server'|'tournament'|null>(null)
@@ -59,7 +60,7 @@ export function Admin({onNavigate}:{onNavigate:(page:string)=>void}) {
   const endpoint:Record<AdminSection,string>={dashboard:'/dashboard',users:`/users?page=${page}&includeDeleted=true&q=${encodeURIComponent(search)}`,servers:'/servers',matchmaking:'/queue',matches:'/matches',tournaments:'/tournaments',reports:'/reports',bans:'/bans',store:'/catalog',vip:`/users?page=${page}&q=${encodeURIComponent(search)}`,badges:'/catalog',frames:'/catalog',logs:`/logs?page=${page}&q=${encodeURIComponent(search)}`,system:'/system'}
   const load=useCallback(async()=>{const id=++requestId.current,key=`${section}:${endpoint[section]}`,cached=cache.current[key];if(cached){setData(cached);setDataSection(section)}else{setDataSection(null)}setLoading(!cached);setLoadError(null);setErrorSection(null);try{const value=assertAdminPayload(section,await adminAPI.get(endpoint[section]));if(id!==requestId.current)return;cache.current[key]=value;setData(value);setDataSection(section)}catch(error:any){if(id!==requestId.current)return;setDataSection(null);const apiError=error instanceof AdminApiError?error:new AdminApiError(error?.message||'Unknown administration error',0,'CLIENT_ERROR');setLoadError(apiError);setErrorSection(section);toast.error('Unable to load administration data',{description:`${apiError.code}: ${apiError.message}`})}finally{if(id===requestId.current)setLoading(false)}},[endpoint[section],section])
   useEffect(()=>{const timer=window.setTimeout(load,['users','vip'].includes(section)?250:0);return()=>window.clearTimeout(timer)},[load,section])
-  useEffect(()=>{setPage(1);setSelected(null);setSearch('')},[section])
+  useEffect(()=>{setPage(1);setSelected(null);setSelectedUserId(null);setSearch('')},[section])
   useEffect(()=>{
     const handlePopState=()=>{
       const next=sectionFromPath(window.location.pathname)
@@ -88,15 +89,15 @@ export function Admin({onNavigate}:{onNavigate:(page:string)=>void}) {
     setSidebarOpen(false)
   }
   const sectionAction=(action:AdminSectionAction)=>{if(action==='clear_queue')return destructive('Clear full queue','Every currently queued player will be removed.',()=>mutate('/queue','delete'));if(action==='force_match'){const first=window.prompt('First queued user UUID'),second=window.prompt('Second queued user UUID');if(first&&second)void mutate('/queue/force-match','post',{userIds:[first,second]});return}if(action==='create_ban'){const userId=window.prompt('User UUID'),reason=window.prompt('Ban reason'),minutes=window.prompt('Duration minutes (empty for permanent)','1440');if(userId&&reason&&minutes!==null)void mutate('/bans','post',{userId,reason,durationMinutes:minutes?Number(minutes):null,permanent:!minutes});return}if(action==='create_badge'||action==='create_frame'){const type=action==='create_badge'?'badges':'frames',id=window.prompt(`${type.slice(0,-1)} ID`),name=window.prompt('Name');if(id&&name)void mutate(`/catalog/${type}`,'post',{id,name});return}if(action==='clear_cache')destructive('Clear Steam profile cache','Cached Steam check timestamps will be cleared and refreshed through normal profile checks.',()=>mutate('/system/cache/clear','post'))}
-  const openDetails=async(row:AdminRow)=>{setSelected(row);setDetail(null);setDetailError(null);const path=['users','vip'].includes(section)?`/users/${row.id}`:section==='servers'?`/servers/${row.id}`:section==='tournaments'?`/tournaments/${row.id}`:null;if(!path)return setDetail(row);setDetailLoading(true);try{setDetail(await adminAPI.get(path))}catch(error:any){setDetailError(error instanceof AdminApiError?error:new AdminApiError(error?.message||'Unable to load details',0,'CLIENT_ERROR'))}finally{setDetailLoading(false)}}
-  const userAction=(row:AdminRow,action:AdminUserAction)=>{if(action==='view')void openDetails(row);else setUserManagement({row,action})}
+  const openDetails=async(row:AdminRow)=>{setSelected(row);if(section==='users')setSelectedUserId(String(row.id));setDetail(null);setDetailError(null);const path=['users','vip'].includes(section)?`/users/${row.id}`:section==='servers'?`/servers/${row.id}`:section==='tournaments'?`/tournaments/${row.id}`:null;if(!path)return setDetail(row);setDetailLoading(true);try{setDetail(await adminAPI.get(path))}catch(error:any){setDetailError(error instanceof AdminApiError?error:new AdminApiError(error?.message||'Unable to load details',0,'CLIENT_ERROR'))}finally{setDetailLoading(false)}}
+  const userAction=(row:AdminRow,action:AdminUserAction)=>{if(action==='view')window.setTimeout(()=>void openDetails(row),0);else setUserManagement({row,action})}
   const updateUserRow=(updated:AdminRow)=>{setData((current:any)=>current&&dataSection===section&&Array.isArray(current.items)?{...current,items:current.items.map((item:AdminRow)=>item.id===updated.id?{...item,...updated,active_ban:updated.activeBan}:item)}:current);cache.current={}}
   const removeUserRow=(id:string)=>{setData((current:any)=>current&&dataSection==='users'&&Array.isArray(current.items)?{...current,items:current.items.filter((item:AdminRow)=>item.id!==id),total:Math.max(0,(current.total??current.items.length)-1)}:current);cache.current={}}
   const updateServerRow=(updated:AdminRow|null)=>{const id=serverManagement?.row.id;setData((current:any)=>current&&dataSection==='servers'&&Array.isArray(current.items)?{...current,items:updated?current.items.map((item:AdminRow)=>item.id===updated.id?updated:item):current.items.filter((item:AdminRow)=>item.id!==id),total:updated?current.total:Math.max(0,(current.total??current.items.length)-1)}:current);cache.current={}}
   const serverAction=async(row:AdminRow,action:AdminServerAction)=>{if(action==='view')return void openDetails(row);if(action==='copy'){try{await navigator.clipboard.writeText(`connect ${row.public_host}:${row.port}`);toast.success('Connect command copied')}catch(error:any){toast.error('Unable to copy connect command',{description:error.message})}return}setServerManagement({row,action})}
 
   return <div className="admin-root flex min-h-screen w-full bg-[#080809] font-mono text-slate-200">
-    {sidebarOpen&&<button aria-label="Close navigation" className="fixed inset-0 z-40 bg-black/70 lg:hidden" onClick={()=>setSidebarOpen(false)}/>} 
+    {sidebarOpen&&<button aria-label="Close navigation" className="admin-backdrop fixed inset-0 z-40 bg-black/70" onClick={()=>setSidebarOpen(false)}/>}
     <AdminSidebar section={section} onSelect={selectSection} onCreate={setCreateType} open={sidebarOpen} onClose={()=>setSidebarOpen(false)} onHub={()=>onNavigate('hub')} onLogout={()=>{logout();onNavigate('auth')}}/>
     <div className="admin-main flex min-w-0 flex-1 flex-col"><AdminTopbar section={section} user={user} search={search} onSearch={setSearch} onMenu={()=>setSidebarOpen(true)} onRefresh={load} onCreate={setCreateType} loading={loading}/>
       <main className="admin-content mx-auto w-full max-w-[1800px] flex-1 p-6">
@@ -108,11 +109,11 @@ export function Admin({onNavigate}:{onNavigate:(page:string)=>void}) {
           :<AdminTable section={section} rows={visibleRows} onSelect={['users','vip','servers','matchmaking','matches','reports','bans','badges','frames','store','tournaments','logs'].includes(section)?openDetails:undefined} onUserAction={section==='users'?userAction:undefined} onServerAction={section==='servers'?serverAction:undefined} page={page} total={sectionData?.total} limit={sectionData?.limit} onPage={setPage}/>} 
       </main>
     </div>
-    <DetailDrawer section={section} row={selected} detail={detail} loading={detailLoading} error={detailError} onRetry={()=>selected&&openDetails(selected)} onClose={()=>{setSelected(null);setDetail(null)}} mutate={mutate} destructive={destructive}/>
+    {section==='users'?<UserDetailsDialog userId={selectedUserId} row={selected} detail={detail} loading={detailLoading} error={detailError} onRetry={()=>selected&&openDetails(selected)} onClose={()=>{setSelectedUserId(null);setSelected(null);setDetail(null);setDetailError(null)}}/>:<DetailDrawer section={section} row={selected} detail={detail} loading={detailLoading} error={detailError} onRetry={()=>selected&&openDetails(selected)} onClose={()=>{setSelected(null);setDetail(null)}} mutate={mutate} destructive={destructive}/>}
     <AdminUserManagement row={userManagement?.row||null} action={userManagement?.action||null} currentUserId={user.id} onClose={()=>setUserManagement(null)} onSaved={updateUserRow} onDeleted={removeUserRow}/>
     <AdminServerManagement row={serverManagement?.row||null} action={serverManagement?.action||null} onClose={()=>setServerManagement(null)} onSaved={updateServerRow}/>
     <CreateDialog type={createType} onClose={()=>setCreateType(null)} onCreated={async(type)=>{setCreateType(null);selectSection(type==='user'?'users':type==='server'?'servers':'tournaments')}}/>
-    <AlertDialog open={Boolean(confirmation)} onOpenChange={open=>!open&&setConfirmation(null)}><AlertDialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto border-red-500/30 bg-[#111113]"><AlertDialogHeader><AlertDialogTitle className="text-red-300">{confirmation?.title}</AlertDialogTitle><AlertDialogDescription>{confirmation?.description}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction className="bg-red-700 text-white hover:bg-red-600" onClick={async()=>{const run=confirmation?.run;setConfirmation(null);if(run)await run()}}>Confirm action</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog open={Boolean(confirmation)} onOpenChange={open=>!open&&setConfirmation(null)}><AlertDialogContent className="admin-dialog border-red-500/30 bg-[#111113]"><AlertDialogHeader><AlertDialogTitle className="text-red-300">{confirmation?.title}</AlertDialogTitle><AlertDialogDescription>{confirmation?.description}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction className="bg-red-700 text-white hover:bg-red-600" onClick={async()=>{const run=confirmation?.run;setConfirmation(null);if(run)await run()}}>Confirm action</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </div>
 }
 
@@ -125,7 +126,59 @@ function CreateDialog({type,onClose,onCreated}:{type:'user'|'server'|'tournament
   const [saving,setSaving]=useState(false)
   const submit=async(event:React.FormEvent<HTMLFormElement>)=>{event.preventDefault();if(!type)return;const values=Object.fromEntries(new FormData(event.currentTarget).entries());setSaving(true);try{if(type==='user')await adminAPI.post('/users',values);if(type==='server')await adminAPI.post('/servers',{...values,port:Number(values.port),slots:Number(values.slots)});if(type==='tournament')await adminAPI.post('/tournaments',{...values,maxParticipants:Number(values.maxParticipants),entryFeePoints:Number(values.entryFeePoints),prizePoolPoints:Number(values.prizePoolPoints)});toast.success(`${type[0].toUpperCase()+type.slice(1)} created`);await onCreated(type)}catch(error:any){toast.error(`Unable to create ${type}`,{description:error.message})}finally{setSaving(false)}}
   const field=(name:string,label:string,typeName='text',required=true)=><label className="block text-xs text-slate-400">{label}<Input name={name} type={typeName} required={required} className="mt-2 border-orange-900/30 bg-black/30"/></label>
-  return <Dialog open={Boolean(type)} onOpenChange={open=>!open&&onClose()}><DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto border-orange-900/30 bg-[#111113]"><DialogHeader><DialogTitle>Create {type}</DialogTitle><DialogDescription>This record will be written to PostgreSQL and added to the admin audit log.</DialogDescription></DialogHeader><form onSubmit={submit} className="space-y-4">{type==='user'&&<>{field('username','Username')}{field('email','Email','email')}{field('password','Temporary password','password')}<label className="block text-xs text-slate-400">Role<select name="role" className="mt-2 h-10 w-full rounded border border-orange-900/30 bg-black/30 px-3"><option value="user">User</option><option value="admin">Administrator</option></select></label></>}{type==='server'&&<>{field('name','Server name')}{field('game','Game')}{field('region','Region')}{field('ip','IP address')}{field('port','Port','number')}{field('slots','Slots','number')}{field('playitTunnel','Playit tunnel','text',false)}</>}{type==='tournament'&&<>{field('id','Tournament ID')}{field('name','Tournament name')}{field('description','Description','text',false)}{field('maxParticipants','Maximum participants','number')}{field('entryFeePoints','Entry fee points','number',false)}{field('prizePoolPoints','Prize pool points','number',false)}{field('startDate','Start date','datetime-local',false)}</>}<DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit" disabled={saving}>{saving?'Creating…':'Create'}</Button></DialogFooter></form></DialogContent></Dialog>
+  return <Dialog open={Boolean(type)} onOpenChange={open=>!open&&onClose()}><DialogContent className="admin-dialog border-orange-900/30 bg-[#111113]"><DialogHeader><DialogTitle>Create {type}</DialogTitle><DialogDescription>This record will be written to PostgreSQL and added to the admin audit log.</DialogDescription></DialogHeader><form onSubmit={submit} className="space-y-4">{type==='user'&&<>{field('username','Username')}{field('email','Email','email')}{field('password','Temporary password','password')}<label className="block text-xs text-slate-400">Role<select name="role" className="mt-2 h-10 w-full rounded border border-orange-900/30 bg-black/30 px-3"><option value="user">User</option><option value="admin">Administrator</option></select></label></>}{type==='server'&&<>{field('name','Server name')}{field('game','Game')}{field('region','Region')}{field('ip','IP address')}{field('port','Port','number')}{field('slots','Slots','number')}{field('playitTunnel','Playit tunnel','text',false)}</>}{type==='tournament'&&<>{field('id','Tournament ID')}{field('name','Tournament name')}{field('description','Description','text',false)}{field('maxParticipants','Maximum participants','number')}{field('entryFeePoints','Entry fee points','number',false)}{field('prizePoolPoints','Prize pool points','number',false)}{field('startDate','Start date','datetime-local',false)}</>}<DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit" disabled={saving}>{saving?'Creating…':'Create'}</Button></DialogFooter></form></DialogContent></Dialog>
+}
+
+function UserDetailsDialog({userId,row,detail,loading,error,onRetry,onClose}:{userId:string|null;row:AdminRow|null;detail:any;loading:boolean;error:AdminApiError|null;onRetry:()=>void;onClose:()=>void}) {
+  useEffect(()=>{
+    if(!userId)return
+    const previousOverflow=document.body.style.overflow
+    document.body.classList.add('admin-user-details-open')
+    document.body.style.overflow='hidden'
+    return()=>{document.body.classList.remove('admin-user-details-open');document.body.style.overflow=previousOverflow}
+  },[userId])
+  const user=(detail?.user||detail||row) as AdminRow|null
+  const fields:[string,unknown,string?][] = user ? [
+    ['ID',user.id],
+    ['Username',user.username],
+    ['Display name',user.display_name],
+    ['Email',user.email],
+    ['Role',user.role],
+    ['Points',user.points],
+    ['XP',user.xp],
+    ['Level',user.level],
+    ['Wins / losses',`${user.wins??0} / ${user.losses??0}`],
+    ['VIP',user.is_premium],
+    ['VIP expiration',user.vip_expires_at,'vip_expires_at'],
+    ['Steam ID',user.steam_id],
+    ['Steam verified',user.steam_verified],
+    ['Owns HL1',user.owns_hl1],
+    ['VAC banned',user.vac_banned],
+    ['Game bans',user.game_ban_count??user.game_bans],
+    ['Badges',user.owned_badges],
+    ['Equipped badge',user.equipped_badge],
+    ['Frames',user.owned_frames],
+    ['Equipped frame',user.equipped_frame],
+    ['Created',user.created_at,'created_at'],
+    ['Last seen',user.last_seen,'last_seen'],
+    ['Profile visibility',user.profile_visibility],
+    ['Online visibility',user.show_online_status],
+    ['Active ban',detail?.activeBan||user.activeBan||user.active_ban||'None'],
+  ] : []
+
+  return <Dialog open={Boolean(userId)} onOpenChange={open=>!open&&onClose()}>
+    <DialogContent className="admin-user-details-dialog admin-dialog border-orange-500/60 bg-[#0b0b0d] text-slate-100 shadow-2xl">
+      <DialogHeader>
+        <DialogTitle>User details</DialogTitle>
+        <DialogDescription>Real account data for user ID {userId}</DialogDescription>
+      </DialogHeader>
+      {loading&&<div className="grid min-h-64 place-items-center rounded-lg border border-orange-900/30 bg-[#101012]"><div className="flex items-center gap-3 text-sm text-slate-300"><Activity size={18} className="animate-spin text-orange-400"/>Loading user details…</div></div>}
+      {!loading&&error&&<div className="rounded-lg border border-red-500/50 bg-[#160b0d] p-5"><AlertTriangle className="text-red-400"/><p className="mt-3 text-sm font-semibold text-red-200">{error.code}</p><p className="mt-2 break-words text-sm text-red-100">{error.message}</p><div className="mt-5 flex flex-wrap justify-end gap-2"><Button variant="outline" onClick={onClose}>Close</Button><Button onClick={onRetry}>Retry</Button></div></div>}
+      {!loading&&!error&&user&&<div className="overflow-hidden rounded-lg border border-orange-900/35 bg-[#101012]"><dl className="grid min-w-0 sm:grid-cols-[170px_minmax(0,1fr)]">{fields.map(([label,value,key])=><div key={label} className="contents"><dt className="border-b border-orange-900/20 px-4 py-3 text-xs font-medium text-slate-400">{label}</dt><dd className="min-w-0 break-words border-b border-orange-900/20 px-4 py-3 text-sm text-slate-100">{formatAdminValue(value,key||label.toLowerCase().replaceAll(' ','_'))}</dd></div>)}</dl></div>}
+      {!loading&&!error&&!user&&<div className="rounded-lg border border-red-500/50 bg-[#160b0d] p-5 text-sm text-red-100">No user detail response was returned.</div>}
+      {!error&&<DialogFooter><Button variant="outline" onClick={onClose}>Close</Button></DialogFooter>}
+    </DialogContent>
+  </Dialog>
 }
 
 function DetailDrawer({section,row,detail,loading,error,onRetry,onClose,mutate,destructive}:{section:AdminSection;row:AdminRow|null;detail:any;loading:boolean;error:AdminApiError|null;onRetry:()=>void;onClose:()=>void;mutate:(p:string,m:'post'|'patch'|'delete',b?:any)=>Promise<void>;destructive:(t:string,d:string,r:()=>Promise<void>)=>void}) {
