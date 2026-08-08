@@ -4,9 +4,8 @@ import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Play, Users, Clock, Eye, Loader2 } from "lucide-react";
-import { getSessionToken } from "../utils/api";
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
+import { statsAPI } from "../utils/api";
+import { useGame } from "../contexts/GameContext";
 
 interface ActiveMatch {
   id: string;
@@ -26,28 +25,22 @@ interface ActiveMatch {
 }
 
 export function ActiveMatches() {
+  const { selectedGame } = useGame();
   const [matches, setMatches] = useState<ActiveMatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchActiveMatches();
+    void fetchActiveMatches();
     // Poll every 15 seconds
-    const interval = setInterval(fetchActiveMatches, 15000);
+    const interval = setInterval(() => void fetchActiveMatches(), 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedGame.id]);
 
   const fetchActiveMatches = async () => {
     try {
       setError(null);
-      const token = getSessionToken();
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-
-      const response = await fetch(`${API_URL}/matches/active`, { headers });
-      if (!response.ok) throw new Error("Failed to fetch active matches");
-
-      const data = await response.json();
+      const data = await statsAPI.getActiveMatches(selectedGame.id);
       setMatches(data.matches || []);
     } catch (err) {
       setError("Failed to load active matches");

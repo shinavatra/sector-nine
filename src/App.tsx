@@ -1,54 +1,57 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { lazy, Suspense, useState, useEffect, useCallback, useRef, type ComponentType } from "react";
 import { toast } from "sonner";
 import { UserProvider, useUser } from "./contexts/UserContext";
+import { ThemeProvider } from "./contexts/ThemeContext";
+import { GameProvider } from "./contexts/GameContext";
 import { Header } from "./components/Header";
 import { AnimatedBackground } from "./components/AnimatedBackground";
 import { CrowbarLogo } from "./components/CrowbarLogo";
 import { Hub } from "./pages/Hub";
-
-import { Stats } from "./pages/Stats";
-import { Profile } from "./pages/Profile";
-import { Notifications } from "./pages/Notifications";
-
 import { Lobby } from "./pages/Lobby";
 import { Auth } from "./pages/Auth";
-import { ForgotPassword } from "./pages/ForgotPassword";
-import { NewPassword } from "./pages/NewPassword";
-import { Store } from "./pages/Store";
-import { VIPSubscription } from "./pages/VIPSubscription";
-import { Matches } from "./pages/Matches";
-import { SteamSetup } from "./pages/SteamSetup";
-import { SteamGameVerification } from "./pages/SteamGameVerification";
-import { SteamCallback } from "./pages/SteamCallback";
-import { MapSelection } from "./pages/MapSelection";
-import { MapBanning } from "./pages/MapBanning";
-import { TournamentRules } from "./pages/TournamentRules";
-import { ClassicDeathmatch } from "./pages/ClassicDeathmatch";
-import { InstagibMode } from "./pages/InstagibMode";
-import { Configuration } from "./pages/Configuration";
-import { Support } from "./pages/Support";
-import { Tournament } from "./pages/Tournament";
-import { BlackMesaChampionship } from "./pages/BlackMesaChampionship";
-import { LambdaInstagibTournament } from "./pages/LambdaInstagibTournament";
-import { TacticalOperationsChampionship } from "./pages/TacticalOperationsChampionship";
-import { ResonanceCascadeRoyale } from "./pages/ResonanceCascadeRoyale";
-import { MonthlyLadder } from "./pages/MonthlyLadder";
-import { WinterLadder } from "./pages/WinterLadder";
-import { SpringLadder } from "./pages/SpringLadder";
-import { SummerLadder } from "./pages/SummerLadder";
-import { AutumnLadder } from "./pages/AutumnLadder";
-import { Terms } from "./pages/Terms";
-import { Disclaimer } from "./pages/Disclaimer";
 
 import { GlobalChat } from "./components/GlobalChat";
-import { MatchReadyAlert } from "./components/MatchReadyAlert";
 import { Toaster } from "./components/ui/sonner";
-import { notificationsAPI, reportAPI } from "./utils/api";
-import { Admin } from "./pages/Admin";
+import { notificationsAPI, platformAPI, type PublicPlatformSettings } from "./utils/api";
+import { subscribeToNotificationChanges } from "./utils/notificationEvents";
+
+const lazyPage = <T extends Record<string, unknown>>(loader: () => Promise<T>, name: keyof T) =>
+  lazy(async () => ({ default: (await loader())[name] as ComponentType<any> }));
+const Profile=lazyPage(()=>import("./pages/Profile"),"Profile");
+const Notifications=lazyPage(()=>import("./pages/Notifications"),"Notifications");
+const Achievements=lazyPage(()=>import("./pages/Achievements"),"Achievements");
+const ForgotPassword=lazyPage(()=>import("./pages/ForgotPassword"),"ForgotPassword");
+const NewPassword=lazyPage(()=>import("./pages/NewPassword"),"NewPassword");
+const Store=lazyPage(()=>import("./pages/Store"),"Store");
+const VIPSubscription=lazyPage(()=>import("./pages/VIPSubscription"),"VIPSubscription");
+const Matches=lazyPage(()=>import("./pages/Matches"),"Matches");
+const SteamSetup=lazyPage(()=>import("./pages/SteamSetup"),"SteamSetup");
+const SteamGameVerification=lazyPage(()=>import("./pages/SteamGameVerification"),"SteamGameVerification");
+const SteamCallback=lazyPage(()=>import("./pages/SteamCallback"),"SteamCallback");
+const TournamentRules=lazyPage(()=>import("./pages/TournamentRules"),"TournamentRules");
+const Configuration=lazyPage(()=>import("./pages/Configuration"),"Configuration");
+const Support=lazyPage(()=>import("./pages/Support"),"Support");
+const Tournament=lazyPage(()=>import("./pages/Tournament"),"Tournament");
+const TournamentDetail=lazyPage(()=>import("./pages/TournamentDetail"),"TournamentDetail");
+const BlackMesaChampionship=lazyPage(()=>import("./pages/BlackMesaChampionship"),"BlackMesaChampionship");
+const LambdaInstagibTournament=lazyPage(()=>import("./pages/LambdaInstagibTournament"),"LambdaInstagibTournament");
+const TacticalOperationsChampionship=lazyPage(()=>import("./pages/TacticalOperationsChampionship"),"TacticalOperationsChampionship");
+const ResonanceCascadeRoyale=lazyPage(()=>import("./pages/ResonanceCascadeRoyale"),"ResonanceCascadeRoyale");
+const MonthlyLadder=lazyPage(()=>import("./pages/MonthlyLadder"),"MonthlyLadder");
+const WinterLadder=lazyPage(()=>import("./pages/WinterLadder"),"WinterLadder");
+const SpringLadder=lazyPage(()=>import("./pages/SpringLadder"),"SpringLadder");
+const SummerLadder=lazyPage(()=>import("./pages/SummerLadder"),"SummerLadder");
+const AutumnLadder=lazyPage(()=>import("./pages/AutumnLadder"),"AutumnLadder");
+const Terms=lazyPage(()=>import("./pages/Terms"),"Terms");
+const Disclaimer=lazyPage(()=>import("./pages/Disclaimer"),"Disclaimer");
+const Admin=lazyPage(()=>import("./pages/Admin"),"Admin");
+const Stats=lazyPage(()=>import("./pages/Stats"),"Stats");
+
+const pageFallback=<div className="grid min-h-[55vh] place-items-center font-mono text-sm text-gray-400">LOADING SECTOR DATA...</div>;
 
 const pagePaths: Record<string, string> = {
   auth: '/', hub: '/hub', lobby: '/matchmaking', tournament: '/tournaments', stats: '/stats',
-  store: '/store', profile: '/profile', configuration: '/configuration', support: '/support',
+  store: '/store', profile: '/profile', notifications:'/notifications', achievements:'/achievements', configuration: '/configuration', support: '/support',
   'steam-callback': '/auth/steam/callback', admin: '/admin',
 };
 const pageFromPath = (pathname: string) => {
@@ -62,21 +65,13 @@ function AppContent() {
   const [currentPage, setCurrentPageState] = useState<string>(() => pageFromPath(window.location.pathname));
   const [hasCompletedSteamVerification, setHasCompletedSteamVerification] = useState<boolean>(false);
   const [notificationUnreadCount,setNotificationUnreadCount]=useState(0);
+  const [platformSettings,setPlatformSettings]=useState<PublicPlatformSettings|null>(null);
+  const [platformSettingsError,setPlatformSettingsError]=useState<string|null>(null);
   const seenFriendNotifications=useRef(new Set<string>());
   const notificationsInitialized=useRef(false);
-  const [matchReady, setMatchReady] = useState<{
-    isOpen: boolean;
-    matchType: string;
-    mapName: string;
-    playersReady: number;
-    totalPlayers: number;
-  }>({
-    isOpen: false,
-    matchType: "",
-    mapName: "",
-    playersReady: 0,
-    totalPlayers: 0
-  });
+  const notificationPollInFlight=useRef(false);
+  const notificationPollQueued=useRef(false);
+  const notificationPollRevision=useRef(0);
 
   const navigate = useCallback((page: string, replace = false) => {
     const path = pagePaths[page] || `/${page}`;
@@ -84,8 +79,19 @@ function AppContent() {
     setCurrentPageState(page);
   }, []);
   const setCurrentPage = navigate;
+  const refreshPlatformSettings=useCallback(async()=>{
+    try{
+      const settings=await platformAPI.getSettings()
+      setPlatformSettings(settings)
+      setPlatformSettingsError(null)
+    }catch(error:any){
+      setPlatformSettingsError(error?.message||'Unable to load live platform settings')
+    }
+  },[])
 
-  useEffect(()=>{if(!isAuthenticated){setNotificationUnreadCount(0);seenFriendNotifications.current.clear();notificationsInitialized.current=false;return}let active=true;const poll=async()=>{try{const data:any=await notificationsAPI.getNotifications();if(!active)return;const items=Array.isArray(data?.notifications)?data.notifications:[];const unread=items.filter((item:any)=>!item.read);setNotificationUnreadCount(unread.length);for(const item of unread.filter((entry:any)=>entry.type==='friend_request')){const id=String(item.id);if(seenFriendNotifications.current.has(id))continue;seenFriendNotifications.current.add(id);if(notificationsInitialized.current)toast(item.message||'New friend request',{action:{label:'Open',onClick:()=>{void notificationsAPI.markAsRead(id).catch(()=>undefined);sessionStorage.setItem('open_friend_requests','1');navigate('profile')}}})}notificationsInitialized.current=true}catch{/* Keep the last valid badge during transient failures. */}};void poll();const interval=window.setInterval(poll,7000);return()=>{active=false;window.clearInterval(interval)}},[isAuthenticated,navigate]);
+  useEffect(()=>{void refreshPlatformSettings()},[refreshPlatformSettings])
+
+  useEffect(()=>{if(!isAuthenticated){setNotificationUnreadCount(0);seenFriendNotifications.current.clear();notificationsInitialized.current=false;return}let active=true;const poll=async()=>{if(notificationPollInFlight.current){notificationPollQueued.current=true;return}const revision=notificationPollRevision.current;notificationPollInFlight.current=true;try{const data:any=await notificationsAPI.getNotifications();if(!active||revision!==notificationPollRevision.current)return;const items=Array.isArray(data?.notifications)?data.notifications:[];const unread=items.filter((item:any)=>!item.read);setNotificationUnreadCount(typeof data?.unreadCount==='number'?data.unreadCount:unread.length);for(const item of unread.filter((entry:any)=>entry.type==='friend_request')){const id=String(item.id);if(seenFriendNotifications.current.has(id))continue;seenFriendNotifications.current.add(id);if(notificationsInitialized.current)toast(item.message||'New friend request',{action:{label:'Open',onClick:()=>{sessionStorage.setItem('open_friend_requests','1');navigate('profile')}}})}notificationsInitialized.current=true}catch{/* Keep the last valid badge during transient failures. */}finally{notificationPollInFlight.current=false;if(active&&notificationPollQueued.current){notificationPollQueued.current=false;void poll()}}};const unsubscribe=subscribeToNotificationChanges(unreadCount=>{notificationPollRevision.current+=1;if(typeof unreadCount==='number'){setNotificationUnreadCount(unreadCount);return}void poll()});void poll();const interval=window.setInterval(poll,7000);return()=>{active=false;notificationPollRevision.current+=1;notificationPollQueued.current=false;unsubscribe();window.clearInterval(interval)}},[isAuthenticated,navigate]);
 
  // Check for Steam callback and password reset token on first load
 useEffect(() => {
@@ -141,43 +147,16 @@ const handleLogin = async (isNewUser: boolean = false) => {
     setHasCompletedSteamVerification(true);
   };
 
-  const handleMatchAccept = () => {
-    setMatchReady(prev => ({ ...prev, isOpen: false }));
-    setCurrentPage('map-banning');
-  };
-
-  const handleMatchDecline = async () => {
-    setMatchReady(prev => ({ ...prev, isOpen: false }));
-
-    // Issue ban via the real API using the authenticated user's id
-    // BanSystem localStorage logic is a placeholder until server-side bans are complete
-    if (user?.id) {
-      try {
-        await reportAPI.getBanStatus(); // refresh ban state after decline penalty
-      } catch {
-        // non-critical — ban will be applied server-side when that endpoint is wired
-      }
-    }
-
-    setCurrentPage('lobby');
-  };
-
-  const handleStartMatch = (matchType: string, mapName: string) => {
-    // Only show the match-ready alert when coming from the lobby
-    if (currentPage === 'lobby') {
-      setTimeout(() => {
-        setMatchReady({
-          isOpen: true,
-          matchType,
-          mapName,
-          playersReady: 2,
-          totalPlayers: 2,
-        });
-      }, 2000);
-    }
+  const handleStartMatch = (_matchType: string, _mapName: string) => {
+    if (currentPage === 'lobby') setCurrentPage('matches');
   };
 
   const renderPage = () => {
+    const registrationUnavailableReason=platformSettings?.maintenanceMode
+      ? 'New account registration is unavailable during platform maintenance.'
+      :platformSettings?.registrationEnabled===false
+        ?'New account registration is currently disabled.'
+        :undefined
     // Unauthenticated users can only see auth pages
     if (
       !isAuthenticated &&
@@ -186,12 +165,17 @@ const handleLogin = async (isNewUser: boolean = false) => {
       currentPage !== 'new-password' &&
       currentPage !== 'steam-callback'
     ) {
-      return <Auth onLogin={handleLogin} onNavigate={setCurrentPage} />;
+      return <Auth onLogin={handleLogin} onNavigate={setCurrentPage} registrationUnavailableReason={registrationUnavailableReason} />;
+    }
+
+    if (currentPage.startsWith('tournaments/')) {
+      const tournamentId=decodeURIComponent(currentPage.slice('tournaments/'.length));
+      return <TournamentDetail tournamentId={tournamentId} onNavigate={setCurrentPage} isPremium={user?.isPremium || false} />;
     }
 
     switch (currentPage) {
       case 'auth':
-        return <Auth onLogin={handleLogin} onNavigate={setCurrentPage} />;
+        return <Auth onLogin={handleLogin} onNavigate={setCurrentPage} registrationUnavailableReason={registrationUnavailableReason} />;
       case 'forgot-password':
         return <ForgotPassword onNavigate={setCurrentPage} />;
       case 'new-password':
@@ -202,26 +186,25 @@ const handleLogin = async (isNewUser: boolean = false) => {
       case 'hub':
         return <Hub onNavigate={setCurrentPage} />;
       case 'admin':
-        return <Admin onNavigate={setCurrentPage} />;
+        return <Admin onNavigate={setCurrentPage} onPlatformSettingsSaved={refreshPlatformSettings} />;
       case 'stats':
-        return <Stats onNavigate={setCurrentPage} />;
+        return <Suspense fallback={<div className="grid min-h-[55vh] place-items-center font-mono text-sm text-gray-400">LOADING STATISTICS...</div>}><Stats onNavigate={setCurrentPage} /></Suspense>;
       case 'profile':
         return <Profile onNavigate={setCurrentPage} isPremium={user?.isPremium || false} />;
       case 'notifications':
         return <Notifications onNavigate={setCurrentPage} />;
+      case 'achievements':
+        return <Achievements />;
       case 'configuration':
         return <Configuration onNavigate={setCurrentPage} />;
 
       case 'lobby':
-        return <Lobby onNavigate={setCurrentPage} onStartMatch={handleStartMatch} isPremium={user?.isPremium || false} />;
+        return <Lobby onNavigate={setCurrentPage} onStartMatch={handleStartMatch} isPremium={user?.isPremium || false} maintenanceMode={platformSettings?.maintenanceMode===true} />;
       case 'map-selection':
-        return <MapSelection onNavigate={setCurrentPage} />;
       case 'map-banning':
-        return <MapBanning onNavigate={setCurrentPage} />;
       case 'classic-deathmatch':
-        return <ClassicDeathmatch onNavigate={setCurrentPage} />;
       case 'instagib-mode':
-        return <InstagibMode onNavigate={setCurrentPage} />;
+        return <Lobby onNavigate={setCurrentPage} onStartMatch={handleStartMatch} isPremium={user?.isPremium || false} maintenanceMode={platformSettings?.maintenanceMode===true} />;
       case 'matches':
         return <Matches />;
 
@@ -268,8 +251,8 @@ const handleLogin = async (isNewUser: boolean = false) => {
 
       default:
         return isAuthenticated
-          ? <Lobby onNavigate={setCurrentPage} onStartMatch={handleStartMatch} isPremium={user?.isPremium || false} />
-          : <Auth onLogin={handleLogin} onNavigate={setCurrentPage} />;
+          ? <Lobby onNavigate={setCurrentPage} onStartMatch={handleStartMatch} isPremium={user?.isPremium || false} maintenanceMode={platformSettings?.maintenanceMode===true} />
+          : <Auth onLogin={handleLogin} onNavigate={setCurrentPage} registrationUnavailableReason={registrationUnavailableReason} />;
     }
   };
 
@@ -290,7 +273,10 @@ const handleLogin = async (isNewUser: boolean = false) => {
   if (isAuthenticated && currentPage === 'admin') {
     return (
       <>
-        <Admin onNavigate={setCurrentPage} />
+        <Suspense fallback={pageFallback}>
+          <Admin onNavigate={setCurrentPage} onPlatformSettingsSaved={refreshPlatformSettings} />
+        </Suspense>
+        <GlobalChat />
         <Toaster />
       </>
     );
@@ -310,30 +296,41 @@ const handleLogin = async (isNewUser: boolean = false) => {
         />
       )}
 
+      {currentPage !== 'admin' && (
+        <div className="relative z-20 w-full">
+          {platformSettingsError && (
+            <div role="status" className="border-y border-amber-700/50 bg-amber-950 px-4 py-2 text-center font-mono text-xs text-amber-100 sm:text-sm">
+              Live platform status could not be loaded: {platformSettingsError}. Actions remain subject to server checks.
+            </div>
+          )}
+          {platformSettings?.maintenanceMode && (
+            <div role="alert" className="border-y border-red-600/60 bg-red-950 px-4 py-3 text-center font-mono text-sm text-red-100">
+              <strong>PLATFORM MAINTENANCE:</strong> Read-only areas remain available, but registration and matchmaking are temporarily unavailable.
+            </div>
+          )}
+          {isAuthenticated && platformSettings?.announcement.enabled && platformSettings.announcement.message.trim() && (
+            <div role="status" className="border-y border-orange-600/50 bg-[#241306] px-4 py-3 text-center font-mono text-sm text-orange-100">
+              {platformSettings.announcement.title.trim() && <strong className="mr-2 text-orange-300">{platformSettings.announcement.title.trim()}:</strong>}
+              <span className="break-words">{platformSettings.announcement.message.trim()}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="relative z-10">
-        {renderPage()}
+        <Suspense fallback={pageFallback}>{renderPage()}</Suspense>
       </div>
 
       {isAuthenticated && currentPage !== 'auth' && currentPage !== 'admin' && (
         <GlobalChat />
       )}
 
-      <MatchReadyAlert
-        isOpen={matchReady.isOpen}
-        onAccept={handleMatchAccept}
-        onDecline={handleMatchDecline}
-        matchType={matchReady.matchType}
-        mapName={matchReady.mapName}
-        playersReady={matchReady.playersReady}
-        totalPlayers={matchReady.totalPlayers}
-      />
-
       <Toaster />
 
       {isAuthenticated && currentPage !== 'auth' && currentPage !== 'admin' && (
         <footer className="border-t border-orange-900/20 bg-black/60 mt-16 relative z-10">
           <div className="container mx-auto px-4 py-8">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+            <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <h3 className="font-semibold mb-4 text-orange-400 font-mono">SECTOR NINE INITIATIVE</h3>
                 <p className="text-sm text-gray-400 font-mono leading-relaxed">
@@ -382,7 +379,11 @@ const handleLogin = async (isNewUser: boolean = false) => {
 export default function App() {
   return (
     <UserProvider>
-      <AppContent />
+      <GameProvider>
+        <ThemeProvider>
+          <AppContent />
+        </ThemeProvider>
+      </GameProvider>
     </UserProvider>
   );
 }

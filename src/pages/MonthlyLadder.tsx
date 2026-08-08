@@ -7,6 +7,7 @@ import { FramedAvatar } from "../components/FramedAvatar";
 import { Trophy, Calendar, TrendingUp, Medal, Crown, Star, ArrowLeft } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
 import { statsAPI } from "../utils/api";
+import { useGame } from "../contexts/GameContext";
 
 interface MonthlyLadderProps {
   onNavigate?: (page: string) => void;
@@ -14,6 +15,7 @@ interface MonthlyLadderProps {
 
 export function MonthlyLadder({ onNavigate }: MonthlyLadderProps) {
   const { user } = useUser();
+  const { selectedGame } = useGame();
   const [currentMonth, setCurrentMonth] = useState("");
   const [daysUntilReset, setDaysUntilReset] = useState(0);
 
@@ -33,7 +35,7 @@ export function MonthlyLadder({ onNavigate }: MonthlyLadderProps) {
   const [userRank, setUserRank] = useState<number | null>(null);
 
   useEffect(() => {
-    statsAPI.getLadder('monthly')
+    statsAPI.getLadder('monthly',selectedGame.id)
       .then(data => {
         setLadderSeason(data.season || null);
         setLadderData(data.entries || []);
@@ -43,7 +45,7 @@ export function MonthlyLadder({ onNavigate }: MonthlyLadderProps) {
         }
       })
       .catch(err => console.error('Failed to load ladder:', err));
-  }, [user?.id]);
+  }, [selectedGame.id,user?.id]);
 
   const getRankIcon = (position: number) => {
     switch (position) {

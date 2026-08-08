@@ -1,7 +1,5 @@
-import { useState, useEffect } from "react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./ui/alert-dialog";
-import { Button } from "./ui/button";
-import { Clock, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import { toast } from "sonner";
 
 interface MatchReadyAlertProps {
@@ -23,31 +21,6 @@ export function MatchReadyAlert({
   playersReady, 
   totalPlayers 
 }: MatchReadyAlertProps) {
-  const [timeLeft, setTimeLeft] = useState(30); // 30 second timer
-
-  useEffect(() => {
-    if (!isOpen) {
-      setTimeLeft(30);
-      return;
-    }
-
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          onDecline(); // Auto-decline when timer runs out
-          toast.error("Match acceptance timed out", {
-            description: "You failed to accept the match in time",
-            className: "bg-red-900/90 border-red-700 text-red-100"
-          });
-          return 30;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [isOpen, onDecline]);
-
   const handleAccept = () => {
     onAccept();
     toast.success("Match accepted!", {
@@ -90,11 +63,8 @@ export function MatchReadyAlert({
             <span className="text-gray-400 font-mono">PLAYERS:</span>
             <span className="text-green-400 font-mono">{playersReady}/{totalPlayers}</span>
           </div>
-          <div className="mt-4 p-3 bg-orange-900/20 border border-orange-700/50 rounded">
-            <div className="flex items-center justify-center text-orange-400">
-              <Clock className="w-4 h-4 mr-2" />
-              <span className="font-mono">TIME: {timeLeft}s</span>
-            </div>
+          <div className="mt-4 rounded border border-orange-700/50 bg-orange-900/20 p-3 text-center font-mono text-orange-300">
+            Waiting for your backend-recorded response
           </div>
         </div>
         <AlertDialogFooter className="gap-3">

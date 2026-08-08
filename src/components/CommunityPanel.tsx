@@ -1,0 +1,14 @@
+import { useEffect, useState } from 'react'
+import { Activity,CalendarDays,Loader2 } from 'lucide-react'
+import { useGame } from '../contexts/GameContext'
+import { communityAPI } from '../utils/api'
+import { Badge } from './ui/badge'
+import { Card,CardContent,CardHeader,CardTitle } from './ui/card'
+
+export function CommunityPanel(){
+  const {selectedGame}=useGame();const [events,setEvents]=useState<any[]>([]),[activity,setActivity]=useState<any[]>([]),[loading,setLoading]=useState(true)
+  useEffect(()=>{let active=true;setLoading(true);Promise.all([communityAPI.getEvents(selectedGame.id),communityAPI.getActivity()]).then(([eventData,activityData]:any[])=>{if(active){setEvents(Array.isArray(eventData.events)?eventData.events:[]);setActivity((Array.isArray(activityData.activity)?activityData.activity:[]).filter(item=>!item.game_id||item.game_id===selectedGame.id).slice(0,8))}}).catch(()=>{if(active){setEvents([]);setActivity([])}}).finally(()=>active&&setLoading(false));return()=>{active=false}},[selectedGame.id])
+  if(loading)return <Card className="border-orange-900/20 bg-black/40"><CardContent className="flex justify-center py-10"><Loader2 className="size-5 animate-spin text-orange-400"/></CardContent></Card>
+  return <div className="grid gap-6 xl:grid-cols-2"><Card className="border-orange-900/20 bg-black/40"><CardHeader><CardTitle className="flex items-center gap-2 font-mono text-orange-400"><CalendarDays className="size-5"/>COMMUNITY EVENTS</CardTitle></CardHeader><CardContent className="space-y-3">{events.length?events.map(event=><article key={event.id} className="border border-orange-900/15 bg-black/25 p-3"><div className="flex flex-wrap items-start justify-between gap-2"><h3 className="font-mono text-sm text-orange-200">{event.title}</h3><Badge variant="outline">{event.event_type}</Badge></div><p className="mt-2 text-xs leading-5 text-gray-400">{event.description}</p><p className="mt-2 text-[11px] text-gray-600">{new Date(event.starts_at).toLocaleString()} - {new Date(event.ends_at).toLocaleString()}</p></article>):<Empty text="No upcoming community events."/>}</CardContent></Card><Card className="border-orange-900/20 bg-black/40"><CardHeader><CardTitle className="flex items-center gap-2 font-mono text-orange-400"><Activity className="size-5"/>ACTIVITY FEED</CardTitle></CardHeader><CardContent className="space-y-2">{activity.length?activity.map(item=><div key={`${item.type}:${item.id}`} className="border-b border-orange-900/15 py-2 last:border-0"><p className="text-sm text-gray-300"><span className="font-mono text-orange-300">{item.actor_name}</span> {item.detail}</p><p className="mt-1 text-[11px] text-gray-600">{new Date(item.occurred_at).toLocaleString()}</p></div>):<Empty text="No recent community activity."/>}</CardContent></Card></div>
+}
+function Empty({text}:{text:string}){return <p className="py-8 text-center font-mono text-xs text-gray-500">{text}</p>}

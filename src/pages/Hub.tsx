@@ -1,13 +1,13 @@
 import { PlayerProfile } from "../components/PlayerProfile";
-import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { Users, Clock, Play, Trophy, ExternalLink, MessageCircle, Youtube, Twitter, Twitch, TrendingUp, Calendar, Snowflake, Flower, Sun, Leaf } from "lucide-react";
+import { Play, Trophy, MessageCircle, Youtube, Twitter, Twitch, Calendar, Snowflake, Flower, Sun, Leaf, ExternalLink } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
 import { statsAPI } from "../utils/api";
+import { NewsFeed } from "../components/NewsFeed";
 import { useState, useEffect } from "react";
-import heroImage from 'figma:asset/819394a5391d24198a8e0461bd44cc5ad28fff0a.png';
+import heroImage from '../assets/sector-nine-hub-hero.jpg';
 
 interface HubProps {
   onNavigate?: (page: string) => void;
@@ -31,29 +31,36 @@ export function Hub({ onNavigate }: HubProps) {
   const losses = numberOrZero(user?.stats?.losses ?? user?.losses);
   const kills = numberOrZero(user?.stats?.kills ?? user?.totalKills);
   const deaths = numberOrZero(user?.stats?.deaths ?? user?.totalDeaths);
+  const level = numberOrZero(user?.level);
+  const experience = numberOrZero(user?.experience);
+  const levelStartXp = level * level * 100;
+  const nextLevelXp = (level + 1) * (level + 1) * 100;
 
   // Create player data from normalized, real profile values.
   const playerData = {
     name: user?.username || "Operative",
     avatar: user?.resolvedAvatar || "",
     rank: user?.isPremium ? "VIP RESEARCHER" : `LEVEL ${user?.level || 0} RESEARCHER`,
-    level: numberOrZero(user?.level),
-    experience: numberOrZero(user?.experience),
-    maxExperience: 300, // 300 XP per level
+    level,
+    experience: Math.max(0, experience - levelStartXp),
+    maxExperience: Math.max(1, nextLevelXp - levelStartXp),
     wins,
     losses,
     kda: deaths > 0 ? (kills / deaths).toFixed(2) : kills > 0 ? kills.toFixed(2) : "0.00",
-    mainGames: ["Half-Life 1"], equippedFrame:user?.equippedFrame, equippedBadge:user?.equippedBadge
+    mainGames: ["Half-Life 1"],
+    equippedFrame: user?.equippedFrame,
+    isOnline: true,
+    isPremium: user?.isPremium ?? false,
   };
   
   return (
     <div className="min-h-screen bg-background">
       {/* Hero Section */}
-      <div className="relative h-80 bg-gradient-to-r from-orange-900/20 to-green-900/10 overflow-hidden border-b border-orange-900/20">
+      <div className="theme-hero relative h-80 bg-gradient-to-r from-orange-900/20 to-green-900/10 overflow-hidden border-b border-orange-900/20">
         <img
           src={heroImage}
           alt="Combat Operations"
-          className="absolute inset-0 w-full h-full object-cover opacity-15"
+          className="theme-hero-media absolute inset-0 w-full h-full object-cover opacity-15"
         />
         <div className="absolute inset-0 bg-gradient-to-r from-black/80 to-black/40" />
         <div className="relative container mx-auto px-4 h-full flex items-center">
@@ -73,29 +80,17 @@ export function Hub({ onNavigate }: HubProps) {
 
       {/* Main Content */}
       <div className="container mx-auto px-4 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12 lg:gap-8">
           {/* Left Sidebar */}
           <div className="lg:col-span-3 space-y-6">
             <PlayerProfile player={playerData} />
             
-            {/* HLTV Section */}
             <Card className="bg-black/40 border-orange-900/20">
-              <CardHeader>
-                <CardTitle className="text-orange-400 font-mono">HLTV FEED</CardTitle>
-              </CardHeader>
+              <CardHeader><CardTitle className="text-orange-400 font-mono">HLTV FEED</CardTitle></CardHeader>
               <CardContent className="space-y-3">
-                <div className="space-y-2">
-                  <div className="text-center py-6">
-                    <p className="text-gray-400 font-mono text-sm">CONNECTING TO FEED...</p>
-                  </div>
-                </div>
-                <Button 
-                  variant="outline" 
-                  className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono"
-                  onClick={() => window.open('https://hltv.org', '_blank')}
-                >
-                  <ExternalLink className="w-4 h-4 mr-2" />
-                  VIEW MORE ON HLTV
+                <div className="py-6 text-center"><p className="text-sm font-mono text-gray-400">CONNECTING TO FEED...</p></div>
+                <Button variant="outline" className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono" onClick={() => window.open("https://hltv.org", "_blank")}>
+                  <ExternalLink className="mr-2 h-4 w-4" />VIEW MORE ON HLTV
                 </Button>
               </CardContent>
             </Card>
@@ -114,7 +109,7 @@ export function Hub({ onNavigate }: HubProps) {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="text-center p-3 bg-black/20 border border-orange-900/20 rounded-lg">
                     <div className="text-2xl font-bold text-orange-400 font-mono">{platformStats ? platformStats.totalPlayers.toLocaleString() : "---"}</div>
-                    <div className="text-xs text-gray-400 font-mono">Online Players</div>
+                    <div className="text-xs text-gray-400 font-mono">Registered Players</div>
                   </div>
                   <div className="text-center p-3 bg-black/20 border border-orange-900/20 rounded-lg">
                     <div className="text-2xl font-bold text-green-400 font-mono">{platformStats ? platformStats.activeMatches : "---"}</div>
@@ -132,51 +127,24 @@ export function Hub({ onNavigate }: HubProps) {
               </CardContent>
             </Card>
 
-            {/* Latest News / Updates */}
-            <Card className="bg-black/40 border-orange-900/20">
-              <CardHeader>
-                <CardTitle className="text-orange-400 font-mono">LATEST NEWS</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-8">
-                  <p className="text-gray-400 font-mono text-sm">
-                    No news updates at this time
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+            <NewsFeed />
           </div>
 
           {/* Right Sidebar */}
-          <div className="lg:col-span-3 space-y-6">
-            {/* Latest News */}
-            <Card className="bg-black/40 border-orange-900/20">
-              <CardHeader>
-                <CardTitle className="text-orange-400 font-mono">LATEST NEWS</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="space-y-2">
-                  <div className="text-center py-6">
-                    <p className="text-gray-400 font-mono text-sm">NO NEWS UPDATES AVAILABLE</p>
-                    <p className="text-gray-500 font-mono text-xs mt-2">Check back soon for updates</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
+          <div className="hub-right-rail lg:col-span-3 space-y-6">
             {/* VIP Subscription */}
-            <Card className="bg-gradient-to-br from-yellow-900/20 via-orange-900/20 to-green-900/20 border-yellow-900/30">
-              <CardHeader>
+            <Card className="gap-4 bg-gradient-to-br from-yellow-900/20 via-orange-900/20 to-green-900/20 border-yellow-900/30">
+              <CardHeader className="px-5 pt-5">
                 <CardTitle className="text-yellow-400 font-mono flex items-center">
                   <Trophy className="w-5 h-5 mr-2" />
                   VIP SUBSCRIPTION
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="px-5 pb-5">
                 <div className="space-y-4">
                   <div className="text-center py-3">
                     <div className="text-2xl font-bold text-yellow-400 font-mono mb-1">
-                      5000 Points / €5
+                      View current Store offer
                     </div>
                     <div className="text-xs text-gray-400 font-mono">per month</div>
                   </div>
@@ -194,14 +162,14 @@ export function Hub({ onNavigate }: HubProps) {
             </Card>
 
             {/* Competitive Ladders */}
-            <Card className="bg-black/40 border-orange-900/20">
-              <CardHeader>
+            <Card className="gap-4 bg-black/40 border-orange-900/20">
+              <CardHeader className="px-5 pt-5">
                 <CardTitle className="text-orange-400 font-mono flex items-center">
                   <Trophy className="w-5 h-5 mr-2" />
                   COMPETITIVE LADDERS
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-3 px-5 pb-5">
                 <Button
                   variant="outline"
                   className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start h-auto py-4"
@@ -277,11 +245,11 @@ export function Hub({ onNavigate }: HubProps) {
             </Card>
 
             {/* Social Media */}
-            <Card className="bg-black/40 border-orange-900/20">
-              <CardHeader>
+            <Card className="gap-4 bg-black/40 border-orange-900/20">
+              <CardHeader className="px-5 pt-5">
                 <CardTitle className="text-orange-400 font-mono">FOLLOW US</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-3 px-5 pb-5">
                 <Button 
                   variant="outline" 
                   className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"

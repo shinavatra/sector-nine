@@ -8,7 +8,7 @@ export function AdminSectionActions({section,onAction}:{section:AdminSection;onA
   if(section==='bans')return <div className="mb-4"><Button onClick={()=>onAction('create_ban')}>Add ban</Button></div>
   if(section==='badges')return <div className="mb-4"><Button onClick={()=>onAction('create_badge')}>Add badge</Button></div>
   if(section==='frames')return <div className="mb-4"><Button onClick={()=>onAction('create_frame')}>Add frame</Button></div>
-  if(section==='store')return <div className="mb-4 flex gap-2"><Button onClick={()=>onAction('create_badge')}>Add badge</Button><Button onClick={()=>onAction('create_frame')}>Add frame</Button></div>
+  if(section==='store')return <div className="mb-4"><Button onClick={()=>onAction('create_frame')}>Add frame</Button></div>
   if(section==='system')return <div className="mb-4"><Button variant="outline" onClick={()=>onAction('clear_cache')}>Clear Steam profile cache</Button></div>
   return null
 }

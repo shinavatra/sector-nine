@@ -16,9 +16,10 @@ import { toast } from "sonner";
 interface AuthProps {
   onLogin: (isNewUser?: boolean) => void;
   onNavigate: (page: string) => void;
+  registrationUnavailableReason?: string;
 }
 
-export function Auth({ onLogin, onNavigate }: AuthProps) {
+export function Auth({ onLogin, onNavigate, registrationUnavailableReason }: AuthProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -65,6 +66,10 @@ export function Auth({ onLogin, onNavigate }: AuthProps) {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (registrationUnavailableReason) {
+      toast.error("Registration unavailable", { description: registrationUnavailableReason });
+      return;
+    }
     
     if (registerPassword !== registerConfirmPassword) {
       toast.error("Passwords do not match", {
@@ -92,7 +97,7 @@ export function Auth({ onLogin, onNavigate }: AuthProps) {
     }
   };
 
-  const handleSteamConnect = () => {
+  const handleSteamConnect = async () => {
     setIsLoading(true);
     
     try {
@@ -107,25 +112,17 @@ export function Auth({ onLogin, onNavigate }: AuthProps) {
       }
 
       // Import and initiate Steam auth
-      import("../utils/steamAuth").then(({ initiateSteamLogin }) => {
+      const { initiateSteamLogin } = await import("../utils/steamAuth");
         // Check if in iframe
         if (inIframe) {
           handleOpenInNewTab();
           return;
         }
         
-        initiateSteamLogin();
+        await initiateSteamLogin();
         
         // Don't set loading to false for new window approach
         // User needs to complete auth in new window
-      }).catch((error) => {
-        console.error('Steam auth module error:', error);
-        setIsLoading(false);
-        toast.error("Steam login failed", {
-          description: error.message || "Unable to load Steam authentication. Please try again or use email registration.",
-          className: "bg-red-900/90 border-red-700 text-red-100"
-        });
-      });
     } catch (error) {
       console.error('Steam connect error:', error);
       setIsLoading(false);
@@ -335,6 +332,12 @@ export function Auth({ onLogin, onNavigate }: AuthProps) {
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={handleRegister} className="space-y-4">
+                    {registrationUnavailableReason && (
+                      <Alert className="border-amber-600/40 bg-amber-950/30 text-amber-100">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertDescription className="font-mono text-xs">{registrationUnavailableReason}</AlertDescription>
+                      </Alert>
+                    )}
                     <div className="space-y-2">
                       <Label htmlFor="register-username" className="text-gray-300 font-mono">USERNAME</Label>
                       <div className="relative">
@@ -434,7 +437,7 @@ export function Auth({ onLogin, onNavigate }: AuthProps) {
 
                     <Button 
                       type="submit"
-                      disabled={isLoading}
+                      disabled={isLoading || Boolean(registrationUnavailableReason)}
                       className="w-full bg-orange-900/20 border border-orange-900/30 text-orange-400 hover:bg-orange-900/30 font-mono disabled:opacity-50"
                     >
                       <User className="w-4 h-4 mr-2" />

@@ -7,6 +7,7 @@ import { FramedAvatar } from "../components/FramedAvatar";
 import { Trophy, Calendar, TrendingUp, Medal, Crown, Star, ArrowLeft, Clock, Sun } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
 import { statsAPI } from "../utils/api";
+import { useGame } from "../contexts/GameContext";
 
 interface SummerLadderProps {
   onNavigate?: (page: string) => void;
@@ -14,6 +15,7 @@ interface SummerLadderProps {
 
 export function SummerLadder({ onNavigate }: SummerLadderProps) {
   const { user } = useUser();
+  const { selectedGame } = useGame();
   const [daysUntilEnd, setDaysUntilEnd] = useState(0);
   const [seasonProgress, setSeasonProgress] = useState(0);
 
@@ -42,7 +44,7 @@ export function SummerLadder({ onNavigate }: SummerLadderProps) {
   const [userRank, setUserRank] = useState<number | null>(null);
 
   useEffect(() => {
-    statsAPI.getLadder('summer')
+    statsAPI.getLadder('summer',selectedGame.id)
       .then(data => {
         setLadderSeason(data.season || null);
         setLadderData(data.entries || []);
@@ -52,7 +54,7 @@ export function SummerLadder({ onNavigate }: SummerLadderProps) {
         }
       })
       .catch(err => console.error('Failed to load ladder:', err));
-  }, [user?.id]);
+  }, [selectedGame.id,user?.id]);
 
   const getRankIcon = (position: number) => {
     switch (position) {

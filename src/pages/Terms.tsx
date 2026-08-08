@@ -48,7 +48,7 @@ export function Terms({ onNavigate }: TermsProps) {
                 Users are granted access to <span className="text-green-400">TWO MATCHMAKING MODES</span>: Classic Deathmatch and Instagib Mode. All competitive matches are 1v1 format requiring exactly 5 map selections.
               </p>
               <p>
-                <span className="text-orange-400">VIP SUBSCRIPTION (€5.00)</span> is required for tournament registration. Standard matchmaking is accessible to all registered users.
+                <span className="text-orange-400">VIP SUBSCRIPTION</span> is required for tournament registration. Current pricing is shown in the Store. Standard matchmaking is accessible to all registered users.
               </p>
             </div>
           </div>
@@ -118,7 +118,7 @@ export function Terms({ onNavigate }: TermsProps) {
             </div>
             <div className="text-gray-300 font-mono text-sm space-y-3 leading-relaxed">
               <p>
-                VIP subscription is priced at <span className="text-orange-400">€5.00</span> and grants access to tournament registration, exclusive features, and VIP badge visibility across all pages.
+                VIP subscription pricing is loaded from the active Store catalog and grants access to tournament registration and configured premium features.
               </p>
               <p>
                 Subscription fees are non-refundable except in cases of platform error or service unavailability. Cancellation requests must be submitted through official support channels.

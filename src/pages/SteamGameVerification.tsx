@@ -1,301 +1,206 @@
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Button } from "../components/ui/button";
-import { Badge } from "../components/ui/badge";
+import { useCallback, useEffect, useState } from "react";
 import { Alert, AlertDescription } from "../components/ui/alert";
-import { Progress } from "../components/ui/progress";
-import { GamepadIcon, CheckCircle, XCircle, AlertTriangle, ExternalLink, Clock, Download } from "lucide-react";
-import { useState, useEffect } from "react";
-import { toast } from "sonner";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { CheckCircle, ExternalLink, Loader2, RefreshCw, ShieldAlert, XCircle } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
-import { getSteamProfile, verifyHalfLifeOwnership } from "../utils/steamAuth";
+import { steamAPI } from "../utils/api";
+import { initiateSteamLogin } from "../utils/steamAuth";
+import { toast } from "sonner";
 
 interface SteamGameVerificationProps {
   onNavigate?: (page: string) => void;
   onComplete?: () => void;
 }
 
+type VerificationStatus = {
+  linked: boolean;
+  profileVisibility?: "public" | "private" | "unknown";
+  gamesVisible?: boolean;
+  ownsHL1?: boolean;
+  verified?: boolean;
+  vac?: { banned: boolean; count: number };
+  gameBans?: { banned: boolean; count: number };
+  verification?: { code: string; message: string };
+};
+
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : "Steam verification could not be completed.";
+
 export function SteamGameVerification({ onNavigate, onComplete }: SteamGameVerificationProps) {
-  const { user, refreshProfile } = useUser();
-  const [verificationStep, setVerificationStep] = useState<'connecting' | 'scanning' | 'found' | 'not-found' | 'manual'>('connecting');
-  const [progress, setProgress] = useState(0);
-  const [canSkip, setCanSkip] = useState(false);
-  const [steamProfile, setSteamProfile] = useState<any>(null);
+  const { user, adoptProfile } = useUser();
+  const [status, setStatus] = useState<VerificationStatus | null>(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Real Steam verification using user's linked Steam account
-  useEffect(() => {
-    const performVerification = async () => {
-      // Step 1: Connecting to Steam
-      setVerificationStep('connecting');
-      setProgress(20);
-      
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      // Check if user has Steam linked
-      if (!user?.steamId) {
-        // No Steam account linked - show not found
-        setVerificationStep('not-found');
-        setProgress(100);
-        setCanSkip(true);
-        return;
-      }
-      
-      // Step 2: Scanning library
-      setVerificationStep('scanning');
-      setProgress(50);
-      
-      try {
-        // Get Steam profile
-        const profile = await getSteamProfile(user.steamId);
-        setSteamProfile(profile);
-        
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
-        // Step 3: Verify Half-Life ownership
-        const hasGame = await verifyHalfLifeOwnership(user.steamId);
-
-        if (hasGame) {
-          setVerificationStep('found');
-          setProgress(100);
-          await refreshProfile();
-        } else {
-          setVerificationStep('not-found');
-          setProgress(100);
-        }
-      } catch (error) {
-        console.error('Steam verification error:', error);
-        setVerificationStep('not-found');
-        setProgress(100);
-      }
-      
-      // Allow skipping after 5 seconds
-      setTimeout(() => {
-        setCanSkip(true);
-      }, 5000);
-    };
-
-    performVerification();
-  }, [user?.steamId]);
-
-  const handleContinue = () => {
-    if (verificationStep === 'found') {
-      toast.success("Steam Integration Complete", {
-        description: "Half-Life 1 verified successfully. Welcome to Sector Nine Initiative!"
-      });
+  const verify = useCallback(async () => {
+    if (!user?.steamId) {
+      setStatus({ linked: false });
+      return;
     }
-    onComplete?.();
-    onNavigate?.('hub');
-  };
+    setIsVerifying(true);
+    setError(null);
+    try {
+      const response = await steamAPI.refresh();
+      setStatus(response.steam);
+      if (response.profile) adoptProfile(response.profile);
+    } catch (verificationError) {
+      setError(getErrorMessage(verificationError));
+    } finally {
+      setIsVerifying(false);
+    }
+  }, [adoptProfile, user?.steamId]);
 
-  const handleSkip = () => {
-    toast.warning("Game Verification Skipped", {
-      description: "You can add Half-Life 1 later in your profile settings to enable matchmaking."
+  useEffect(() => {
+    void verify();
+  }, [verify]);
+
+  const continueToPlatform = () => {
+    toast.success("Steam verification complete", {
+      description: "Your account is eligible for Sector Nine matchmaking.",
     });
     onComplete?.();
-    onNavigate?.('hub');
+    onNavigate?.("hub");
   };
 
-  const handleManualSetup = () => {
-    setVerificationStep('manual');
-  };
-
-  const handleBuyGame = () => {
-    window.open('https://store.steampowered.com/app/70/HalfLife/', '_blank');
-  };
-
-  const renderContent = () => {
-    switch (verificationStep) {
-      case 'connecting':
-        return (
-          <div className="text-center space-y-6">
-            <div className="w-16 h-16 mx-auto mb-4 text-orange-400">
-              <svg className="w-full h-full animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="31.416" strokeDashoffset="15.708" />
-              </svg>
-            </div>
-            <h3 className="text-xl text-orange-400 font-mono">CONNECTING TO STEAM</h3>
-            <p className="text-gray-400 font-mono">Establishing secure connection to Steam client...</p>
-            <Progress value={progress} className="w-full max-w-md mx-auto" />
-          </div>
-        );
-
-      case 'scanning':
-        return (
-          <div className="text-center space-y-6">
-            <div className="w-16 h-16 mx-auto mb-4">
-              <GamepadIcon className="w-full h-full text-orange-400 animate-pulse" />
-            </div>
-            <h3 className="text-xl text-orange-400 font-mono">SCANNING GAME LIBRARY</h3>
-            <p className="text-gray-400 font-mono">Searching for Half-Life 1 in your Steam library...</p>
-            <Progress value={progress} className="w-full max-w-md mx-auto" />
-            <div className="text-sm text-gray-500 font-mono">
-              Checking: Steam\steamapps\common\Half-Life\
-            </div>
-          </div>
-        );
-
-      case 'found':
-        return (
-          <div className="text-center space-y-6">
-            <div className="w-16 h-16 mx-auto mb-4">
-              <CheckCircle className="w-full h-full text-green-400" />
-            </div>
-            <h3 className="text-xl text-green-400 font-mono">HALF-LIFE 1 DETECTED</h3>
-            <div className="space-y-4">
-              <Alert className="bg-green-900/20 border-green-900/30">
-                <CheckCircle className="h-4 w-4 text-green-400" />
-                <AlertDescription className="text-green-300 font-mono">
-                  Half-Life 1 found in your Steam library! Version 1.1.1.0 verified.
-                </AlertDescription>
-              </Alert>
-              <div className="grid grid-cols-2 gap-4 text-sm font-mono">
-                <div className="text-left">
-                  <span className="text-gray-400">Game Path:</span>
-                  <div className="text-orange-400 break-all">C:\Steam\steamapps\common\Half-Life\</div>
-                </div>
-                <div className="text-left">
-                  <span className="text-gray-400">Last Played:</span>
-                  <div className="text-green-400">12 hours ago</div>
-                </div>
-              </div>
-            </div>
-            <Button 
-              onClick={handleContinue}
-              className="bg-green-900/20 border border-green-900/30 text-green-400 hover:bg-green-900/30 font-mono px-8"
-            >
-              <CheckCircle className="w-4 h-4 mr-2" />
-              CONTINUE TO PLATFORM
-            </Button>
-          </div>
-        );
-
-      case 'not-found':
-        return (
-          <div className="text-center space-y-6">
-            <div className="w-16 h-16 mx-auto mb-4">
-              <XCircle className="w-full h-full text-red-400" />
-            </div>
-            <h3 className="text-xl text-red-400 font-mono">HALF-LIFE 1 NOT FOUND</h3>
-            <div className="space-y-4">
-              <Alert className="bg-red-900/20 border-red-900/30">
-                <AlertTriangle className="h-4 w-4 text-red-400" />
-                <AlertDescription className="text-red-300 font-mono">
-                  Half-Life 1 is required to participate in matchmaking and tournaments.
-                </AlertDescription>
-              </Alert>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Button 
-                  onClick={handleBuyGame}
-                  className="bg-blue-900/20 border border-blue-900/30 text-blue-400 hover:bg-blue-900/30 font-mono"
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  BUY ON STEAM
-                  <ExternalLink className="w-3 h-3 ml-2" />
-                </Button>
-                <Button 
-                  onClick={handleManualSetup}
-                  variant="outline"
-                  className="border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono"
-                >
-                  MANUAL SETUP
-                </Button>
-              </div>
-            </div>
-          </div>
-        );
-
-      case 'manual':
-        return (
-          <div className="space-y-6">
-            <div className="text-center">
-              <div className="w-16 h-16 mx-auto mb-4">
-                <GamepadIcon className="w-full h-full text-orange-400" />
-              </div>
-              <h3 className="text-xl text-orange-400 font-mono">MANUAL GAME SETUP</h3>
-              <p className="text-gray-400 font-mono mt-2">
-                If you have Half-Life 1 installed but we couldn't detect it:
-              </p>
-            </div>
-            <div className="space-y-4">
-              <Alert className="bg-orange-900/20 border-orange-900/30">
-                <AlertTriangle className="h-4 w-4 text-orange-400" />
-                <AlertDescription className="text-orange-300 font-mono">
-                  <div className="space-y-2">
-                    <div><strong>1.</strong> Make sure Steam is running</div>
-                    <div><strong>2.</strong> Launch Half-Life 1 at least once</div>
-                    <div><strong>3.</strong> Restart Sector Nine Initiative</div>
-                  </div>
-                </AlertDescription>
-              </Alert>
-              <div className="flex space-x-4">
-                <Button 
-                  onClick={handleContinue}
-                  className="flex-1 bg-green-900/20 border border-green-900/30 text-green-400 hover:bg-green-900/30 font-mono"
-                >
-                  I'VE COMPLETED SETUP
-                </Button>
-              </div>
-            </div>
-          </div>
-        );
-
-      default:
-        return null;
-    }
+  const skip = () => {
+    onComplete?.();
+    onNavigate?.("hub");
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="flex min-h-screen items-center justify-center p-4">
       <div className="w-full max-w-2xl">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-orange-400 font-mono mb-2">
-            STEAM INTEGRATION
-          </h1>
-          <p className="text-gray-400 font-mono">
-            Verifying Half-Life 1 installation for competitive access
-          </p>
-          <Badge className="mt-2 bg-orange-900/20 text-orange-400 border-orange-900/30 font-mono">
+        <div className="mb-8 text-center">
+          <h1 className="mb-2 font-mono text-3xl font-bold text-orange-400">STEAM VERIFICATION</h1>
+          <p className="font-mono text-gray-400">Server-side account and Half-Life ownership verification</p>
+          <Badge className="mt-2 border-orange-900/30 bg-orange-900/20 font-mono text-orange-400">
             REQUIRED FOR MATCHMAKING
           </Badge>
         </div>
 
-        {/* Main Content */}
-        <Card className="bg-black/40 border-orange-900/20">
+        <Card className="border-orange-900/20 bg-black/40">
           <CardHeader>
-            <CardTitle className="text-center text-orange-400 font-mono">
-              GAME VERIFICATION PROTOCOL
-            </CardTitle>
+            <CardTitle className="text-center font-mono text-orange-400">VERIFICATION STATUS</CardTitle>
           </CardHeader>
-          <CardContent className="p-8">
-            {renderContent()}
+          <CardContent className="space-y-5 p-6 md:p-8">
+            {isVerifying && (
+              <div className="flex flex-col items-center gap-4 py-8 text-center">
+                <Loader2 className="h-14 w-14 animate-spin text-orange-400" />
+                <div>
+                  <h3 className="font-mono text-lg text-orange-400">CHECKING STEAM</h3>
+                  <p className="mt-1 text-sm text-gray-400">
+                    Steam is returning your current profile, library, level, and ban status.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {!isVerifying && error && (
+              <>
+                <Alert className="border-red-900 bg-red-950/50">
+                  <ShieldAlert className="h-4 w-4 text-red-400" />
+                  <AlertDescription className="text-red-200">{error}</AlertDescription>
+                </Alert>
+                <Button onClick={verify} className="w-full">
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Retry verification
+                </Button>
+              </>
+            )}
+
+            {!isVerifying && !error && status && !status.linked && (
+              <div className="space-y-5 text-center">
+                <XCircle className="mx-auto h-14 w-14 text-yellow-400" />
+                <div>
+                  <h3 className="font-mono text-lg text-yellow-300">STEAM ACCOUNT NOT CONNECTED</h3>
+                  <p className="mt-2 text-sm text-gray-400">
+                    Sign in through Steam OpenID first. Sector Nine never receives your Steam password.
+                  </p>
+                </div>
+                <Button onClick={() => void initiateSteamLogin().catch(error => toast.error("Steam connection failed", { description: error instanceof Error ? error.message : "Unable to connect to Steam" }))} className="bg-blue-700 hover:bg-blue-800">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Connect Steam
+                </Button>
+              </div>
+            )}
+
+            {!isVerifying && !error && status?.linked && (
+              <>
+                <Alert className={status.verified ? "border-green-900 bg-green-950/40" : "border-yellow-900 bg-yellow-950/40"}>
+                  {status.verified
+                    ? <CheckCircle className="h-4 w-4 text-green-400" />
+                    : <ShieldAlert className="h-4 w-4 text-yellow-400" />}
+                  <AlertDescription className={status.verified ? "text-green-200" : "text-yellow-200"}>
+                    {status.verification?.message || "Steam returned an incomplete verification result."}
+                  </AlertDescription>
+                </Alert>
+
+                <div className="space-y-2">
+                  <CheckRow label="Profile details are public" passed={status.profileVisibility === "public"} />
+                  <CheckRow label="Game details are public" passed={Boolean(status.gamesVisible)} />
+                  <CheckRow label="Half-Life is owned" passed={Boolean(status.ownsHL1)} />
+                  <CheckRow label={`No VAC bans (${status.vac?.count ?? 0})`} passed={!status.vac?.banned} />
+                  <CheckRow label={`No game bans (${status.gameBans?.count ?? 0})`} passed={!status.gameBans?.banned} />
+                </div>
+
+                {(status.verification?.code === "STEAM_PROFILE_PRIVATE" ||
+                  status.verification?.code === "STEAM_GAMES_PRIVATE") && (
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => window.open("https://steamcommunity.com/my/edit/settings", "_blank", "noopener,noreferrer")}
+                  >
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Open Steam privacy settings
+                  </Button>
+                )}
+                {status.verification?.code === "HL1_NOT_OWNED" && (
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => window.open("https://store.steampowered.com/app/70/HalfLife/", "_blank", "noopener,noreferrer")}
+                  >
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    View Half-Life on Steam
+                  </Button>
+                )}
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Button variant="outline" onClick={verify}>
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    Refresh and check again
+                  </Button>
+                  {status.verified ? (
+                    <Button onClick={continueToPlatform} className="bg-green-800 hover:bg-green-700">
+                      <CheckCircle className="mr-2 h-4 w-4" />
+                      Continue to platform
+                    </Button>
+                  ) : (
+                    <Button variant="ghost" onClick={skip}>Skip for now</Button>
+                  )}
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
-        {/* Skip Option */}
-        {canSkip && verificationStep !== 'found' && (
-          <div className="mt-6 text-center">
-            <Alert className="bg-yellow-900/20 border-yellow-900/30 mb-4">
-              <Clock className="h-4 w-4 text-yellow-400" />
-              <AlertDescription className="text-yellow-300 font-mono">
-                You can skip verification now, but matchmaking will be disabled until Half-Life 1 is added.
-              </AlertDescription>
-            </Alert>
-            <Button 
-              onClick={handleSkip}
-              variant="ghost"
-              className="text-gray-400 hover:text-orange-400 hover:bg-orange-900/10 font-mono"
-            >
-              SKIP FOR NOW - I'LL ADD LATER
-            </Button>
-          </div>
-        )}
-
-        {/* Footer Info */}
-        <div className="mt-8 text-center text-sm text-gray-500 font-mono">
-          <p>Steam integration is secure and read-only.</p>
-          <p>We only verify game ownership - no personal data is accessed.</p>
-        </div>
+        <p className="mt-6 text-center text-xs text-gray-500">
+          Verification uses Steam&apos;s Web API and cached PostgreSQL data. No local files are scanned.
+        </p>
       </div>
+    </div>
+  );
+}
+
+function CheckRow({ label, passed }: { label: string; passed: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded border border-white/10 bg-black/30 p-3">
+      <span className="text-sm text-gray-300">{label}</span>
+      {passed
+        ? <CheckCircle className="h-5 w-5 shrink-0 text-green-400" />
+        : <XCircle className="h-5 w-5 shrink-0 text-red-400" />}
     </div>
   );
 }

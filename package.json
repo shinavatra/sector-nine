@@ -2,6 +2,9 @@
   "name": "sector-nine-initiative",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20 <23"
+  },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.3",
     "@radix-ui/react-alert-dialog": "^1.1.6",
@@ -36,13 +39,18 @@
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "embla-carousel-react": "^8.6.0",
-    "express": "^4.22.1",
-    "hono": "^4",
+    "express": "^4.22.2",
+    "express-rate-limit": "^8.6.0",
+    "goldsrc-rcon": "^0.1.0",
+    "helmet": "^8.3.0",
     "input-otp": "^1.4.2",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.487.0",
     "next-themes": "^0.4.6",
+    "nodemailer": "^9.0.3",
     "pg": "^8.18.0",
+    "quake3-rcon": "^1.0.2",
+    "rcon-srcds": "^2.1.1",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
     "react-dom": "^18.3.1",
@@ -59,11 +67,12 @@
     "@types/express": "^4.17.25",
     "@types/jsonwebtoken": "^9.0.9",
     "@types/node": "^20.19.31",
+    "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.16.0",
     "@vitejs/plugin-react-swc": "^3.10.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
-    "vite": "6.3.5"
+    "vite": "^6.4.3"
   },
   "scripts": {
     "dev": "vite",
@@ -72,7 +81,12 @@
     "dev:server": "ts-node --project tsconfig.server.json src/server/index.ts",
     "build:server": "tsc -p tsconfig.server.json",
     "start:server": "node dist/server/index.js",
-    "db:setup": "node -e \"require('dotenv').config(); const {Pool}=require('pg'); const fs=require('fs'); const pool=new Pool({connectionString:process.env.DATABASE_URL}); pool.query(fs.readFileSync('src/server/001_schema.sql','utf8')).then(()=>{console.log('✅ Schema applied');pool.end()}).catch(e=>{console.error('❌',e.message);pool.end();process.exit(1)})\"",
+    "db:backup": "node scripts/backup-postgres.mjs",
+    "db:restore:drill": "node scripts/restore-drill-postgres.mjs",
+    "db:setup": "npm run db:migrate",
+    "db:migrate": "node scripts/migrate-postgres.mjs",
+    "db:migrate:baseline": "node scripts/migrate-postgres.mjs --baseline",
+    "db:migrate:status": "node scripts/migrate-postgres.mjs --status",
     "db:test": "node -e \"require('dotenv').config(); const {Pool}=require('pg'); const p=new Pool({connectionString:process.env.DATABASE_URL}); p.query('SELECT version()').then(r=>{console.log('✅ Connected:',r.rows[0].version.slice(0,50));p.end()}).catch(e=>{console.error('❌',e.message);p.end()})\""
   }
 }

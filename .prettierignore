@@ -1,0 +1,16 @@
+build/
+dist/
+node_modules/
+graphify-out/
+scripts/backups/
+
+# Generated or externally maintained assets.
+src/components/ui/
+src/index.css
+
+# Applied migrations are immutable historical records. Format new migrations
+# before applying them; do not rewrite existing migrations mechanically.
+src/server/*.sql
+
+package-lock.json
+*.log

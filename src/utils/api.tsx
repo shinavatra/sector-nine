@@ -3,7 +3,7 @@
 // No Supabase. Pure PostgreSQL backend.
 // =====================================================
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : window.location.origin)
 
 let sessionToken: string | null = null
 
@@ -42,6 +42,22 @@ export class ApiError extends Error {
     super(message)
     this.name = 'ApiError'
   }
+}
+
+export interface PublicPlatformSettings {
+  maintenanceMode: boolean
+  registrationEnabled: boolean
+  announcement: { enabled: boolean; title: string; message: string }
+}
+
+export const platformAPI = {
+  getSettings: async (): Promise<PublicPlatformSettings> => {
+    const data = await apiFetch('/platform/settings')
+    if (typeof data?.maintenanceMode !== 'boolean' || typeof data?.registrationEnabled !== 'boolean' || typeof data?.announcement?.enabled !== 'boolean' || typeof data?.announcement?.title !== 'string' || typeof data?.announcement?.message !== 'string') {
+      throw new ApiError('Platform settings response is invalid', 502, 'INVALID_PLATFORM_SETTINGS')
+    }
+    return data
+  },
 }
 
 // =====================================================
@@ -96,17 +112,14 @@ export const userAPI = {
   changeDisplayName: async (displayName: string) =>
     apiFetch('/user/display-name', { method: 'POST', body: JSON.stringify({ displayName }) }),
 
-  upgradeToVIP: async (method: 'points' | 'payment' = 'points') =>
-    apiFetch('/user/vip/purchase', { method: 'POST', body: JSON.stringify({ method }) }),
+  upgradeToVIP: async (productId: string) =>
+    apiFetch('/user/vip/purchase', { method: 'POST', body: JSON.stringify({ productId, method: 'points' }) }),
 
   cancelVIP: async () =>
     apiFetch('/user/vip/cancel', { method: 'POST' }),
 
-  purchaseBadge: async (badgeId: string, pointsCost: number) =>
-    apiFetch('/user/badge/purchase', { method: 'POST', body: JSON.stringify({ badgeId, pointsCost }) }),
-
-  purchaseFrame: async (frameId: string, pointsCost: number) =>
-    apiFetch('/user/frame/purchase', { method: 'POST', body: JSON.stringify({ frameId, pointsCost }) }),
+  purchaseFrame: async (frameId: string) =>
+    apiFetch('/user/frame/purchase', { method: 'POST', body: JSON.stringify({ frameId }) }),
 
   equipBadge: async (badgeId: string) =>
     apiFetch('/user/badge/equip', { method: 'POST', body: JSON.stringify({ badgeId }) }),
@@ -115,8 +128,6 @@ export const userAPI = {
     apiFetch('/user/frame/equip', { method: 'POST', body: JSON.stringify({ frameId }) }),
 
   // Links Steam ID — server also fetches avatar + HL1 ownership automatically
-  linkSteam: async (steamId: string) =>
-    apiFetch('/steam/link', { method: 'POST', body: JSON.stringify({ steamId }) }),
 }
 
 // =====================================================
@@ -124,17 +135,55 @@ export const userAPI = {
 // =====================================================
 
 export const matchmakingAPI = {
-  joinQueue: async (gameMode: string, selectedMaps: string[]) =>
-    apiFetch('/matchmaking/join', { method: 'POST', body: JSON.stringify({ gameMode, selectedMaps }) }),
+  joinQueue: async (gameId: string, gameMode: string, selectedMaps: string[], preferredRegion = '') =>
+    apiFetch('/matchmaking/join', { method: 'POST', body: JSON.stringify({ gameId, gameMode, selectedMaps, preferredRegion }) }),
 
   leaveQueue: async () =>
     apiFetch('/matchmaking/leave', { method: 'POST' }),
 
+  getStatus: async () =>
+    apiFetch('/matchmaking/status'),
+
+  getOptions: async (gameId: string) =>
+    apiFetch(`/matchmaking/options?game_id=${encodeURIComponent(gameId)}`),
+
+  sync: async () =>
+    apiFetch('/matchmaking/sync', { method: 'POST' }),
+
+  accept: async () =>
+    apiFetch('/matchmaking/accept', { method: 'POST' }),
+
+  submitMaps: async (selectedMaps: string[]) =>
+    apiFetch('/matchmaking/maps', { method: 'POST', body: JSON.stringify({ selectedMaps }) }),
+
+  banMap: async (mapId: string) =>
+    apiFetch('/matchmaking/ban-map', { method: 'POST', body: JSON.stringify({ mapId }) }),
+
+  decline: async () =>
+    apiFetch('/matchmaking/decline', { method: 'POST' }),
+
   getMatch: async (matchId: string) =>
     apiFetch(`/match/${matchId}`),
 
+  getTimeline: async (matchId:string) =>
+    apiFetch(`/match/${matchId}/timeline`),
+
   submitResult: async (matchId: string, winnerId: string, stats: Record<string, any>) =>
     apiFetch(`/match/${matchId}/result`, { method: 'POST', body: JSON.stringify({ winnerId, stats }) }),
+}
+
+export const gameServerAPI={
+  getStatus:async(gameId:string)=>apiFetch(`/game-servers/status?game_id=${encodeURIComponent(gameId)}`),
+}
+
+export const gameAPI={
+  getEnabled:async()=>apiFetch('/games'),
+}
+
+export const supportAPI={
+  getTickets:async()=>apiFetch('/support/tickets'),
+  createTicket:async(ticket:{category:string;priority:string;subject:string;description:string})=>
+    apiFetch('/support/tickets',{method:'POST',body:JSON.stringify(ticket)}),
 }
 
 // =====================================================
@@ -207,8 +256,14 @@ export const notificationsAPI = {
   markAsRead: async (notificationId: string) =>
     apiFetch(`/notifications/${notificationId}/read`, { method: 'PUT' }),
 
+  dismiss: async (notificationId: string) =>
+    apiFetch(`/notifications/${notificationId}`, { method: 'DELETE' }),
+
   markAllAsRead: async () =>
     apiFetch('/notifications/read-all', { method: 'PUT' }),
+
+  clearAll: async () =>
+    apiFetch('/notifications', { method: 'DELETE' }),
 }
 
 // =====================================================
@@ -216,14 +271,17 @@ export const notificationsAPI = {
 // =====================================================
 
 export const tournamentAPI = {
-  getAll: async () =>
-    apiFetch('/tournaments'),
+  getAll: async (gameId = 'hl1') =>
+    apiFetch(`/tournaments?game_id=${encodeURIComponent(gameId)}`),
 
   getById: async (id: string) =>
     apiFetch(`/tournaments/${id}`),
 
   register: async (tournamentId: string) =>
     apiFetch(`/tournament/${tournamentId}/register`, { method: 'POST' }),
+
+  unregister: async (tournamentId: string) =>
+    apiFetch(`/tournament/${tournamentId}/register`, { method: 'DELETE' }),
 
   getParticipants: async (tournamentId: string) =>
     apiFetch(`/tournament/${tournamentId}/participants`),
@@ -234,28 +292,36 @@ export const tournamentAPI = {
 // =====================================================
 
 export const statsAPI = {
-  getLeaderboard: async () =>
-    apiFetch('/leaderboard'),
+  getLeaderboard: async (filters: { scope?: string; game?: string; country?: string; season?: string; search?: string; page?: number; pageSize?: number } = {}) => {
+    const query = new URLSearchParams()
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== '') query.set(key, String(value))
+    })
+    return apiFetch(`/leaderboard?${query.toString()}`)
+  },
 
-  getMatchHistory: async () =>
-    apiFetch('/matches/history'),
+  getMatchHistory: async (gameId = 'hl1') =>
+    apiFetch(`/matches/history?game_id=${encodeURIComponent(gameId)}`),
 
-  getActiveMatches: async () =>
-    apiFetch('/matches/active'),
+  getActiveMatches: async (gameId = 'hl1') =>
+    apiFetch(`/matches/active?game_id=${encodeURIComponent(gameId)}`),
 
-  getUserStats: async () =>
-    apiFetch('/user/stats'),
+  getUserStats: async (gameId = 'hl1') =>
+    apiFetch(`/user/stats?game_id=${encodeURIComponent(gameId)}`),
+
+  getRatingHistory: async (gameId = 'hl1') =>
+    apiFetch(`/user/rating-history?game_id=${encodeURIComponent(gameId)}`),
 
   // Used by Hub page for platform-wide numbers
   getPlatformStats: async () =>
     apiFetch('/stats/platform'),
 
   // Used by ladder pages — season is: 'monthly' | 'winter' | 'spring' | 'summer' | 'autumn'
-  getLadder: async (season: string) =>
-    apiFetch(`/ladder/${season}`),
+  getLadder: async (season: string, gameId = 'hl1') =>
+    apiFetch(`/ladder/${season}?game_id=${encodeURIComponent(gameId)}`),
 
-  getAllSeasons: async () =>
-    apiFetch('/ladder/seasons'),
+  getAllSeasons: async (gameId = 'hl1') =>
+    apiFetch(`/ladder/seasons?game_id=${encodeURIComponent(gameId)}`),
 }
 
 // =====================================================
@@ -263,11 +329,39 @@ export const statsAPI = {
 // =====================================================
 
 export const storeAPI = {
+  getCatalog: async () =>
+    apiFetch('/store/catalog'),
+
+  getPurchaseHistory: async () =>
+    apiFetch('/store/purchases'),
+}
+
+export const achievementAPI = {
   getBadges: async () =>
     apiFetch('/badges'),
+}
 
-  getFrames: async () =>
-    apiFetch('/frames'),
+export const newsAPI = {
+  list: async ({page=1,limit=5,q='',category=''}:{page?:number;limit?:number;q?:string;category?:string}={}) => {
+    const params=new URLSearchParams({page:String(page),limit:String(limit),q,category})
+    return apiFetch(`/news?${params.toString()}`)
+  },
+  get: async (id:string) =>
+    apiFetch(`/news/${encodeURIComponent(id)}`),
+  getComments: async (id:string) =>
+    apiFetch(`/news/${encodeURIComponent(id)}/comments`),
+  addComment: async (id:string,content:string,parentId?:string) =>
+    apiFetch(`/news/${encodeURIComponent(id)}/comments`,{method:'POST',body:JSON.stringify({content,parentId})}),
+  deleteComment: async (commentId:string) =>
+    apiFetch(`/news/comments/${encodeURIComponent(commentId)}`,{method:'DELETE'}),
+}
+
+export const communityAPI={
+  getEvents:async(gameId='')=>apiFetch(`/community/events?game_id=${encodeURIComponent(gameId)}`),
+  getActivity:async()=>apiFetch('/community/activity'),
+  getProfileComments:async(userId:string)=>apiFetch(`/users/${encodeURIComponent(userId)}/comments`),
+  addProfileComment:async(userId:string,content:string)=>apiFetch(`/users/${encodeURIComponent(userId)}/comments`,{method:'POST',body:JSON.stringify({content})}),
+  deleteProfileComment:async(commentId:string)=>apiFetch(`/profile-comments/${encodeURIComponent(commentId)}`,{method:'DELETE'}),
 }
 
 // =====================================================
@@ -284,6 +378,15 @@ export const reportAPI = {
   // Called when a player declines a match ready — escalates their ban level
   issueBan: async (reason: string, userId?: string) =>
     apiFetch('/ban', { method: 'POST', body: JSON.stringify({ reason, userId }) }),
+
+  getBlockedPlayers: async () =>
+    apiFetch('/blocks'),
+
+  blockPlayer: async (blockedUserId: string) =>
+    apiFetch('/blocks', { method: 'POST', body: JSON.stringify({ blockedUserId }) }),
+
+  unblockPlayer: async (blockedUserId: string) =>
+    apiFetch(`/blocks/${encodeURIComponent(blockedUserId)}`, { method: 'DELETE' }),
 }
 
 // =====================================================
@@ -291,28 +394,32 @@ export const reportAPI = {
 // =====================================================
 
 export const steamAPI = {
-  authenticate: async (callbackParams: Record<string, string>) => {
+  startAuthentication: async () =>
+    apiFetch('/steam/auth/start'),
+
+  authenticate: async (callbackParams: Record<string, string>, state: string) => {
     const data = await apiFetch('/steam/auth', {
       method: 'POST',
-      body: JSON.stringify(callbackParams),
+      body: JSON.stringify({callbackParams,state}),
     })
     if (data.session?.access_token) setSessionToken(data.session.access_token)
     return data
   },
 
   // Checks if a Steam ID owns a game (appId 70 = Half-Life 1)
-  verifyGameOwnership: async (steamId: string, appId: number = 70) =>
-    apiFetch('/steam/verify-game', { method: 'POST', body: JSON.stringify({ steamId, appId }) }),
+  verifyGameOwnership: async (_steamId?: string, _appId: number = 70) =>
+    apiFetch('/steam/verify-game', { method: 'POST' }),
+
+  getStatus: async () =>
+    apiFetch('/steam/status'),
+
+  refresh: async () =>
+    apiFetch('/steam/refresh', { method: 'POST' }),
 
   // Gets a Steam user's public profile info
   getProfile: async (steamId: string) =>
     apiFetch(`/steam/profile/${steamId}`),
 
   // Links Steam ID to account — server fetches avatar + HL1 ownership automatically
-  linkAccount: async (steamId: string) =>
-    apiFetch('/steam/link', { method: 'POST', body: JSON.stringify({ steamId }) }),
-
   // Gets owned games list for a Steam ID — used by SteamIntegration component
-  getGames: async (steamId: string) =>
-    apiFetch(`/steam/profile/${steamId}`),
 }

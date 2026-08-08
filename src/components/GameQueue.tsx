@@ -1,126 +1,91 @@
-import { useState } from "react";
+import { CheckCircle2, Clock3, Gamepad2, Loader2, Map, MapPin, Server, UserCheck, Users } from "lucide-react";
+import type { ReactNode } from "react";
+import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Badge } from "./ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Loader2, Users, Clock, Gamepad2 } from "lucide-react";
 
-const games = [
-  { id: "hl1", name: "Half-Life 1", players: "1v1", avgWait: "2min" },
-  { id: "cs16", name: "Counter-Strike 1.6", players: "5v5", avgWait: "1min" },
-  { id: "quake3", name: "Quake III Arena", players: "1v1", avgWait: "90s" },
-  { id: "tf2", name: "Team Fortress 2", players: "6v6", avgWait: "3min" },
-  { id: "hl1dm", name: "Half-Life Deathmatch", players: "FFA", avgWait: "45s" },
-];
+export type MatchmakingState = "idle" | "searching" | "found" | "accepting" | "map_selecting" | "map_banning" | "accepted" | "server_assigned";
 
-export function GameQueue() {
-  const [selectedGame, setSelectedGame] = useState("");
-  const [isQueuing, setIsQueuing] = useState(false);
-  const [queueTime, setQueueTime] = useState(0);
+export interface MatchmakingSnapshot {
+  state: MatchmakingState;
+  queue?: { game_id: string; game_mode: string; selected_maps: string[]; preferred_region: string | null; joined_at: string };
+  viewerAccepted?: boolean;
+  acceptedCount?: number;
+  totalPlayers?: number;
+  match?: { id: string; game_id?: string; game_mode: string; selected_map: string; maps?: string[]; opponent_username?: string };
+  mapSelection?: { requiredCount: number; availableMaps: string[]; viewerMaps: string[]; viewerConfirmed: boolean; opponentConfirmed: boolean; opponentSelectedCount: number; unavailableMaps: string[] } | null;
+  mapBan?: { pool: string[]; remainingMaps: string[]; bans: Array<{ sequence: number; user_id: string; map_id: string; created_at: string }>; currentTurnUserId: string | null; isViewerTurn: boolean } | null;
+  server?: { id: string; name: string; region: string; host: string; port: number } | null;
+}
 
-  const handleQueue = () => {
-    if (!selectedGame) return;
-    
-    setIsQueuing(true);
-    setQueueTime(0);
-    
-    // Simulate queue timer
-    const timer = setInterval(() => {
-      setQueueTime(prev => prev + 1);
-    }, 1000);
+interface GameQueueProps {
+  snapshot: MatchmakingSnapshot;
+  busy?: boolean;
+  disabled?: boolean;
+  onStart: () => void;
+  onCancel: () => void;
+  onAccept: () => void;
+  onDecline: () => void;
+  onSubmitMaps: () => void;
+  onBanMap: (mapId: string) => void;
+  onLaunch: () => void;
+  selectedGame: string;
+  connectedRegion: string;
+  selectedMaps: string[];
+}
 
-    // Simulate finding match after random time
-    setTimeout(() => {
-      clearInterval(timer);
-      setIsQueuing(false);
-      setQueueTime(0);
-      // Here you would normally transition to match lobby
-      alert("Match found! Redirecting to lobby...");
-    }, Math.random() * 15000 + 5000); // 5-20 seconds
-  };
+const labels: Record<MatchmakingState, string> = {
+  idle: "READY", searching: "SEARCHING", found: "MATCH FOUND", accepting: "ACCEPTING",
+  map_selecting: "MAP SELECTION", map_banning: "MAP VETO", accepted: "MAP SELECTED", server_assigned: "SERVER ASSIGNED",
+};
 
-  const handleCancelQueue = () => {
-    setIsQueuing(false);
-    setQueueTime(0);
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+export function GameQueue({ snapshot, busy = false, disabled = false, onStart, onCancel, onAccept, onDecline, onSubmitMaps, onBanMap, onLaunch, selectedGame, connectedRegion, selectedMaps }: GameQueueProps) {
+  const state = snapshot.state || "idle";
+  const active = state !== "idle";
+  const game = snapshot.queue?.game_id || snapshot.match?.game_id || selectedGame;
+  const region = snapshot.server?.region || snapshot.queue?.preferred_region || connectedRegion || "Any available region";
+  const maps = snapshot.match?.selected_map ? [snapshot.match.selected_map] : snapshot.match?.maps?.length ? snapshot.match.maps : snapshot.queue?.selected_maps?.length ? snapshot.queue.selected_maps : selectedMaps;
+  const selection = snapshot.mapSelection;
+  const veto = snapshot.mapBan;
 
   return (
-    <Card className="w-full max-w-md border-orange-900/20 bg-black/40">
-      <CardHeader>
-        <CardTitle className="flex items-center space-x-2 text-orange-400">
-          <Gamepad2 className="w-5 h-5" />
-          <span>MATCHMAKING</span>
-        </CardTitle>
-      </CardHeader>
+    <Card className="w-full border-orange-900/20 bg-black/40">
+      <CardHeader><CardTitle className="flex flex-wrap items-center justify-center gap-2 text-orange-400"><Gamepad2 className="size-5"/><span>MATCHMAKING STATE</span><Badge variant="outline" className="border-orange-700/40 text-orange-300">{labels[state]}</Badge></CardTitle></CardHeader>
       <CardContent className="space-y-4">
-        <div>
-          <label className="text-sm font-medium mb-2 block text-green-400 font-mono">GAME PROTOCOL</label>
-          <Select value={selectedGame} onValueChange={setSelectedGame} disabled={isQueuing}>
-            <SelectTrigger className="bg-black/60 border-orange-900/30 text-gray-300">
-              <SelectValue placeholder="SELECT GAME MODULE" />
-            </SelectTrigger>
-            <SelectContent>
-              {games.map((game) => (
-                <SelectItem key={game.id} value={game.id}>
-                  <div className="flex items-center justify-between w-full">
-                    <span>{game.name}</span>
-                    <div className="flex items-center space-x-2 ml-4">
-                      <Badge variant="outline" className="text-xs">
-                        <Users className="w-3 h-3 mr-1" />
-                        {game.players}
-                      </Badge>
-                      <Badge variant="outline" className="text-xs">
-                        <Clock className="w-3 h-3 mr-1" />
-                        {game.avgWait}
-                      </Badge>
-                    </div>
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        {state === "searching" && <State icon={<Loader2 className="size-7 animate-spin"/>} title="SEARCHING FOR A COMPATIBLE PLAYER" detail="Your PostgreSQL queue entry is active and synchronized."/>}
+        {state === "found" && <State icon={<Users className="size-7"/>} title="MATCH FOUND" detail={`${snapshot.match?.opponent_username || "Opponent"} is ready. Confirm your participation.`}/>}
+        {state === "accepting" && <State icon={<UserCheck className="size-7"/>} title="ACCEPTING" detail={`${snapshot.acceptedCount || 0}/${snapshot.totalPlayers || 2} players have accepted.`}/>}
+        {state === "map_selecting" && <State icon={<Map className="size-7"/>} title="SELECT 5 MAPS" detail={selection?.viewerConfirmed ? "Your five maps are locked. Waiting for your opponent." : `Choose five maps not already claimed by your opponent (${selection?.opponentSelectedCount || 0}/5).`}/>}
+        {state === "map_banning" && <State icon={<Map className="size-7"/>} title="MAP VETO" detail={veto?.isViewerTurn ? "Your turn. Ban one map from the remaining pool." : "Opponent's turn. Waiting for their ban."}/>}
+        {state === "accepted" && <State icon={<CheckCircle2 className="size-7"/>} title="FINAL MAP SELECTED" detail={`${snapshot.match?.selected_map?.toUpperCase() || "The final map"} remains. Waiting for an available server.`}/>}
+        {state === "server_assigned" && <State icon={<Server className="size-7"/>} title="SERVER ASSIGNED" detail={snapshot.server ? `${snapshot.server.name} - ${snapshot.server.region} - ${snapshot.server.host}:${snapshot.server.port}` : "The backend assigned the match server."}/>}
+
+        {state === "map_banning" && veto && <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">{veto.remainingMaps.map(map => <Button key={map} type="button" variant="outline" disabled={busy || !veto.isViewerTurn} onClick={() => onBanMap(map)} className="h-auto min-h-10 whitespace-normal border-orange-800/50 px-2 py-2 font-mono text-xs text-orange-200 hover:bg-red-950 hover:text-red-200">{map.toUpperCase()}</Button>)}</div>}
+
+        {active && <div className="grid gap-3 rounded border border-orange-900/20 bg-black/30 p-3 text-xs font-mono sm:grid-cols-2">
+          <div><span className="flex items-center gap-1 text-gray-500"><Gamepad2 className="size-3"/>SELECTED GAME</span><p className="mt-1 text-orange-300">{game.toUpperCase()}</p></div>
+          <div><span className="flex items-center gap-1 text-gray-500"><MapPin className="size-3"/>CONNECTED REGION</span><p className="mt-1 text-green-300">{region}</p></div>
+          <div><span className="flex items-center gap-1 text-gray-500"><Clock3 className="size-3"/>STATUS</span><p className="mt-1 text-orange-300">{state === "searching" ? "Searching" : "Match located"}</p></div>
+          <div><span className="flex items-center gap-1 text-gray-500"><Map className="size-3"/>MAP POOL</span><p className="mt-1 break-words text-green-300">{maps.length ? maps.join(", ") : "Waiting for selections"}</p></div>
+        </div>}
+
+        {state === "searching" && <div aria-label="Queue search activity" className="flex items-end justify-center gap-2 py-2"><span className="h-3 w-2 animate-pulse rounded-sm bg-orange-700"/><span className="h-6 w-2 animate-pulse rounded-sm bg-orange-500 [animation-delay:150ms]"/><span className="h-9 w-2 animate-pulse rounded-sm bg-green-500 [animation-delay:300ms]"/><span className="h-6 w-2 animate-pulse rounded-sm bg-orange-500 [animation-delay:450ms]"/><span className="h-3 w-2 animate-pulse rounded-sm bg-orange-700 [animation-delay:600ms]"/></div>}
+
+        <div className="flex flex-wrap justify-center gap-2">
+          {state === "idle" && <Button onClick={onStart} disabled={disabled || busy} className="bg-orange-600 font-bold text-black hover:bg-orange-700">{busy ? "JOINING..." : "FIND MATCH"}</Button>}
+          {state === "searching" && <Button onClick={onCancel} disabled={busy} variant="destructive" className="min-w-52 border-2 border-red-500 bg-red-800 font-mono font-bold text-white hover:bg-red-700">{busy ? "CANCELLING..." : "CANCEL QUEUE"}</Button>}
+          {(state === "found" || (state === "accepting" && !snapshot.viewerAccepted)) && <><Button onClick={onDecline} disabled={busy} variant="destructive">DECLINE</Button><Button onClick={onAccept} disabled={busy} className="bg-green-800 text-green-100 hover:bg-green-700">{busy ? "ACCEPTING..." : "ACCEPT MATCH"}</Button></>}
+          {state === "accepting" && snapshot.viewerAccepted && <p className="font-mono text-sm text-green-300">YOUR ACCEPTANCE IS RECORDED</p>}
+          {state === "map_selecting" && !selection?.viewerConfirmed && <Button onClick={onSubmitMaps} disabled={busy || selectedMaps.length !== (selection?.requiredCount || 5)} className="bg-green-800 text-green-100 hover:bg-green-700">{busy ? "CONFIRMING..." : "CONFIRM 5 MAPS"}</Button>}
+          {state === "map_selecting" && selection?.viewerConfirmed && <p className="font-mono text-sm text-green-300">YOUR 5 MAPS ARE CONFIRMED</p>}
+          {state === "server_assigned" && <Button onClick={onLaunch} disabled={busy} className="bg-green-800 text-green-100 hover:bg-green-700">OPEN ACTIVE MATCH</Button>}
         </div>
-
-        {isQueuing && (
-          <div className="text-center p-4 bg-orange-900/10 rounded-lg border border-orange-900/20">
-            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-orange-400" />
-            <p className="text-sm text-green-400 font-mono">SCANNING FOR OPPONENTS...</p>
-            <p className="font-medium text-orange-400 font-mono text-lg">{formatTime(queueTime)}</p>
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          {!isQueuing ? (
-            <Button 
-              onClick={handleQueue} 
-              disabled={!selectedGame}
-              className="flex-1 bg-orange-600 hover:bg-orange-700 text-black font-bold"
-            >
-              INITIATE PROTOCOL
-            </Button>
-          ) : (
-            <Button 
-              onClick={handleCancelQueue} 
-              variant="destructive"
-              className="flex-1 bg-red-600 hover:bg-red-700 font-bold"
-            >
-              ABORT MISSION
-            </Button>
-          )}
-        </div>
-
-        {selectedGame && !isQueuing && (
-          <div className="text-center text-sm text-green-400 font-mono">
-            <p>EST. DEPLOYMENT TIME: {games.find(g => g.id === selectedGame)?.avgWait}</p>
-          </div>
-        )}
+        {active && <p className="text-center text-[11px] font-mono text-gray-600">State is synchronized from the backend and PostgreSQL.</p>}
       </CardContent>
     </Card>
   );
+}
+
+function State({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) {
+  return <div className="rounded border border-orange-900/20 bg-orange-900/10 p-4 text-center"><div className="mx-auto mb-2 flex justify-center text-orange-400">{icon}</div><p className="font-mono text-green-400">{title}</p><p className="mt-1 text-xs font-mono text-gray-400">{detail}</p></div>;
 }

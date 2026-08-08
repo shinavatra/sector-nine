@@ -10,10 +10,9 @@ import { toast } from "sonner";
 import { reportAPI } from "../utils/api";
 
 interface BlockedPlayer {
-  id: string;
-  playerId: string;
-  playerName: string;
-  blockedAt: string;
+  player_id: string;
+  player_name: string;
+  blocked_at: string;
 }
 
 interface ReportingSystemProps {
@@ -32,7 +31,7 @@ const REPORT_CATEGORIES = [
   { value: "other",         label: "Other" },
 ];
 
-export function ReportingSystem({ currentPlayerId, targetPlayerId, targetPlayerName }: ReportingSystemProps) {
+export function ReportingSystem({ currentPlayerId: _currentPlayerId, targetPlayerId, targetPlayerName }: ReportingSystemProps) {
   const [reportCategory, setReportCategory] = useState("");
   const [reportDescription, setReportDescription] = useState("");
   const [blockedPlayers, setBlockedPlayers] = useState<BlockedPlayer[]>([]);
@@ -41,9 +40,12 @@ export function ReportingSystem({ currentPlayerId, targetPlayerId, targetPlayerN
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem(`blocked_players_${currentPlayerId}`);
-    if (stored) setBlockedPlayers(JSON.parse(stored));
-  }, [currentPlayerId]);
+    let active = true;
+    reportAPI.getBlockedPlayers()
+      .then((response: any) => { if (active) setBlockedPlayers(response.blockedPlayers || []); })
+      .catch(() => { if (active) toast.error("Failed to load blocked players"); });
+    return () => { active = false; };
+  }, []);
 
   const submitReport = async () => {
     if (!targetPlayerId || !reportCategory || !reportDescription.trim()) {
@@ -64,33 +66,36 @@ export function ReportingSystem({ currentPlayerId, targetPlayerId, targetPlayerN
     }
   };
 
-  const blockPlayer = () => {
+  const blockPlayer = async () => {
     if (!targetPlayerId) return;
-    if (blockedPlayers.some(p => p.playerId === targetPlayerId)) {
+    if (blockedPlayers.some(p => p.player_id === targetPlayerId)) {
       toast.error("Player already blocked");
       return;
     }
-    const newBlock: BlockedPlayer = {
-      id: Date.now().toString(),
-      playerId: targetPlayerId,
-      playerName: targetPlayerName || targetPlayerId,
-      blockedAt: new Date().toISOString(),
-    };
-    const updated = [...blockedPlayers, newBlock];
-    setBlockedPlayers(updated);
-    localStorage.setItem(`blocked_players_${currentPlayerId}`, JSON.stringify(updated));
-    toast.success("Player blocked", { description: "You won't be matched with this player in regular matches" });
-    setShowBlockDialog(false);
+    setIsSubmitting(true);
+    try {
+      const response: any = await reportAPI.blockPlayer(targetPlayerId);
+      setBlockedPlayers(players => [response.blockedPlayer, ...players.filter(player => player.player_id !== targetPlayerId)]);
+      toast.success("Player blocked", { description: "You won't be matched with this player in regular matches" });
+      setShowBlockDialog(false);
+    } catch {
+      toast.error("Failed to block player");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const unblockPlayer = (playerId: string) => {
-    const updated = blockedPlayers.filter(p => p.playerId !== playerId);
-    setBlockedPlayers(updated);
-    localStorage.setItem(`blocked_players_${currentPlayerId}`, JSON.stringify(updated));
-    toast.info("Player unblocked");
+  const unblockPlayer = async (playerId: string) => {
+    try {
+      await reportAPI.unblockPlayer(playerId);
+      setBlockedPlayers(players => players.filter(player => player.player_id !== playerId));
+      toast.info("Player unblocked");
+    } catch {
+      toast.error("Failed to unblock player");
+    }
   };
 
-  const isBlocked = (id: string) => blockedPlayers.some(p => p.playerId === id);
+  const isBlocked = (id: string) => blockedPlayers.some(p => p.player_id === id);
 
   return (
     <div className="space-y-6">
@@ -190,6 +195,7 @@ export function ReportingSystem({ currentPlayerId, targetPlayerId, targetPlayerN
                 </AlertDialogCancel>
                 <AlertDialogAction
                   onClick={blockPlayer}
+                  disabled={isSubmitting}
                   className="bg-orange-900/20 border-orange-700 text-orange-400 hover:bg-orange-900/30 font-mono"
                 >
                   BLOCK PLAYER
@@ -213,18 +219,18 @@ export function ReportingSystem({ currentPlayerId, targetPlayerId, targetPlayerN
           ) : (
             <div className="space-y-2">
               {blockedPlayers.map(blocked => (
-                <div key={blocked.id} className="flex justify-between items-center p-3 bg-black/20 rounded border border-gray-700/30">
+                <div key={blocked.player_id} className="flex justify-between items-center p-3 bg-black/20 rounded border border-gray-700/30">
                   <div className="flex items-center space-x-3">
                     <UserX className="w-4 h-4 text-orange-400" />
-                    <span className="text-orange-400 font-mono">{blocked.playerName}</span>
+                    <span className="text-orange-400 font-mono">{blocked.player_name}</span>
                     <Badge variant="outline" className="text-xs font-mono">
-                      {new Date(blocked.blockedAt).toLocaleDateString()}
+                      {new Date(blocked.blocked_at).toLocaleDateString()}
                     </Badge>
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => unblockPlayer(blocked.playerId)}
+                    onClick={() => unblockPlayer(blocked.player_id)}
                     className="border-green-700/50 text-green-400 hover:bg-green-900/20 font-mono text-xs"
                   >
                     UNBLOCK
@@ -238,15 +244,3 @@ export function ReportingSystem({ currentPlayerId, targetPlayerId, targetPlayerN
     </div>
   );
 }
-
-export const isPlayerBlockedBy = (blockerId: string, targetId: string): boolean => {
-  const stored = localStorage.getItem(`blocked_players_${blockerId}`);
-  if (!stored) return false;
-  return JSON.parse(stored).some((p: any) => p.playerId === targetId);
-};
-
-export const getBlockedPlayers = (playerId: string): string[] => {
-  const stored = localStorage.getItem(`blocked_players_${playerId}`);
-  if (!stored) return [];
-  return JSON.parse(stored).map((p: any) => p.playerId);
-};

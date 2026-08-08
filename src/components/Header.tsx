@@ -2,11 +2,10 @@ import { Button } from "./ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "./ui/dropdown-menu";
-import { Bell, Settings, LogOut, User, Trophy, Shield } from "lucide-react";
+import { Bell, Settings, LogOut, User, Shield } from "lucide-react";
 import { CrowbarLogo } from "./CrowbarLogo";
 import { FramedAvatar } from "./FramedAvatar";
 import { useUser } from "../contexts/UserContext";
-import { avatarBadges } from "../utils/badgeData";
 
 interface HeaderProps {
   onNavigate?: (page: string) => void;
@@ -19,9 +18,7 @@ interface HeaderProps {
 export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = false, notificationUnreadCount = 0 }: HeaderProps) {
   const { user } = useUser();
   
-  // Get equipped badge
-  const equippedBadge = avatarBadges.find(badge => badge.id === user?.equippedBadge);
-  const routeFor = (page: string) => ({ hub: '/hub', lobby: '/matchmaking', tournament: '/tournaments', stats: '/stats', store: '/store', notifications: '/notifications', profile: '/profile', configuration: '/configuration' }[page] || `/${page}`);
+  const routeFor = (page: string) => ({ hub: '/hub', lobby: '/matchmaking', tournament: '/tournaments', stats: '/stats', store: '/store', notifications: '/notifications', profile: '/profile', achievements:'/achievements', configuration: '/configuration' }[page] || `/${page}`);
   const follow = (event: React.MouseEvent<HTMLAnchorElement>, page: string) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
@@ -31,17 +28,17 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
   return (
     <header className="border-b border-orange-900/20 bg-black/80 backdrop-blur supports-[backdrop-filter]:bg-black/60">
       <div className="container mx-auto px-4 py-3">
-        <div className="flex items-center justify-between">
+        <div className="main-header-grid items-center">
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-3">
-              <a href="/hub" onClick={(event) => follow(event, 'hub')} className="flex items-center space-x-3 hover:opacity-80 transition-opacity">
+              <a href="/hub" aria-label="Sector Nine hub" onClick={(event) => follow(event, 'hub')} className="flex items-center space-x-3 hover:opacity-80 transition-opacity">
                 <CrowbarLogo className="w-8 h-8 text-orange-400" />
               </a>
             </div>
 
           </div>
 
-          <nav className="hidden md:flex items-center space-x-6">
+          <nav className="hidden items-center justify-center space-x-6 md:flex">
             {[
               { id: 'hub', label: 'HUB' },
               { id: 'lobby', label: 'MATCHMAKING' },
@@ -64,7 +61,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
             ))}
           </nav>
 
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center justify-end space-x-3">
             <a
               href="/notifications"
               aria-label="Notifications"
@@ -84,12 +81,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
                         <AvatarFallback className="bg-orange-900/20 text-orange-400">{user?.username?.[0]?.toUpperCase() || 'P'}</AvatarFallback>
                       </Avatar>
                     </FramedAvatar>
-                    {equippedBadge && (
-                      <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-black/80 border border-orange-900/30 rounded-full flex items-center justify-center text-xs">
-                        {equippedBadge.icon}
-                      </div>
-                    )}
-                    {isPremium && !equippedBadge && (
+                    {isPremium && (
                       <div className="absolute -top-1 -right-1 w-5 h-5 bg-gradient-to-r from-yellow-400 to-orange-400 rounded-full flex items-center justify-center">
                         <span className="text-black text-xs font-bold">V</span>
                       </div>

@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -6,10 +7,11 @@ import { ScrollArea } from "./ui/scroll-area";
 import { Badge } from "./ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
-import { MessageCircle, Send, X, Users, UserPlus, Settings, Volume2, VolumeX, Minimize2 } from "lucide-react";
+import { MessageCircle, Send, X, Volume2, VolumeX, Minimize2 } from "lucide-react";
 import { friendsAPI, chatAPI } from "../utils/api";
 import { toast } from "sonner";
 import { useUser } from "../contexts/UserContext";
+import { notifyNotificationsChanged } from "../utils/notificationEvents";
 
 interface Friend {
   id: string;
@@ -76,18 +78,27 @@ export function GlobalChat() {
           counts.set(item.sender_id, current);
         }
         setChatRooms(prev => {
-          const next = prev.map(room => ({ ...room, unreadCount: counts.get(room.id)?.count || 0 }));
+          let changed = false;
+          const next = prev.map(room => {
+            const unreadCount = counts.get(room.id)?.count || 0;
+            if (room.unreadCount === unreadCount) return room;
+            changed = true;
+            return { ...room, unreadCount };
+          });
           for (const [senderId, value] of counts) {
-            if (!next.some(room => room.id === senderId)) next.push({
-              id: senderId,
-              name: value.username,
-              type: 'friend',
-              participants: [value.username],
-              messages: [],
-              unreadCount: value.count
-            });
+            if (!next.some(room => room.id === senderId)) {
+              changed = true;
+              next.push({
+                id: senderId,
+                name: value.username,
+                type: 'friend',
+                participants: [value.username],
+                messages: [],
+                unreadCount: value.count
+              });
+            }
           }
-          return next;
+          return changed ? next : prev;
         });
         for (const item of items) {
           const notificationId = String(item.notification_id);
@@ -116,7 +127,16 @@ export function GlobalChat() {
 
   useEffect(() => {
     const onlineIds = new Set(onlineFriends.map(friend => friend.id));
-    setFriends(prev => prev.map(friend => ({ ...friend, status: onlineIds.has(friend.id) ? 'online' : 'offline' })));
+    setFriends(prev => {
+      let changed = false;
+      const next = prev.map(friend => {
+        const status: Friend['status'] = onlineIds.has(friend.id) ? 'online' : 'offline';
+        if (friend.status === status) return friend;
+        changed = true;
+        return { ...friend, status };
+      });
+      return changed ? next : prev;
+    });
   }, [onlineFriends]);
 
   const loadFriends = async () => {
@@ -163,10 +183,15 @@ export function GlobalChat() {
   const mergeMessages = (current: Message[], incoming: Message[]) => {
     const byId = new Map(current.map(message => [message.id, message]));
     for (const message of incoming) byId.set(message.id, message);
-    return Array.from(byId.values()).sort((a, b) => {
+    const next = Array.from(byId.values()).sort((a, b) => {
       const timeDifference = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       return timeDifference || a.id.localeCompare(b.id);
-    });
+    }).slice(-50);
+    return next.length === current.length && next.every((message,index) => {
+      const previous=current[index];
+      return previous?.id===message.id && previous.message===message.message &&
+        previous.sender===message.sender && previous.createdAt===message.createdAt;
+    }) ? current : next;
   };
 
   const loadChatMessages = async (roomId: string, shouldApply = () => true) => {
@@ -289,7 +314,8 @@ export function GlobalChat() {
       room.id === chatId ? { ...room, unreadCount: 0 } : room
     ));
     try {
-      await chatAPI.markConversationRead(chatId);
+      const result=await chatAPI.markConversationRead(chatId);
+      notifyNotificationsChanged(result?.unreadCount);
     } catch (error) {
       toast.error('Unable to mark conversation read', {
         description: error instanceof Error ? error.message : 'The server rejected the update'
@@ -325,7 +351,10 @@ export function GlobalChat() {
     openConversation(friendId, friend.name);
   };
 
-  const totalUnreadMessages = chatRooms.reduce((total, room) => total + room.unreadCount, 0);
+  const totalUnreadMessages = useMemo(
+    () => chatRooms.reduce((total, room) => total + room.unreadCount, 0),
+    [chatRooms]
+  );
 
   useEffect(() => {
     document.title = totalUnreadMessages > 0
@@ -335,14 +364,16 @@ export function GlobalChat() {
   }, [totalUnreadMessages]);
 
   if (!isOpen) {
-    return (
-      <div className="fixed bottom-4 right-4 z-50">
+    return createPortal(
+      <div className="fixed bottom-4 right-4" style={{zIndex:1000,pointerEvents:'auto'}}>
         <Button
           onClick={() => setIsOpen(true)}
           className="bg-orange-900/20 border border-orange-900/30 text-orange-400 hover:bg-orange-900/30 font-mono relative"
           size="lg"
+          aria-label="Open secure communications"
+          title="Secure communications"
         >
-          <MessageCircle className="w-5 h-5 mr-2" />
+          <MessageCircle className="w-6 h-6 mr-2" />
           SECURE COMMS
           {totalUnreadMessages > 0 && (
             <Badge className="absolute -top-2 -right-2 bg-red-600 text-white text-xs min-w-5 h-5 flex items-center justify-center rounded-full">
@@ -350,17 +381,18 @@ export function GlobalChat() {
             </Badge>
           )}
         </Button>
-      </div>
+      </div>,
+      document.body,
     );
   }
 
-  return (
-    <div className={`fixed bottom-4 right-4 z-50 transition-all duration-300 ${isMinimized ? 'w-80 h-12' : 'w-96 h-[600px]'}`}>
+  return createPortal(
+    <div className={`fixed bottom-4 right-4 max-w-[calc(100vw-2rem)] transition-all duration-300 ${isMinimized ? 'w-80 h-12' : 'w-96 h-[min(600px,calc(100dvh-2rem))]'}`} style={{zIndex:1000,pointerEvents:'auto'}}>
       <Card className="bg-black/90 border-orange-900/20 h-full flex flex-col">
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
-              <MessageCircle className="w-4 h-4 text-orange-400" />
+              <MessageCircle className="w-5 h-5 text-orange-400" />
               <CardTitle className="text-orange-400 font-mono text-sm">SECURE COMMS</CardTitle>
               {totalUnreadMessages > 0 && (
                 <Badge className="bg-red-600 text-white text-xs">
@@ -370,28 +402,31 @@ export function GlobalChat() {
             </div>
             <div className="flex items-center space-x-1">
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
-                className="text-gray-400 hover:text-orange-400 h-6 w-6 p-0"
+                className="text-gray-400 hover:text-orange-400 h-8 w-8 p-0"
                 onClick={() => setIsMuted(!isMuted)}
               >
-                {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
               </Button>
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
-                className="text-gray-400 hover:text-orange-400 h-6 w-6 p-0"
+                className="text-gray-400 hover:text-orange-400 h-8 w-8 p-0"
                 onClick={() => setIsMinimized(!isMinimized)}
               >
-                <Minimize2 className="w-4 h-4" />
+                <Minimize2 className="w-5 h-5" />
               </Button>
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
-                className="text-gray-400 hover:text-red-400 h-6 w-6 p-0"
+                className="text-gray-400 hover:text-red-400 h-8 w-8 p-0"
                 onClick={() => setIsOpen(false)}
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </Button>
             </div>
           </div>
@@ -450,7 +485,7 @@ export function GlobalChat() {
                                       onClick={() => handleDeleteMessage(msg.id)}
                                       className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0 text-red-400 hover:text-red-300 hover:bg-red-900/20"
                                     >
-                                      <X className="w-3 h-3" />
+                                      <X className="w-4 h-4" />
                                     </Button>
                                   )}
                                 </>
@@ -477,7 +512,7 @@ export function GlobalChat() {
                           onClick={handleSendMessage}
                           disabled={isSending || !messageInput.trim()}
                         >
-                          <Send className={`w-4 h-4 ${isSending ? 'animate-pulse' : ''}`} />
+                          <Send className={`w-5 h-5 ${isSending ? 'animate-pulse' : ''}`} />
                         </Button>
                       </div>
                     </div>
@@ -487,9 +522,10 @@ export function GlobalChat() {
                   <ScrollArea className="flex-1">
                     <div className="p-3 space-y-2">
                       {chatRooms.map((room) => (
-                        <div
+                        <button
+                          type="button"
                           key={room.id}
-                          className="flex items-center space-x-3 p-2 bg-black/20 border border-orange-900/20 rounded cursor-pointer hover:bg-orange-900/10"
+                          className="flex w-full items-center space-x-3 rounded border border-orange-900/20 bg-black/20 p-2 text-left cursor-pointer hover:bg-orange-900/10"
                           onClick={() => openConversation(room.id, room.name)}
                         >
                           <Avatar className="w-8 h-8">
@@ -511,7 +547,7 @@ export function GlobalChat() {
                               {room.messages[room.messages.length - 1]?.message || 'No messages'}
                             </p>
                           </div>
-                        </div>
+                        </button>
                       ))}
                     </div>
                   </ScrollArea>
@@ -556,7 +592,7 @@ export function GlobalChat() {
                             className="text-green-400 hover:text-green-300 h-6 w-6 p-0"
                             onClick={() => startChat(friend.id)}
                           >
-                            <MessageCircle className="w-4 h-4" />
+                            <MessageCircle className="w-5 h-5" />
                           </Button>
                         </div>
                       ))
@@ -568,6 +604,7 @@ export function GlobalChat() {
           </CardContent>
         )}
       </Card>
-    </div>
+    </div>,
+    document.body,
   );
 }

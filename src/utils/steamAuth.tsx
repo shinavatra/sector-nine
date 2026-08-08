@@ -1,12 +1,19 @@
 import { steamAPI } from './api';
-import { logSteamDebugInfo, checkSteamEnvironment } from './steamDebug';
 
-const STEAM_OPENID_URL = 'https://steamcommunity.com/openid/login';
+const STEAM_STATE_KEY = 'sector_nine_steam_openid_state';
 
-const getReturnUrl = () => {
-  const origin = window.location.origin;
-  return `${origin}/auth/steam/callback`;
-};
+const checkSteamEnvironment=()=>{
+  const isLocalhost=['localhost','127.0.0.1','::1'].includes(window.location.hostname)
+  const ready=window.location.protocol==='https:'||isLocalhost
+  return{ready,issues:ready?[]:['Steam authentication requires HTTPS outside local development.']}
+}
+
+const createSteamLogin=async()=>{
+  const request=await steamAPI.startAuthentication();
+  if(typeof request?.state!=='string'||typeof request?.loginUrl!=='string')throw new Error('Steam login could not be initialized');
+  sessionStorage.setItem(STEAM_STATE_KEY,request.state);
+  return request.loginUrl as string;
+}
 
 export interface SteamProfile {
   steamId: string;
@@ -16,13 +23,6 @@ export interface SteamProfile {
   realName?: string;
   countryCode?: string;
   accountCreated: number;
-}
-
-export interface SteamGameInfo {
-  appId: number;
-  name: string;
-  playtime: number;
-  lastPlayed?: number;
 }
 
 export const isSteamAvailable = async (): Promise<boolean> => {
@@ -42,19 +42,9 @@ export const isInIframe = (): boolean => {
   return window.self !== window.top;
 };
 
-export const openSteamLoginInNewWindow = () => {
+export const openSteamLoginInNewWindow = async () => {
   try {
-    const returnUrl = getReturnUrl();
-    const realm = window.location.origin;
-    const params = new URLSearchParams({
-      'openid.ns': 'http://specs.openid.net/auth/2.0',
-      'openid.mode': 'checkid_setup',
-      'openid.return_to': returnUrl,
-      'openid.realm': realm,
-      'openid.identity': 'http://specs.openid.net/auth/2.0/identifier_select',
-      'openid.claimed_id': 'http://specs.openid.net/auth/2.0/identifier_select',
-    });
-    const steamLoginUrl = `${STEAM_OPENID_URL}?${params.toString()}`;
+    const steamLoginUrl=await createSteamLogin();
     const width = 800;
     const height = 600;
     const left = (screen.width - width) / 2;
@@ -71,13 +61,13 @@ export const openSteamLoginInNewWindow = () => {
   }
 };
 
-export const initiateSteamLogin = () => {
+export const initiateSteamLogin = async () => {
   try {
     const envCheck = checkSteamEnvironment();
     if (!envCheck.ready) {
       console.error('Steam environment check failed:', envCheck.issues);
       if (isInIframe()) {
-        const opened = openSteamLoginInNewWindow();
+        const opened = await openSteamLoginInNewWindow();
         if (!opened) {
           throw new Error('Unable to open Steam login. Please open in a new tab.');
         }
@@ -86,25 +76,12 @@ export const initiateSteamLogin = () => {
       throw new Error(envCheck.issues[0] || 'Environment not ready for Steam authentication');
     }
 
-    logSteamDebugInfo();
-
     if (isInIframe()) {
-      openSteamLoginInNewWindow();
+      await openSteamLoginInNewWindow();
       return;
     }
 
-    const returnUrl = getReturnUrl();
-    const realm = window.location.origin;
-    const params = new URLSearchParams({
-      'openid.ns': 'http://specs.openid.net/auth/2.0',
-      'openid.mode': 'checkid_setup',
-      'openid.return_to': returnUrl,
-      'openid.realm': realm,
-      'openid.identity': 'http://specs.openid.net/auth/2.0/identifier_select',
-      'openid.claimed_id': 'http://specs.openid.net/auth/2.0/identifier_select',
-    });
-
-    window.location.href = `${STEAM_OPENID_URL}?${params.toString()}`;
+    window.location.href = await createSteamLogin();
   } catch (error) {
     console.error('Failed to initiate Steam login:', error);
     throw error;
@@ -146,40 +123,15 @@ export const getSteamProfile = async (steamId: string): Promise<SteamProfile | n
   }
 };
 
-export const getSteamGames = async (steamId: string): Promise<SteamGameInfo[]> => {
-  try {
-    const data = await steamAPI.getGames(steamId);
-    return data.games || [];
-  } catch (error) {
-    console.error('Error fetching Steam games:', error);
-    return [];
-  }
-};
-
-export const linkSteamAccount = async (steamId: string): Promise<any> => {
-  try {
-    const data = await steamAPI.linkAccount(steamId);
-    return data;
-  } catch (error) {
-    console.error('Error linking Steam account:', error);
-    return null;
-  }
-};
-
 export const authenticateSteamCallback = async (url: string): Promise<any> => {
   const callbackUrl = new URL(url);
+  const returnedState=callbackUrl.searchParams.get('state');
+  const expectedState=sessionStorage.getItem(STEAM_STATE_KEY);
+  sessionStorage.removeItem(STEAM_STATE_KEY);
+  if(!returnedState||!expectedState||returnedState!==expectedState)throw new Error('Steam login state is invalid or expired');
   const callbackParams: Record<string, string> = {};
   callbackUrl.searchParams.forEach((value, key) => {
     if (key.startsWith('openid.')) callbackParams[key] = value;
   });
-  return steamAPI.authenticate(callbackParams);
-};
-
-export const isSteamRunning = async (): Promise<boolean> => {
-  try {
-    await fetch('http://localhost:27060/status', { method: 'GET', mode: 'no-cors' });
-    return true;
-  } catch {
-    return false;
-  }
+  return steamAPI.authenticate(callbackParams,returnedState);
 };

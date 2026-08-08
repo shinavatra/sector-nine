@@ -1,0 +1,11 @@
+import { useEffect,useState } from 'react'
+import { Activity,Loader2,MapPin,Server,Users } from 'lucide-react'
+import { gameServerAPI } from '../utils/api'
+import { Badge } from './ui/badge'
+import { Card,CardContent,CardHeader,CardTitle } from './ui/card'
+
+export function GameServerStatus({gameId}:{gameId:string}){
+  const [servers,setServers]=useState<any[]>([]),[loading,setLoading]=useState(true)
+  useEffect(()=>{let active=true;const load=()=>gameServerAPI.getStatus(gameId).then((data:any)=>active&&setServers(Array.isArray(data.servers)?data.servers:[])).catch(()=>active&&setServers([])).finally(()=>active&&setLoading(false));setLoading(true);void load();const timer=window.setInterval(load,10000);return()=>{active=false;window.clearInterval(timer)}},[gameId])
+  return <Card className="mb-6 border-orange-900/20 bg-black/40"><CardHeader><CardTitle className="flex items-center gap-2 font-mono text-orange-400"><Server className="size-5"/>LIVE SERVERS</CardTitle></CardHeader><CardContent>{loading?<div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-orange-400"/></div>:servers.length?<div className="grid gap-3 md:grid-cols-2">{servers.map(server=><article key={server.id} className="border border-orange-900/15 bg-black/25 p-3"><div className="flex items-start justify-between gap-3"><div><h3 className="font-mono text-sm text-orange-200">{server.name}</h3><p className="mt-1 text-xs text-gray-500">{server.region}</p></div><Badge variant="outline">{server.status}</Badge></div><div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-400"><span className="flex items-center gap-1"><Users className="size-3"/>{server.current_players}/{server.max_slots}</span><span className="flex items-center gap-1"><MapPin className="size-3"/>{server.current_map||'No active map'}</span></div>{Array.isArray(server.players)&&server.players.length>0&&<div className="mt-3 border-t border-orange-900/15 pt-2"><p className="mb-1 flex items-center gap-1 font-mono text-[10px] text-gray-600"><Activity className="size-3"/>CONNECTED PLAYERS</p><p className="truncate text-xs text-gray-400">{server.players.map((player:any)=>player.name).filter(Boolean).join(', ')}</p></div>}</article>)}</div>:<p className="py-8 text-center font-mono text-xs text-gray-500">NO SERVERS CONFIGURED FOR THIS GAME</p>}</CardContent></Card>
+}

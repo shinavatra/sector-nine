@@ -9,6 +9,7 @@ import { Trophy, Calendar, Users, Clock, Target, Award, Zap, Crown, Star, AlertC
 import { toast } from "sonner";
 import { tournamentAPI } from "../utils/api";
 import { useUser } from "../contexts/UserContext";
+import { TournamentCountdown } from "../components/TournamentCountdown";
 
 interface BlackMesaChampionshipProps {
   onNavigate?: (page: string) => void;
@@ -36,16 +37,21 @@ export function BlackMesaChampionship({ onNavigate, isPremium = false }: BlackMe
   }, [user?.id]);
 
   const handleReady = async () => {
-    if (!isPremium) {
+    if (!isPremium && !isReady) {
       toast.error("VIP Subscription Required", {
         description: "Tournament registration requires VIP subscription. Visit the store to upgrade."
       });
       return;
     }
     if (isReady) {
-      // Cancel is UI-only for now — no cancel endpoint yet
-      setIsReady(false);
-      toast.info("Registration cancelled", { description: "You have withdrawn from this tournament" });
+      setIsRegistering(true);
+      try {
+        await tournamentAPI.unregister('black-mesa-championship');
+        const data=await tournamentAPI.getById('black-mesa-championship');
+        setTournament(data.tournament);setParticipants(data.tournament?.participants||[]);setIsReady(false);
+        toast.info("Registration cancelled", { description: "You have withdrawn from this tournament" });
+      } catch (err:any) { toast.error("Cancellation failed",{description:err.message||"Please try again"}); }
+      finally { setIsRegistering(false); }
       return;
     }
     setIsRegistering(true);
@@ -54,6 +60,7 @@ export function BlackMesaChampionship({ onNavigate, isPremium = false }: BlackMe
       setIsReady(true);
       // Refresh participants
       const data = await tournamentAPI.getById('black-mesa-championship');
+      setTournament(data.tournament);
       setParticipants(data.tournament?.participants || []);
       toast.success("Registered for tournament!", {
         description: "You are now registered and will be notified when matches begin"
@@ -107,7 +114,7 @@ export function BlackMesaChampionship({ onNavigate, isPremium = false }: BlackMe
               </div>
               <div>
                 <h3 className="text-orange-400 font-mono text-lg">TOURNAMENT ACTIVE</h3>
-                <p className="text-gray-300 font-mono">Registration open until Jan 15, 2025 18:00 CET</p>
+                <TournamentCountdown tournament={tournament} />
               </div>
             </div>
             <div className="text-right">
@@ -213,7 +220,7 @@ export function BlackMesaChampionship({ onNavigate, isPremium = false }: BlackMe
                   <Trophy className="w-5 h-5 text-green-400" />
                   <div>
                     <div className="text-gray-300 font-mono">Prize Pool</div>
-                    <div className="text-orange-400 font-mono">5000 Research Points</div>
+                    <div className="text-orange-400 font-mono">{Number(tournament?.prize_pool_points||0).toLocaleString()} Research Points</div>
                   </div>
                 </div>
               </CardContent>
@@ -309,7 +316,7 @@ export function BlackMesaChampionship({ onNavigate, isPremium = false }: BlackMe
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {participants.map((participant, index) => (
-                    <div key={participant.user_id || participant.id} className="p-4 bg-black/20 rounded border border-orange-900/20">
+                    <div key={participant.user_id || participant.id} className="p-4 bg-black/20 rounded border border-orange-900/20 transition-colors hover:border-orange-700/50">
                       <div className="flex items-center space-x-3 mb-3">
                         <Avatar className="h-10 w-10 border-2 border-orange-900/30">
                           <AvatarImage src={participant.avatar} alt={participant.username} />
@@ -371,7 +378,7 @@ export function BlackMesaChampionship({ onNavigate, isPremium = false }: BlackMe
                           </AvatarFallback>
                         </Avatar>
                         <div>
-                          <div className="text-orange-400 font-mono">{player.username}</div>
+                          <div className="flex items-center gap-2 text-orange-400 font-mono">{player.username}{tournament?.status==='finished'&&(player.placement===1||index===0)&&<Badge className="border-yellow-700/40 bg-yellow-900/20 text-yellow-300">WINNER</Badge>}</div>
                           <div className="text-xs text-green-400 font-mono">LVL {player.level}</div>
                         </div>
                       </div>
@@ -405,8 +412,8 @@ export function BlackMesaChampionship({ onNavigate, isPremium = false }: BlackMe
                 STARTS JAN 15, 19:00 CET
               </Badge>
             </CardHeader>
-            <CardContent>
-              <div className="text-center py-12">
+            <CardContent className="p-6 sm:p-8">
+              <div className="rounded-lg border border-orange-900/20 bg-black/20 py-10 text-center sm:py-14">
                 <div className="text-6xl mb-4">🏆</div>
                 <h3 className="text-xl text-orange-400 font-mono mb-2">BRACKET PENDING</h3>
                 <p className="text-gray-400 font-mono">Tournament bracket will be generated when registration closes</p>

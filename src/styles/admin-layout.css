@@ -4,6 +4,7 @@
   min-width: 0;
   max-width: 100%;
   min-height: 100vh;
+  align-items: stretch;
   overflow-x: hidden;
 }
 
@@ -19,11 +20,12 @@
 
 .admin-main {
   display: flex;
-  width: auto;
+  width: calc(100% - 250px);
   min-width: 0;
-  max-width: 100%;
-  flex: 1 1 auto;
+  max-width: calc(100% - 250px);
+  flex: 1 1 calc(100% - 250px);
   flex-direction: column;
+  overflow-x: hidden;
 }
 
 .admin-topbar {
@@ -53,23 +55,6 @@
 .admin-sidebar-scroll::-webkit-scrollbar { width: 7px; }
 .admin-sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(249, 115, 22, .45); border-radius: 8px; }
 
-.admin-quick-actions {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 8px;
-}
-
-.admin-sidebar .admin-quick-actions { grid-template-columns: 1fr; }
-
-.admin-quick-action {
-  width: 100%;
-  min-height: 40px;
-  height: auto !important;
-  padding: 8px 12px;
-  line-height: 1.25;
-  white-space: normal;
-}
-
 .admin-content {
   width: 100%;
   min-width: 0;
@@ -84,6 +69,7 @@
 .admin-metrics-grid > *,
 .admin-panels-grid > * {
   min-width: 0;
+  max-width: 100%;
 }
 
 .admin-dashboard {
@@ -96,7 +82,9 @@
 
 .admin-metrics-grid {
   display: grid;
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
   grid-template-columns: repeat(1, minmax(0, 1fr));
   gap: 24px;
 }
@@ -119,9 +107,21 @@
 
 .admin-panels-grid {
   display: grid;
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
   grid-template-columns: minmax(0, 1fr);
   gap: 20px;
+}
+
+.admin-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60 !important;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  background: rgba(0, 0, 0, 0.75) !important;
 }
 
 .admin-table-scroll {
@@ -132,21 +132,73 @@
   overscroll-behavior-x: contain;
 }
 
+.admin-table-scroll thead th {
+  height: 48px;
+  padding-inline: 20px;
+}
+
+.admin-table-scroll tbody tr {
+  height: 64px;
+}
+
+.admin-table-scroll tbody td {
+  padding: 12px 20px;
+  line-height: 1.45;
+}
+
+.admin-table-scroll tbody tr:hover td {
+  background-color: rgba(249, 115, 22, 0.035);
+}
+
+.admin-topbar input[type="text"] {
+  min-width: 0;
+  border-color: rgba(124, 45, 18, 0.45);
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.admin-content label select,
+.admin-content label input {
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.admin-content label select:focus,
+.admin-content label input:focus {
+  border-color: rgba(249, 115, 22, 0.65);
+  outline: none;
+}
+
 .admin-dialog {
   width: min(100%, calc(100vw - 24px)) !important;
   max-width: calc(100vw - 24px) !important;
   max-height: calc(100vh - 24px) !important;
   overflow-y: auto;
+  z-index: 101 !important;
+  background: #111113 !important;
 }
 
-body.admin-user-details-open [data-slot="dialog-overlay"] {
+body.admin-panel-open [data-slot="dialog-overlay"],
+body.admin-panel-open [data-slot="sheet-overlay"] {
   z-index: 100;
   background: rgba(0, 0, 0, 0.82);
   backdrop-filter: blur(2px);
 }
 
+body.admin-panel-open [data-slot="dialog-content"] {
+  width: min(100%, calc(100vw - 24px));
+  max-width: min(32rem, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  z-index: 101;
+  background: #111113;
+}
+
+body.admin-panel-open [data-slot="sheet-content"] {
+  max-width: min(36rem, 100vw);
+  z-index: 101;
+  background: #0d0d0f;
+}
+
 .admin-user-details-dialog {
-  z-index: 101 !important;
   background: #0b0b0d !important;
   border: 1px solid rgba(249, 115, 22, 0.65) !important;
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(249, 115, 22, 0.12);
@@ -171,7 +223,7 @@ body.admin-user-details-open [data-slot="dialog-overlay"] {
     position: fixed !important;
     left: 0;
     top: 0;
-    z-index: 50;
+    z-index: 70;
     transform: translateX(-100%) !important;
     transition: transform 180ms ease;
   }
@@ -179,14 +231,19 @@ body.admin-user-details-open [data-slot="dialog-overlay"] {
   .admin-sidebar.admin-sidebar--open { transform: translateX(0) !important; }
   .admin-main {
     width: 100%;
-    flex-basis: 100%;
+    max-width: 100%;
+    flex: 1 1 100%;
+    margin-left: 0;
   }
   .admin-content { padding: 16px; }
 }
 
+@media (max-width: 599px) {
+  .admin-metrics-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
 @media (max-width: 640px) {
   .admin-content { padding: 12px; }
-  .admin-quick-actions { grid-template-columns: 1fr; }
   .admin-topbar-inner {
     flex-wrap: wrap;
     gap: 8px;

@@ -1,4 +1,4 @@
-const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3001'
+const API_URL = (import.meta as any).env?.VITE_API_URL || ((import.meta as any).env?.DEV ? 'http://localhost:3001' : window.location.origin)
 
 export class AdminApiError extends Error {
   constructor(message: string, public status: number, public code: string, public details?: unknown) {

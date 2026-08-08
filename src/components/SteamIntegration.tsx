@@ -1,316 +1,253 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
-import { ExternalLink, Shield, Users, Clock, CheckCircle, Loader2 } from "lucide-react";
+import { Alert, AlertDescription } from "./ui/alert";
+import { CheckCircle, ExternalLink, Loader2, RefreshCw, Shield, XCircle } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
-import { getSteamProfile, getSteamGames, initiateSteamLogin, isInIframe } from "../utils/steamAuth";
+import { steamAPI } from "../utils/api";
+import { initiateSteamLogin, isInIframe } from "../utils/steamAuth";
 import { toast } from "sonner";
 
-interface SteamProfile {
-  steamId: string;
-  username: string;
-  avatar: string;
-  accountAge: number;
-  vacBans: number;
-  gameBans: number;
-  lastBan: string | null;
-  level: number;
-  games: Array<{
-    appId: string;
-    name: string;
-    hours: number;
-    lastPlayed: string;
-  }>;
-}
+type SteamGame = {
+  appId: number;
+  name: string;
+  playtimeMinutes: number;
+  lastPlayedAt: string | null;
+  iconUrl: string | null;
+};
+
+type SteamStatus = {
+  linked: boolean;
+  steamId?: string;
+  personaName?: string | null;
+  avatar?: string | null;
+  profileUrl?: string | null;
+  level?: number | null;
+  profileVisibility?: "public" | "private" | "unknown";
+  gamesVisible?: boolean;
+  vac?: { banned: boolean; count: number };
+  gameBans?: { banned: boolean; count: number };
+  ownedGames?: SteamGame[];
+  ownsHL1?: boolean;
+  verified?: boolean;
+  lastRefreshedAt?: string | null;
+  verification?: { code: string; message: string };
+};
+
+const errorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : "Unable to load Steam account details.";
 
 export function SteamIntegration() {
-  const { user, refreshProfile } = useUser();
-  const [isConnected, setIsConnected] = useState(false);
-  const [steamProfile, setSteamProfile] = useState<SteamProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const { user, adoptProfile } = useUser();
+  const [status, setStatus] = useState<SteamStatus | null>(null);
+  const [isLoading, setIsLoading] = useState(Boolean(user?.steamId));
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
 
-  useEffect(() => {
-    loadSteamProfile();
-  }, [user?.steamId]);
-
-  const loadSteamProfile = async () => {
-    if (!!user?.steamId) {
+  const loadStatus = useCallback(async () => {
+    if (!user?.steamId) {
+      setStatus({ linked: false });
       setIsLoading(false);
-      setIsConnected(false);
       return;
     }
-
+    setIsLoading(true);
+    setError(null);
     try {
-      setIsLoading(true);
-      
-      // Get Steam profile
-      const profile = await getSteamProfile(user.steamId);
-      
-      if (!profile) {
-        setIsConnected(false);
-        setIsLoading(false);
-        return;
-      }
-
-      // Get games
-      const games = await getSteamGames(user.steamId);
-      
-      // Calculate account age
-      const accountCreated = new Date(profile.accountCreated);
-      const accountAge = Math.floor((Date.now() - accountCreated.getTime()) / (365 * 24 * 60 * 60 * 1000));
-      
-      // Format games data
-      const formattedGames = games.slice(0, 4).map(game => ({
-        appId: game.appId.toString(),
-        name: game.name,
-        hours: Math.floor(game.playtime / 60),
-        lastPlayed: game.lastPlayed ? formatLastPlayed(game.lastPlayed) : 'Never'
-      }));
-
-      setSteamProfile({
-        steamId: profile.steamId,
-        username: profile.username,
-        avatar: profile.avatar,
-        accountAge,
-        vacBans: 0, // Not provided by Steam API in basic call
-        gameBans: 0, // Not provided by Steam API in basic call
-        lastBan: null,
-        level: 0, // Would need separate Steam API call
-        games: formattedGames
-      });
-      
-      setIsConnected(true);
-    } catch (error) {
-      console.error('Failed to load Steam profile:', error);
-      setIsConnected(false);
+      const response = await steamAPI.getStatus();
+      setStatus(response.steam);
+    } catch (loadError) {
+      setError(errorMessage(loadError));
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [user?.steamId]);
 
-  const formatLastPlayed = (timestamp: number) => {
-    const diff = Date.now() - timestamp;
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const days = Math.floor(hours / 24);
-    
-    if (hours < 1) return 'Just now';
-    if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
-    if (days < 7) return `${days} day${days !== 1 ? 's' : ''} ago`;
-    if (days < 30) return `${Math.floor(days / 7)} week${Math.floor(days / 7) !== 1 ? 's' : ''} ago`;
-    return `${Math.floor(days / 30)} month${Math.floor(days / 30) !== 1 ? 's' : ''} ago`;
-  };
+  useEffect(() => {
+    void loadStatus();
+  }, [loadStatus]);
 
-  const handleSteamConnect = () => {
-    setIsConnecting(true);
-    
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    setError(null);
     try {
-      // Check if we're in a secure context
-      if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost') {
-        toast.error("Secure connection required", {
-          description: "Steam login requires HTTPS in production.",
-          className: "bg-red-900/90 border-red-700 text-red-100"
-        });
-        setIsConnecting(false);
-        return;
-      }
+      const response = await steamAPI.refresh();
+      setStatus(response.steam);
+      if (response.profile) adoptProfile(response.profile);
+      toast.success("Steam profile refreshed", {
+        description: "Avatar, games, level, visibility, and ban status are up to date.",
+      });
+    } catch (refreshError) {
+      const message = errorMessage(refreshError);
+      setError(message);
+      toast.error("Steam refresh failed", { description: message });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
-      // Check if in iframe
+  const handleSteamConnect = async () => {
+    setIsConnecting(true);
+    try {
+      if (window.location.protocol === "http:" && window.location.hostname !== "localhost") {
+        throw new Error("Steam login requires HTTPS in production.");
+      }
       if (isInIframe()) {
         toast.info("Opening Steam login", {
-          description: "Steam login will open in a new window. Please allow popups if blocked.",
-          className: "bg-blue-900/90 border-blue-700 text-blue-100"
+          description: "Allow popups if the Steam sign-in window is blocked.",
         });
       }
-
-      // Initiate Steam OpenID authentication
-      initiateSteamLogin();
-      
-      // Don't reset loading if in iframe
-      if (!isInIframe()) {
-        // Loading continues until redirect
-      }
-    } catch (error) {
-      console.error('Steam connection error:', error);
+      await initiateSteamLogin();
+    } catch (connectError) {
       setIsConnecting(false);
-      toast.error("Steam connection failed", {
-        description: error instanceof Error ? error.message : "Unable to connect to Steam. Please try again.",
-        className: "bg-red-900/90 border-red-700 text-red-100"
-      });
+      toast.error("Steam connection failed", { description: errorMessage(connectError) });
     }
   };
 
-  const getTrustFactor = () => {
-    if (!steamProfile) return "Unknown";
-    
-    const { accountAge, vacBans, gameBans, games } = steamProfile;
-    const totalHours = games.reduce((sum, game) => sum + game.hours, 0);
-    
-    if (vacBans > 0 || gameBans > 0) return "Low";
-    if (accountAge >= 5 && totalHours >= 1000) return "High";
-    if (accountAge >= 2 && totalHours >= 500) return "Medium";
-    return "Low";
-  };
-
-  const getTrustColor = (trustFactor: string) => {
-    switch (trustFactor) {
-      case "High": return "text-green-400 bg-green-900/20";
-      case "Medium": return "text-orange-400 bg-orange-900/20";
-      case "Low": return "text-red-400 bg-red-900/20";
-      default: return "text-gray-400 bg-gray-900/20";
-    }
-  };
-
-  if (isLoading) {
+  if (!user?.steamId) {
     return (
       <Card className="border-orange-900/20 bg-black/40">
         <CardHeader>
-          <CardTitle className="flex items-center space-x-2 text-orange-400">
-            <Shield className="w-5 h-5" />
-            <span>Steam Integration</span>
+          <CardTitle className="flex items-center gap-2 text-orange-400">
+            <ExternalLink className="h-5 w-5" />
+            Steam Integration
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="text-center p-6">
-            <Loader2 className="w-8 h-8 mx-auto text-orange-400 animate-spin mb-4" />
-            <p className="text-gray-400 font-mono text-sm">Loading Steam profile...</p>
-          </div>
+        <CardContent className="space-y-4 p-6 text-center">
+          <p className="text-sm text-gray-400">
+            Connect through Steam OpenID. Sector Nine reads public profile, ownership, level, and ban
+            information; your Steam credentials are never shared with us.
+          </p>
+          <Button onClick={handleSteamConnect} disabled={isConnecting} className="bg-blue-700 hover:bg-blue-800">
+            {isConnecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ExternalLink className="mr-2 h-4 w-4" />}
+            {isConnecting ? "Connecting..." : "Sign in through Steam"}
+          </Button>
         </CardContent>
       </Card>
     );
   }
 
-  if (!isConnected) {
+  if (isLoading && !status) {
     return (
       <Card className="border-orange-900/20 bg-black/40">
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2 text-orange-400">
-            <ExternalLink className="w-5 h-5" />
-            <span>Steam Integration</span>
-          </CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2 text-orange-400"><Loader2 className="size-5 animate-spin" />Verifying Steam account</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className="text-center p-6">
-            <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center">
-              <ExternalLink className="w-8 h-8 text-white" />
-            </div>
-            <h3 className="mb-2 text-orange-400">Connect your Steam account</h3>
-            <p className="text-sm text-gray-400 mb-4">
-              Link your Steam profile to verify your gaming credentials and unlock competitive features.
-            </p>
-            <Button 
-              onClick={handleSteamConnect}
-              disabled={isConnecting}
-              className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800"
-            >
-              {isConnecting ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Connecting...
-                </>
-              ) : (
-                <>
-                  <ExternalLink className="w-4 h-4 mr-2" />
-                  Sign in through Steam
-                </>
-              )}
-            </Button>
-          </div>
+          <div className="flex items-center gap-4"><div className="size-20 animate-pulse rounded-full bg-blue-950/60" /><div className="flex-1 space-y-2"><div className="h-5 w-40 animate-pulse rounded bg-gray-800" /><div className="h-3 w-56 max-w-full animate-pulse rounded bg-gray-900" /></div></div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{[0,1,2,3].map(item=><div key={item} className="h-16 animate-pulse rounded border border-white/10 bg-black/30" />)}</div>
+          <p className="text-center font-mono text-xs text-gray-500">Loading verified profile, ownership, visibility, and ban status...</p>
         </CardContent>
       </Card>
     );
   }
 
-  const trustFactor = getTrustFactor();
+  const games = status?.ownedGames || [];
+  const profileName = status?.personaName || user.username;
 
   return (
-    <Card className="border-orange-900/20 bg-black/40">
+    <Card className={`border bg-black/40 ${status?.verified?'border-green-800/40':'border-amber-800/40'}`}>
       <CardHeader>
-        <CardTitle className="flex items-center space-x-2 text-orange-400">
-          <Shield className="w-5 h-5" />
-          <span>Steam Profile</span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center space-x-3">
-          <Avatar className="w-12 h-12 border-2 border-orange-900/30">
-            <AvatarImage src={steamProfile?.avatar} alt={steamProfile?.username} />
-            <AvatarFallback className="bg-orange-900/20 text-orange-400">
-              {steamProfile?.username.slice(0, 2).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1">
-            <div className="flex items-center space-x-2">
-              <h3 className="text-orange-400">{steamProfile?.username}</h3>
-              {user?.steamVerified && (
-                <Badge className="bg-green-900/20 text-green-400 border-green-900/30 text-xs">
-                  <CheckCircle className="w-3 h-3 mr-1" />
-                  Verified
-                </Badge>
-              )}
-            </div>
-            <p className="text-xs text-gray-400">Steam Account</p>
-          </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 text-orange-400">
+            <Shield className="h-5 w-5" />
+            Steam Profile
+          </CardTitle>
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isRefreshing}>
+            {isRefreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            {isRefreshing ? "Reverifying..." : "Reverify Steam"}
+          </Button>
         </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {error && (
+          <Alert className="border-red-800 bg-red-950 text-red-200">
+            <XCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div className="space-y-2">
-            <div className="flex justify-between">
-              <span className="text-gray-400">Account Age</span>
-              <span className="text-green-400">{steamProfile?.accountAge}y</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-400">VAC Bans</span>
-              <span className={steamProfile?.vacBans === 0 ? "text-green-400" : "text-red-400"}>
-                {steamProfile?.vacBans}
-              </span>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <div className="flex justify-between">
-              <span className="text-gray-400">Game Bans</span>
-              <span className={steamProfile?.gameBans === 0 ? "text-green-400" : "text-red-400"}>
-                {steamProfile?.gameBans}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-400">Trust Factor</span>
-              <Badge className={getTrustColor(trustFactor)}>
-                {trustFactor}
+        <div className="rounded-lg border border-blue-900/30 bg-gradient-to-r from-blue-950/30 to-black/20 p-4 sm:flex sm:min-w-0 sm:items-center sm:gap-4">
+          <Avatar className="h-20 w-20 border-2 border-blue-700/50 shadow-lg shadow-blue-950/40">
+            <AvatarImage src={status?.avatar || user.steamAvatar || ""} alt={profileName} />
+            <AvatarFallback>{profileName.slice(0, 2).toUpperCase()}</AvatarFallback>
+          </Avatar>
+          <div className="mt-3 min-w-0 flex-1 sm:mt-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate text-orange-400">{profileName}</h3>
+              <Badge className={status?.verified ? "bg-green-950 text-green-300" : "bg-yellow-950 text-yellow-300"}>
+                {status?.verified ? <CheckCircle className="mr-1 h-3 w-3" /> : <XCircle className="mr-1 h-3 w-3" />}
+                {status?.verified ? "Verified" : "Verification required"}
               </Badge>
             </div>
+            <p className="text-xs text-gray-400">SteamID {status?.steamId || user.steamId}</p>
+            <p className="mt-1 text-xs text-gray-500">Last verification: {status?.lastRefreshedAt ? new Date(status.lastRefreshedAt).toLocaleString() : "Never"}</p>
           </div>
         </div>
 
-        {steamProfile && steamProfile.games.length > 0 && (
-          <div>
-            <h4 className="text-sm font-medium text-orange-400 mb-2">Recent Games</h4>
-            <div className="space-y-2">
-              {steamProfile.games.map((game) => (
-                <div key={game.appId} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-300 truncate mr-2">{game.name}</span>
-                  <div className="text-right flex-shrink-0">
-                    <div className="text-orange-400">{game.hours}h</div>
-                    <div className="text-xs text-gray-500">{game.lastPlayed}</div>
+        {status?.verification && (
+          <Alert className={status.verified ? "border-green-900 bg-green-950/40" : "border-yellow-900 bg-yellow-950/40"}>
+            <AlertDescription className={status.verified ? "text-green-200" : "text-yellow-200"}>
+              {status.verification.message}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3 lg:grid-cols-5">
+          <Metric label="Game ownership" value={status?.ownsHL1 ? "Half-Life owned" : "Not verified"} danger={!status?.ownsHL1} />
+          <Metric label="Steam level" value={status?.level == null ? "Unavailable" : String(status.level)} />
+          <Metric label="Visibility" value={status?.profileVisibility || "Unknown"} />
+          <Metric label="VAC status" value={status?.vac?.banned ? `Banned (${status.vac.count})` : "Clear"} danger={status?.vac?.banned} />
+          <Metric label="Game-ban status" value={status?.gameBans?.banned ? `Banned (${status.gameBans.count})` : "Clear"} danger={status?.gameBans?.banned} />
+        </div>
+
+        <div>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-sm font-medium text-orange-400">Owned games ({games.length})</h4>
+            {(!status?.gamesVisible || status?.profileVisibility !== "public") && (
+              <span className="text-xs text-yellow-300">A private profile can hide library results.</span>
+            )}
+          </div>
+          {games.length ? (
+            <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+              {games.map((game) => (
+                <div key={game.appId} className="flex min-w-0 items-center gap-3 rounded border border-white/10 bg-black/30 p-2">
+                  {game.iconUrl && <img src={game.iconUrl} alt="" className="h-8 w-8 rounded object-cover" loading="lazy" />}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-gray-200">{game.name}</p>
+                    <p className="text-xs text-gray-500">{(game.playtimeMinutes / 60).toFixed(1)} hours</p>
                   </div>
+                  {game.appId === 70 && <Badge className="bg-green-950 text-green-300">Required game</Badge>}
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          ) : (
+            <p className="rounded border border-white/10 p-3 text-sm text-gray-400">
+              No public owned-game data is available.
+            </p>
+          )}
+        </div>
 
-        <Button 
-          variant="outline" 
-          size="sm" 
-          className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10"
-          onClick={() => window.open(`https://steamcommunity.com/profiles/${steamProfile?.steamId}`, '_blank')}
-        >
-          <ExternalLink className="w-4 h-4 mr-2" />
-          View Full Steam Profile
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-3 text-xs text-gray-500">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => window.open(status?.profileUrl || `https://steamcommunity.com/profiles/${user.steamId}`, "_blank", "noopener,noreferrer")}
+          >
+            <ExternalLink className="mr-2 h-4 w-4" />
+            View Steam profile
+          </Button>
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+function Metric({ label, value, danger = false }: { label: string; value: string; danger?: boolean }) {
+  return (
+    <div className="min-w-0 rounded border border-white/10 bg-black/30 p-3">
+      <p className="truncate text-xs text-gray-500">{label}</p>
+      <p className={`mt-1 capitalize ${danger ? "text-red-400" : "text-green-400"}`}>{value}</p>
+    </div>
   );
 }

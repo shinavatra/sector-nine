@@ -1,8 +1,29 @@
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { profileFrames } from '../utils/badgeData'
+import { storeAPI } from '../utils/api'
+
+let frameStyleCache:Map<string,string>|null=null
+let frameStyleRequest:Promise<Map<string,string>>|null=null
+const loadFrameStyles=()=>{
+  if(frameStyleCache)return Promise.resolve(frameStyleCache)
+  if(!frameStyleRequest)frameStyleRequest=storeAPI.getCatalog().then((response:any)=>{
+    frameStyleCache=new Map((Array.isArray(response?.frames)?response.frames:[]).map((frame:any)=>[String(frame.id),String(frame.style||'')]))
+    return frameStyleCache
+  }).catch(()=>{
+    frameStyleRequest=null
+    return new Map<string,string>()
+  })
+  return frameStyleRequest
+}
 
 export function FramedAvatar({frameId,children,className=''}:{frameId:string|null|undefined;children:ReactNode;className?:string}) {
-  const frame=frameId?profileFrames.find(item=>item.id===frameId):null
-  const tone=frame?.rarity==='LEGENDARY'?'ring-yellow-300 shadow-yellow-400/40':frame?.rarity==='EPIC'?'ring-purple-400 shadow-purple-500/40':frame?.rarity==='RARE'?'ring-blue-400 shadow-blue-500/40':frame?.rarity==='VIP'?'ring-amber-300 shadow-amber-400/40':'ring-orange-400 shadow-orange-500/30'
-  return <div className={`relative inline-flex shrink-0 rounded-full ${frame?`ring-2 shadow-lg ${tone}`:''} ${className}`}>{children}</div>
+  const [style,setStyle]=useState(()=>frameId&&frameStyleCache?.get(frameId)||'')
+  useEffect(()=>{
+    let active=true
+    if(!frameId){setStyle('');return()=>{active=false}}
+    void loadFrameStyles().then(styles=>{if(active)setStyle(styles.get(frameId)||'')})
+    return()=>{active=false}
+  },[frameId])
+  const hasFrame=Boolean(frameId&&frameId!=='fr_basic')
+  return <div className={`relative inline-flex shrink-0 rounded-full ${hasFrame?(style||'ring-2 ring-orange-400 shadow-lg shadow-orange-500/30'):''} ${className}`}>{children}</div>
 }

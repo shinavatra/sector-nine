@@ -15,7 +15,7 @@ export function SteamSetup({ onNavigate }: SteamSetupProps) {
   const { user } = useUser();
   const [isConnecting, setIsConnecting] = useState(false);
 
-  const handleSteamConnect = () => {
+  const handleSteamConnect = async () => {
     setIsConnecting(true);
     
     try {
@@ -38,7 +38,7 @@ export function SteamSetup({ onNavigate }: SteamSetupProps) {
       }
 
       // Initiate Steam OpenID authentication
-      initiateSteamLogin();
+      await initiateSteamLogin();
       
       // Don't reset loading if in iframe (user needs to complete in new window)
       if (!isInIframe()) {

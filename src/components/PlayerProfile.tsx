@@ -4,7 +4,6 @@ import { Card, CardContent, CardHeader } from "./ui/card";
 import { Progress } from "./ui/progress";
 import { Trophy, Star, Target, Zap } from "lucide-react";
 import { FramedAvatar } from "./FramedAvatar";
-import { avatarBadges } from "../utils/badgeData";
 
 interface PlayerProfileProps {
   player: {
@@ -19,7 +18,8 @@ interface PlayerProfileProps {
     kda: string;
     mainGames: string[];
     equippedFrame?: string | null;
-    equippedBadge?: string | null;
+    isOnline?: boolean;
+    isPremium?: boolean;
   };
 }
 
@@ -30,25 +30,17 @@ export function PlayerProfile({ player }: PlayerProfileProps) {
   const winRate = matchesPlayed > 0 ? Math.round((wins / matchesPlayed) * 100) : 0;
   const kda = Number.isFinite(Number(player.kda)) ? Number(player.kda).toFixed(2) : '0.00';
   
-  // Get equipped badge and frame
-  const equippedBadge = avatarBadges.find(badge => badge.id === player.equippedBadge);
-  
   return (
     <Card className="w-full max-w-sm border-orange-900/20 bg-black/40">
       <CardHeader className="text-center">
         <div className="flex flex-col items-center space-y-2">
-          <div className="relative">
+          <div>
             <FramedAvatar frameId={player.equippedFrame}>
               <Avatar className="w-20 h-20 border-2 border-orange-900/30">
                 <AvatarImage src={player.avatar} alt={player.name} />
                 <AvatarFallback className="bg-orange-900/20 text-orange-400">{player.name.slice(0, 2).toUpperCase()}</AvatarFallback>
               </Avatar>
             </FramedAvatar>
-            {equippedBadge && (
-              <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-black/90 border-2 border-orange-900/30 rounded-full flex items-center justify-center text-lg">
-                {equippedBadge.icon}
-              </div>
-            )}
           </div>
           <div>
             <h3 className="text-lg font-semibold text-orange-400">{player.name}</h3>
@@ -56,6 +48,14 @@ export function PlayerProfile({ player }: PlayerProfileProps) {
               <Trophy className="w-3 h-3 mr-1" />
               {player.rank}
             </Badge>
+            <div className="mt-3 flex flex-wrap justify-center gap-1.5 text-[10px] font-mono">
+              <span className={`rounded border px-2 py-1 ${player.isOnline ? "border-green-900/40 bg-green-950/20 text-green-400" : "border-gray-800 bg-gray-950/40 text-gray-500"}`}>
+                {player.isOnline ? "ONLINE" : "OFFLINE"}
+              </span>
+              <span className={`rounded border px-2 py-1 ${player.isPremium ? "border-yellow-900/40 bg-yellow-950/20 text-yellow-300" : "border-gray-800 bg-gray-950/40 text-gray-500"}`}>
+                {player.isPremium ? "VIP" : "STANDARD"}
+              </span>
+            </div>
           </div>
         </div>
       </CardHeader>
@@ -101,4 +101,3 @@ export function PlayerProfile({ player }: PlayerProfileProps) {
     </Card>
   );
 }
-

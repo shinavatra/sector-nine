@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
 import { authAPI, friendsAPI, presenceAPI, userAPI } from '../utils/api';
 const defaultAvatar = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%230b0b0b"/%3E%3Ctext x="50" y="68" text-anchor="middle" font-size="62" fill="%23fb923c"%3E%CE%BB%3C/text%3E%3C/svg%3E';
 
@@ -49,11 +49,19 @@ export interface UserProfile {
   avatarSource: 'steam' | 'custom';
   resolvedAvatar: string;
   steamProfileUrl: string | null;
+  countryCode: string | null;
   socialLinks: SocialLinks;
   steamVerified: boolean;
   ownsHL1: boolean;
   vacBanned: boolean;
   gameBanned: boolean;
+  steamPersonaName: string | null;
+  steamLevel: number | null;
+  steamVisibility: number | null;
+  steamGamesVisible: boolean;
+  steamVacBanCount: number;
+  steamGameBanCount: number;
+  lastSteamCheck: string | null;
 
   // Match history totals
   wins: number;
@@ -67,6 +75,11 @@ export interface UserProfile {
   profileVisibility: 'public' | 'friends' | 'private';
   showOnlineStatus: boolean;
   notificationPreferences: NotificationPreferences;
+  themeMode: 'manual' | 'follow_game';
+  preferredTheme: 'default' | 'hl1' | 'cs16' | 'l4d2' | 'cod4';
+  availableThemes: Array<'default' | 'hl1' | 'cs16' | 'l4d2' | 'cod4'>;
+  preferredGameId: 'hl1' | 'cs16' | 'l4d2' | 'cod4';
+  verifiedGames: Array<'hl1' | 'cs16' | 'l4d2' | 'cod4'>;
 
   // Timestamps
   createdAt: string;
@@ -105,8 +118,6 @@ interface UserContextType {
   changeDisplayName: (displayName: string) => Promise<void>;
   logout: () => void;
   onlineFriends: OnlineFriend[];
-  onlineFriendsLoading: boolean;
-  onlineFriendsError: string | null;
   refreshOnlineFriends: () => Promise<void>;
 }
 
@@ -125,29 +136,29 @@ export interface OnlineFriend {
 // =====================================================
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
+const sameOnlineFriends = (current: OnlineFriend[], next: OnlineFriend[]) =>
+  current.length === next.length && current.every((friend, index) => {
+    const candidate = next[index];
+    return candidate?.id === friend.id &&
+      candidate.username === friend.username &&
+      candidate.displayName === friend.displayName &&
+      candidate.resolvedAvatar === friend.resolvedAvatar &&
+      candidate.equippedFrame === friend.equippedFrame &&
+      candidate.lastSeen === friend.lastSeen;
+  });
 
 export function UserProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [onlineFriends, setOnlineFriends] = useState<OnlineFriend[]>([]);
-  const [onlineFriendsLoading, setOnlineFriendsLoading] = useState(false);
-  const [onlineFriendsError, setOnlineFriendsError] = useState<string | null>(null);
 
-  const refreshOnlineFriends = async () => {
-    setOnlineFriendsLoading(true);
-    try {
-      const result = await friendsAPI.getOnline();
-      setOnlineFriends(Array.isArray(result.friends) ? result.friends : []);
-      setOnlineFriendsError(null);
-    } catch (error) {
-      setOnlineFriendsError(error instanceof Error ? error.message : 'Unable to refresh online friends');
-      throw error;
-    } finally {
-      setOnlineFriendsLoading(false);
-    }
-  };
+  const refreshOnlineFriends = useCallback(async () => {
+    const result = await friendsAPI.getOnline();
+    const next = Array.isArray(result.friends) ? result.friends : [];
+    setOnlineFriends(current => sameOnlineFriends(current, next) ? current : next);
+  }, []);
 
-  const refreshProfile = async () => {
+  const refreshProfile = useCallback(async () => {
     try {
       const { profile } = await userAPI.getProfile();
       setUser(normalizeProfile(profile));
@@ -156,26 +167,25 @@ export function UserProvider({ children }: { children: ReactNode }) {
       setUser(null);
       throw error;
     }
-  };
+  }, []);
 
-  const updateProfile = async (updates: Partial<UserProfile>) => {
+  const updateProfile = useCallback(async (updates: Partial<UserProfile>) => {
     const { profile } = await userAPI.updateProfile(updates);
     setUser(normalizeProfile(profile));
-  };
-  const adoptProfile = (profile: unknown) => setUser(normalizeProfile(profile));
+  }, []);
+  const adoptProfile = useCallback((profile: unknown) => setUser(normalizeProfile(profile)), []);
 
-  const changeDisplayName = async (displayName: string) => {
+  const changeDisplayName = useCallback(async (displayName: string) => {
     const { profile } = await userAPI.changeDisplayName(displayName);
     setUser(normalizeProfile(profile));
-  };
+  }, []);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     void presenceAPI.offline().catch(() => undefined);
     authAPI.signout();
     setUser(null);
     setOnlineFriends([]);
-    setOnlineFriendsError(null);
-  };
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -191,7 +201,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
       window.clearInterval(presenceInterval);
       window.clearInterval(heartbeatInterval);
     };
-  }, [user?.id]);
+  }, [refreshOnlineFriends, user?.id]);
 
   useEffect(() => {
     const initUser = async () => {
@@ -211,23 +221,23 @@ export function UserProvider({ children }: { children: ReactNode }) {
       }
     };
     initUser();
-  }, []);
+  }, [refreshProfile]);
+
+  const contextValue = useMemo<UserContextType>(() => ({
+    user,
+    isLoading,
+    isAuthenticated: user !== null,
+    refreshProfile,
+    updateProfile,
+    adoptProfile,
+    changeDisplayName,
+    logout,
+    onlineFriends,
+    refreshOnlineFriends,
+  }), [adoptProfile, changeDisplayName, isLoading, logout, onlineFriends, refreshOnlineFriends, refreshProfile, updateProfile, user]);
 
   return (
-    <UserContext.Provider value={{
-      user,
-      isLoading,
-      isAuthenticated: user !== null,
-      refreshProfile,
-      updateProfile,
-      adoptProfile,
-      changeDisplayName,
-      logout,
-      onlineFriends,
-      onlineFriendsLoading,
-      onlineFriendsError,
-      refreshOnlineFriends,
-    }}>
+    <UserContext.Provider value={contextValue}>
       {children}
     </UserContext.Provider>
   );
@@ -283,6 +293,7 @@ function normalizeProfile(raw: any): UserProfile {
     avatarSource,
     resolvedAvatar,
     steamProfileUrl:   raw.steamProfileUrl ?? null,
+    countryCode:       raw.countryCode ?? null,
     socialLinks: {
       discord: socialLinks.discord ?? null,
       youtube: socialLinks.youtube ?? null,
@@ -295,6 +306,13 @@ function normalizeProfile(raw: any): UserProfile {
     ownsHL1:           raw.ownsHL1 ?? false,
     vacBanned:         raw.vacBanned ?? false,
     gameBanned:        raw.gameBanned ?? false,
+    steamPersonaName:  raw.steamPersonaName ?? null,
+    steamLevel:        raw.steamLevel == null ? null : finiteNumber(raw.steamLevel),
+    steamVisibility:   raw.steamVisibility == null ? null : finiteNumber(raw.steamVisibility),
+    steamGamesVisible: Boolean(raw.steamGamesVisible),
+    steamVacBanCount:  finiteNumber(raw.steamVacBanCount),
+    steamGameBanCount: finiteNumber(raw.steamGameBanCount),
+    lastSteamCheck:    raw.lastSteamCheck ?? null,
     wins:              finiteNumber(raw.wins),
     losses:            finiteNumber(raw.losses),
     winStreak:         finiteNumber(raw.winStreak),
@@ -312,6 +330,15 @@ function normalizeProfile(raw: any): UserProfile {
       systemMaintenance: notificationPreferences.systemMaintenance ?? true,
       securityAlerts: notificationPreferences.securityAlerts ?? true,
     },
+    themeMode:         raw.themeMode === 'follow_game' ? 'follow_game' : 'manual',
+    preferredTheme:    ['default', 'hl1', 'cs16', 'l4d2', 'cod4'].includes(raw.preferredTheme) ? raw.preferredTheme : 'default',
+    availableThemes:   Array.isArray(raw.availableThemes) && raw.availableThemes.includes('default')
+      ? raw.availableThemes.filter((theme: string) => ['default', 'hl1', 'cs16', 'l4d2', 'cod4'].includes(theme))
+      : ['default'],
+    preferredGameId:   ['hl1', 'cs16', 'l4d2', 'cod4'].includes(raw.preferredGameId) ? raw.preferredGameId : 'hl1',
+    verifiedGames:     Array.isArray(raw.verifiedGames)
+      ? raw.verifiedGames.filter((game: string) => ['hl1', 'cs16', 'l4d2', 'cod4'].includes(game))
+      : (raw.steamVerified && raw.ownsHL1 ? ['hl1'] : []),
     createdAt:         raw.createdAt ?? new Date().toISOString(),
     lastSeen:          raw.lastSeen ?? null,
     stats: {

@@ -1,8 +1,21 @@
-import { Activity, BadgeCheck, Ban, Gamepad2, Link, ListTodo, Server, ShieldCheck, Trophy, UserCheck, Users, Wifi } from 'lucide-react'
+import { Activity, BadgeCheck, Ban, CalendarPlus, CircleOff, MessageSquareWarning, Server, ShieldCheck, Trophy, Users, VolumeX, Wifi } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card'
 import { AdminMetricCard } from './AdminMetricCard'
 
-const metrics=[['total_users','Total Users','Registered personnel',Users],['online_users','Online Users','Visible and seen in last 5 minutes',Wifi],['premium_users','Premium Users','Active VIP accounts',BadgeCheck],['steam_linked','Steam Linked','Accounts linked to Steam',Link],['steam_verified','Steam Verified','Verified Steam profiles',ShieldCheck],['owns_hl1','Own HL1','Eligible game owners',Gamepad2],['current_queue','Queue','Players waiting now',ListTodo],['running_matches','Active Matches','Pending or in progress',Activity],['online_servers','Online Servers','Ready game servers',Server],['active_tournaments','Active Tournaments','Registration or running',Trophy],['reports_waiting','Open Reports','Awaiting moderation',UserCheck],['banned_players','Active Bans','Current restrictions',Ban]] as const
+const metrics=[
+  ['total_users','Total Users','Active registered accounts',Users],
+  ['online_users','Online Users','Visible and seen in the last 5 minutes',Wifi],
+  ['today_registrations',"Today's Registrations",'Accounts created since midnight',CalendarPlus],
+  ['active_matches','Active Matches','Matches currently in progress',Activity],
+  ['running_tournaments','Running Tournaments','Tournaments currently in progress',Trophy],
+  ['online_servers','Online Servers','Servers with online status',Server],
+  ['offline_servers','Offline Servers','Servers with offline status',CircleOff],
+  ['pending_reports','Pending Reports','Reports awaiting moderation',MessageSquareWarning],
+  ['active_bans','Active Bans','Unexpired active restrictions',Ban],
+  ['active_mutes','Active Mutes','Unexpired active chat restrictions',VolumeX],
+  ['premium_users','Premium Users','Active unexpired VIP accounts',BadgeCheck],
+  ['steam_verified_users','Steam Verified Users','Verified active accounts',ShieldCheck],
+] as const
 
 function ActivityChart({series}:{series:Record<string,Array<{day:string;value:number}>>}) {
   const values=Object.values(series).flat().map(point=>Number(point.value))
