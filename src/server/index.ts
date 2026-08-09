@@ -23,6 +23,7 @@ dotenv.config()
 const app = express()
 app.set('trust proxy', 1)
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001
+const serveFrontend = process.env.SERVE_FRONTEND === 'true'
 type LogLevel = 'info' | 'warn' | 'error'
 const configuredLogLevel=String(process.env.LOG_LEVEL||'info').toLowerCase()
 if(!['info','warn','error'].includes(configuredLogLevel))throw new Error('LOG_LEVEL must be info, warn, or error')
@@ -3084,7 +3085,7 @@ app.get('/steam/profile/:steamId', async (req, res) => {
 
 app.use('/admin', createAdminRouter(pool, JWT_SECRET))
 
-if(process.env.NODE_ENV==='production'){
+if(process.env.NODE_ENV==='production'&&serveFrontend){
   const frontendBuild=path.resolve(process.cwd(),'build')
   const frontendIndex=path.join(frontendBuild,'index.html')
   if(!fs.existsSync(frontendIndex))throw new Error('Frontend production build is missing. Run npm run build before starting the server.')
