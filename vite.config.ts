@@ -18,7 +18,7 @@ export default defineConfig({
   },
   server: {
     port: 3000,
-    open: true,
+    open: process.env.NODE_ENV !== 'production',
     proxy: {
       // Uncomment when backend is on 3001:
       // '/api': { target: 'http://localhost:3001', changeOrigin: true, rewrite: (path) => path.replace(/^\/api/, '') }

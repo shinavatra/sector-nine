@@ -1,4 +1,5 @@
-const API_URL = (import.meta as any).env?.VITE_API_URL || ((import.meta as any).env?.DEV ? 'http://localhost:3001' : window.location.origin)
+const configuredApiUrl = (import.meta as any).env?.VITE_API_URL?.replace(/\/$/, '')
+const API_URL = configuredApiUrl || ((import.meta as any).env?.DEV ? 'http://localhost:3001' : '')
 
 export class AdminApiError extends Error {
   constructor(message: string, public status: number, public code: string, public details?: unknown) {
@@ -8,6 +9,8 @@ export class AdminApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  if (!API_URL) throw new AdminApiError('VITE_API_URL is not configured', 500, 'API_URL_NOT_CONFIGURED')
+
   const token = localStorage.getItem('session_token')
   const response = await fetch(`${API_URL}/admin${path}`, {
     ...options,

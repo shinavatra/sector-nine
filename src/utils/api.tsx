@@ -3,7 +3,8 @@
 // No Supabase. Pure PostgreSQL backend.
 // =====================================================
 
-const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : window.location.origin)
+const configuredApiUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, '')
+const API_URL = configuredApiUrl || (import.meta.env.DEV ? 'http://localhost:3001' : '')
 
 let sessionToken: string | null = null
 
@@ -23,6 +24,8 @@ export const getSessionToken = (): string | null => {
 }
 
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
+  if (!API_URL) throw new ApiError('VITE_API_URL is not configured', 500, 'API_URL_NOT_CONFIGURED')
+
   const headers = new Headers(options.headers)
   const token = getSessionToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
