@@ -16,10 +16,10 @@ export interface ThemeDefinition {
 
 export const themeDefinitions: ThemeDefinition[] = [
   { id: "default", name: "Sector Nine", gameId: null, description: "The original Sector Nine tactical interface.", gameLabel: "Half-Life 1", protocol: "QUANTUM GAMING PROTOCOLS", status: "SYSTEM STATUS: OPERATIONAL" },
-  { id: "hl1", name: "Half-Life 1", gameId: "hl1", description: "Black Mesa orange, hazard green, and industrial terminal surfaces.", gameLabel: "Half-Life 1", protocol: "HALF-LIFE PROTOCOL", status: "BLACK MESA UPLINK: ACTIVE" },
-  { id: "cs16", name: "Counter-Strike 1.6", gameId: "cs16", description: "Dust, steel, and classic tactical command colors.", gameLabel: "Counter-Strike 1.6", protocol: "COUNTER-STRIKE PROTOCOL", status: "TACTICAL NETWORK: READY" },
-  { id: "l4d2", name: "Left 4 Dead 2", gameId: "l4d2", description: "Distressed survival tones with emergency-response accents.", gameLabel: "Left 4 Dead 2", protocol: "SURVIVAL PROTOCOL", status: "CEDA NETWORK: DEGRADED" },
-  { id: "cod4", name: "Call of Duty 4 Promod", gameId: "cod4", description: "Military green displays and modern operations telemetry.", gameLabel: "Call of Duty 4 Promod", protocol: "MODERN WARFARE PROTOCOL", status: "OPERATIONS NETWORK: ONLINE" },
+  { id: "hl1", name: "Half-Life 1", gameId: "hl1", description: "Sector Nine with restrained industrial orange and dark hazard-green accents.", gameLabel: "Half-Life 1", protocol: "HALF-LIFE PROTOCOL", status: "SYSTEM STATUS: OPERATIONAL" },
+  { id: "cs16", name: "Counter-Strike 1.6", gameId: "cs16", description: "Sector Nine with restrained tactical tan and dark olive accents.", gameLabel: "Counter-Strike 1.6", protocol: "COUNTER-STRIKE PROTOCOL", status: "TACTICAL NETWORK: READY" },
+  { id: "l4d2", name: "Left 4 Dead 2", gameId: "l4d2", description: "Sector Nine with desaturated survival accents and rare emergency red.", gameLabel: "Left 4 Dead 2", protocol: "SURVIVAL PROTOCOL", status: "SYSTEM STATUS: DEGRADED" },
+  { id: "cod4", name: "Call of Duty 4 Promod", gameId: "cod4", description: "Sector Nine with restrained military green, steel, and amber accents.", gameLabel: "Call of Duty 4 Promod", protocol: "MODERN WARFARE PROTOCOL", status: "OPERATIONS NETWORK: ONLINE" },
 ];
 
 interface ThemeCache {
