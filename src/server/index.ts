@@ -1,5 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express'
-import cors from 'cors'
+import cors, { CorsOptions } from 'cors'
 import helmet from 'helmet'
 import { rateLimit } from 'express-rate-limit'
 import bcrypt from 'bcryptjs'
@@ -137,25 +137,28 @@ const sendInternalError = (
   })
 }
 
+const normalizeOrigin = (origin: string) => origin.trim().replace(/\/+$/, '').toLowerCase()
 const configuredOrigins = String(process.env.APP_ORIGIN || '')
   .split(',')
-  .map(origin => origin.trim().replace(/\/$/, ''))
+  .map(normalizeOrigin)
   .filter(Boolean)
 if (process.env.NODE_ENV === 'production' && configuredOrigins.length === 0) {
   throw new Error('APP_ORIGIN must list the allowed frontend origin in production')
 }
 const developmentOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000']
 const allowedOrigins = new Set(process.env.NODE_ENV === 'production' ? configuredOrigins : [...developmentOrigins, ...configuredOrigins])
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }))
-app.use(cors({
+const corsOptions: CorsOptions = {
   origin(origin, callback) {
-    if (!origin || allowedOrigins.has(origin.replace(/\/$/, ''))) return callback(null, true)
+    if (!origin || allowedOrigins.has(normalizeOrigin(origin))) return callback(null, true)
     return callback(new Error('Origin is not allowed by CORS'))
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Authorization', 'Content-Type'],
   maxAge: 86400,
-}))
+}
+app.options(/.*/, cors(corsOptions))
+app.use(cors(corsOptions))
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }))
 app.use((error: Error, _req: Request, res: Response, next: NextFunction) => {
   if (error.message === 'Origin is not allowed by CORS') {
     return res.status(403).json({ error: error.message, code: 'CORS_ORIGIN_DENIED' })

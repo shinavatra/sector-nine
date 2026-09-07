@@ -28,6 +28,7 @@ export default defineConfig({
     allowedHosts: [
       'localhost',
       '127.0.0.1',
+      'sector-nine-production.up.railway.app',
       'sectornine-production.up.railway.app',
     ],
   },
