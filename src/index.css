@@ -5304,6 +5304,9 @@ body {
   --theme-panel: rgba(0, 0, 0, 0.4);
   --theme-panel-elevated: #111111;
   --theme-border: rgba(200, 100, 0, 0.32);
+  --theme-border-strong: rgba(255, 138, 0, 0.58);
+  --theme-accent-soft: rgba(255, 138, 0, 0.12);
+  --theme-secondary-soft: rgba(127, 143, 50, 0.11);
   --theme-text: #e5e7eb;
   --theme-text-muted: #9ca3af;
   --theme-success: #7f8f32;
@@ -5334,6 +5337,9 @@ body {
   --theme-panel: rgba(0, 0, 0, 0.4);
   --theme-panel-elevated: #111111;
   --theme-border: rgba(143, 121, 77, 0.34);
+  --theme-border-strong: rgba(194, 166, 107, 0.58);
+  --theme-accent-soft: rgba(194, 166, 107, 0.12);
+  --theme-secondary-soft: rgba(104, 112, 68, 0.11);
   --theme-text: #e5e7eb;
   --theme-text-muted: #9ca3af;
   --theme-success: #687044;
@@ -5364,6 +5370,9 @@ body {
   --theme-panel: rgba(0, 0, 0, 0.4);
   --theme-panel-elevated: #111111;
   --theme-border: rgba(113, 139, 85, 0.32);
+  --theme-border-strong: rgba(210, 208, 188, 0.56);
+  --theme-accent-soft: rgba(210, 208, 188, 0.1);
+  --theme-secondary-soft: rgba(113, 139, 85, 0.12);
   --theme-text: #e5e7eb;
   --theme-text-muted: #9ca3af;
   --theme-success: #718b55;
@@ -5394,6 +5403,9 @@ body {
   --theme-panel: rgba(0, 0, 0, 0.4);
   --theme-panel-elevated: #111111;
   --theme-border: rgba(112, 132, 91, 0.34);
+  --theme-border-strong: rgba(112, 132, 91, 0.6);
+  --theme-accent-soft: rgba(112, 132, 91, 0.12);
+  --theme-secondary-soft: rgba(197, 138, 53, 0.1);
   --theme-text: #e5e7eb;
   --theme-text-muted: #9ca3af;
   --theme-success: #70845b;
@@ -5458,6 +5470,58 @@ body {
 :root[data-theme="cod4"] [class*="text-green-"] { color: var(--theme-primary) !important; }
 :root[data-theme="cod4"] [class*="border-orange-"] { border-color: var(--theme-border) !important; }
 :root[data-theme="cod4"] [class*="border-green-"] { border-color: color-mix(in srgb, var(--theme-primary) 34%, transparent) !important; }
+
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) a,
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) button svg,
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [role="tab"][data-state="active"],
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [aria-selected="true"] {
+  color: var(--theme-primary);
+}
+
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) a:hover,
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) button:hover svg {
+  color: var(--theme-primary-hover);
+}
+
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) button[class*="border-orange-"],
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) button[class*="border-green-"],
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [role="tab"][data-state="active"],
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [aria-selected="true"] {
+  border-color: var(--theme-border-strong) !important;
+}
+
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) input:focus,
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) textarea:focus,
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) select:focus,
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) input:focus-visible,
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) textarea:focus-visible,
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) select:focus-visible {
+  border-color: var(--theme-border-strong) !important;
+  outline-color: var(--theme-primary);
+  box-shadow: 0 0 0 1px var(--theme-border-strong);
+}
+
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) button[class*="bg-primary"],
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) button[class*="from-orange-"],
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) button[class*="from-yellow-"] {
+  border-color: var(--theme-border-strong) !important;
+  --tw-gradient-from: var(--theme-primary) !important;
+  --tw-gradient-to: var(--theme-secondary) !important;
+}
+
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [data-slot="badge"][class*="bg-green-"],
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [data-slot="badge"][class*="bg-orange-"],
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [data-slot="badge"][class*="bg-yellow-"] {
+  background-color: var(--theme-accent-soft) !important;
+  border-color: var(--theme-border-strong) !important;
+  color: var(--theme-primary) !important;
+}
+
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) hr,
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [class*="divide-orange-"] > :not(:last-child),
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [class*="divide-green-"] > :not(:last-child) {
+  border-color: var(--theme-border) !important;
+}
 
 /* Profile identity media stays independent from generic image and card sizing. */
 .profile-avatar {

@@ -13,6 +13,7 @@ import path from 'path'
 import { createAdminRouter } from './admin'
 import { onlineUserPredicate } from './presence'
 import { provisionMatchServer, startGameServerMonitor } from './rcon'
+import { SUPPORTED_REGIONS, isSupportedRegionId } from '../shared/regions'
 
 dotenv.config()
 
@@ -90,6 +91,7 @@ const supportedGameIds = ['hl1', 'cs16', 'l4d2', 'cod4'] as const
 type SupportedGameId = typeof supportedGameIds[number]
 const isSupportedGameId = (value: unknown): value is SupportedGameId =>
   typeof value === 'string' && supportedGameIds.includes(value as SupportedGameId)
+const noServerInSelectedRegionError = 'No available server in selected region.'
 const validUserId = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 const userVerifiedGames = (user: any): SupportedGameId[] => {
   const stored = Array.isArray(user?.verified_game_ids) ? user.verified_game_ids : []
@@ -467,7 +469,7 @@ app.post('/game-server/:id/heartbeat',async(req,res)=>{
     if(server.current_match_id&&demoUrl){let parsed:URL;try{parsed=new URL(demoUrl)}catch{await db.query('ROLLBACK');return res.status(400).json({error:'Invalid demo URL'})}if(!['http:','https:'].includes(parsed.protocol)||demoUrl.length>2000){await db.query('ROLLBACK');return res.status(400).json({error:'Invalid demo URL'})}await db.query('UPDATE matches SET demo_url=$1,demo_uploaded_at=NOW() WHERE id=$2',[demoUrl,server.current_match_id])}
     await db.query('COMMIT')
     return res.json({ok:true,matchId:server.current_match_id||null})
-  }catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}
+  }catch(err:any){await db.query('ROLLBACK');return err?.message===noServerInSelectedRegionError?res.status(409).json({error:noServerInSelectedRegionError,code:'NO_SERVER_IN_SELECTED_REGION'}):sendDatabaseError(res,err)}finally{db.release()}
 })
 
 app.get('/game-servers/status',async(req,res)=>{
@@ -1461,13 +1463,15 @@ const getMatchmakingState=async(db:any,userId:string)=>{
 const assignMatchmakingServer=async(db:any,matchId:string)=>{
   const match=(await db.query("SELECT id,game_id,server_id,status,matchmaking_region,selected_map FROM matches WHERE id=$1 FOR UPDATE",[matchId])).rows[0]
   if(!match||match.status!=='pending'||match.server_id||!match.selected_map)return
+  if(!isSupportedRegionId(match.matchmaking_region))throw new Error('Match has no supported matchmaking region.')
   const accepted=Number((await db.query("SELECT COUNT(*)::int count FROM match_acceptances WHERE match_id=$1 AND status='accepted'",[matchId])).rows[0].count)
   if(accepted!==2)return
   const server=(await db.query(
-    `SELECT id FROM game_servers WHERE game_id=$1 AND status='online' AND current_match_id IS NULL
-     ORDER BY CASE WHEN $2::text IS NOT NULL AND region=$2 THEN 0 ELSE 1 END,created_at
+    `SELECT id FROM game_servers
+     WHERE game_id=$1 AND region=$2 AND status='online' AND current_match_id IS NULL
+     ORDER BY created_at
      FOR UPDATE SKIP LOCKED LIMIT 1`,[match.game_id,match.matchmaking_region])).rows[0]
-  if(!server)return
+  if(!server)throw new Error(noServerInSelectedRegionError)
   // Keep the match pending until RCON confirms that the selected map started.
   await db.query("UPDATE matches SET server_id=$1 WHERE id=$2",[server.id,matchId])
   await db.query("UPDATE game_servers SET current_match_id=$1,status='in_use',updated_at=NOW() WHERE id=$2",[matchId,server.id])
@@ -1479,17 +1483,18 @@ const pairQueuedPlayer=async(db:any,userId:string)=>{
   if(!own)return
   const opponent=(await db.query(
     `SELECT * FROM queue_entries WHERE user_id<>$1 AND game_id=$2 AND game_mode=$3
+       AND preferred_region=$4
        AND NOT EXISTS (
          SELECT 1 FROM user_blocks
          WHERE (blocker_id=$1 AND blocked_user_id=queue_entries.user_id)
             OR (blocker_id=queue_entries.user_id AND blocked_user_id=$1)
        )
-     ORDER BY joined_at FOR UPDATE SKIP LOCKED LIMIT 1`,[userId,own.game_id,own.game_mode])).rows[0]
+     ORDER BY joined_at FOR UPDATE SKIP LOCKED LIMIT 1`,[userId,own.game_id,own.game_mode,own.preferred_region])).rows[0]
   if(!opponent)return
   const match=(await db.query(
     `INSERT INTO matches(match_type,game_mode,game_id,player1_id,player2_id,selected_map,maps,status,matchmaking_region)
-     VALUES($1,$1,$2,$3,$4,NULL,ARRAY[]::TEXT[],'pending',COALESCE($5,$6)) RETURNING *`,
-    [own.game_mode,own.game_id,userId,opponent.user_id,own.preferred_region,opponent.preferred_region])).rows[0]
+     VALUES($1,$1,$2,$3,$4,NULL,ARRAY[]::TEXT[],'pending',$5) RETURNING *`,
+    [own.game_mode,own.game_id,userId,opponent.user_id,own.preferred_region])).rows[0]
   await db.query("INSERT INTO match_acceptances(match_id,user_id) VALUES($1,$2),($1,$3)",[match.id,userId,opponent.user_id])
   await db.query('DELETE FROM queue_entries WHERE user_id=$1 OR user_id=$2',[userId,opponent.user_id])
   await db.query(
@@ -1516,6 +1521,8 @@ app.post('/matchmaking/join', requireAuth, async (req: AuthRequest, res) => {
     if(eligibility)return res.status(eligibility.status).json(eligibility)
     const config=(await pool.query('SELECT * FROM game_matchmaking_config WHERE game_id=$1',[gameId])).rows[0]
     if(!config?.enabled)return res.status(409).json({error:'Matchmaking is not enabled for the selected game.',code:'GAME_MATCHMAKING_DISABLED'})
+    const preferredRegion=req.body.preferredRegion??req.body.preferred_region
+    if(!isSupportedRegionId(preferredRegion))return res.status(400).json({error:'Select a supported matchmaking region.',code:'INVALID_REGION'})
     const gameMode=typeof req.body.gameMode==='string'&&req.body.gameMode?req.body.gameMode:config.default_mode
     const poolRow=(await pool.query('SELECT maps FROM game_map_pools WHERE game_id=$1 AND game_mode=$2 AND is_active',[gameId,gameMode])).rows[0]
     const selectedMaps=Array.isArray(req.body.selectedMaps)&&req.body.selectedMaps.length?req.body.selectedMaps:poolRow?.maps||[]
@@ -1545,8 +1552,8 @@ app.post('/matchmaking/join', requireAuth, async (req: AuthRequest, res) => {
       if(existing.state!=='idle'){await db.query('COMMIT');return res.json(existing)}
       await db.query(
         `INSERT INTO queue_entries(user_id,game_id,game_mode,selected_maps,preferred_region)
-         VALUES($1,$2,$3,$4,NULLIF($5,''))`,
-        [userId,gameId,gameMode,selectedMaps,typeof req.body.preferredRegion==='string'?req.body.preferredRegion.trim().slice(0,100):'']
+         VALUES($1,$2,$3,$4,$5)`,
+        [userId,gameId,gameMode,selectedMaps,preferredRegion]
       )
       await pairQueuedPlayer(db,userId)
       await db.query('COMMIT')
@@ -1584,9 +1591,10 @@ app.get('/matchmaking/options',requireAuth,async(req:AuthRequest,res)=>{
     const regions=(await pool.query(
       `SELECT region,COUNT(*)::int total_servers,
               COUNT(*) FILTER(WHERE status='online' AND current_match_id IS NULL)::int available_servers
-       FROM game_servers WHERE game_id=$1 GROUP BY region ORDER BY region`,[gameId])).rows
+       FROM game_servers WHERE game_id=$1 AND region=ANY($2::text[]) GROUP BY region`,[gameId,SUPPORTED_REGIONS.map(region=>region.id)])).rows
+    const regionStats=new Map(regions.map((region:any)=>[region.region,region]))
     const gameNames:Record<SupportedGameId,string>={hl1:'Half-Life 1',cs16:'Counter-Strike 1.6',l4d2:'Left 4 Dead 2',cod4:'Call of Duty 4 Promod'}
-    return res.json({game:{id:gameId,name:gameNames[gameId]},enabled:Boolean(config?.enabled),modes:config?.modes||[],requiredMapCount:config?.required_map_count||5,mapPools,regions})
+    return res.json({game:{id:gameId,name:gameNames[gameId]},enabled:Boolean(config?.enabled),modes:config?.modes||[],requiredMapCount:config?.required_map_count||5,mapPools,regions:SUPPORTED_REGIONS.map(region=>({region:region.id,label:region.label,total_servers:Number(regionStats.get(region.id)?.total_servers)||0,available_servers:Number(regionStats.get(region.id)?.available_servers)||0}))})
   }catch(err:any){return sendDatabaseError(res,err)}
 })
 
@@ -1600,7 +1608,7 @@ app.post('/matchmaking/sync',requireAuth,async(req:AuthRequest,res)=>{
     if(paired.match?.id)await assignMatchmakingServer(db,paired.match.id)
     await db.query('COMMIT')
     return res.json(await getMatchmakingState(pool,req.userId!))
-  }catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}
+  }catch(err:any){await db.query('ROLLBACK');return err?.message===noServerInSelectedRegionError?res.status(409).json({error:noServerInSelectedRegionError,code:'NO_SERVER_IN_SELECTED_REGION'}):sendDatabaseError(res,err)}finally{db.release()}
 })
 
 app.post('/matchmaking/accept',requireAuth,async(req:AuthRequest,res)=>{
@@ -1614,7 +1622,7 @@ app.post('/matchmaking/accept',requireAuth,async(req:AuthRequest,res)=>{
     if(!acceptance){await db.query('ROLLBACK');return res.status(409).json({error:'No pending match acceptance',code:'NO_PENDING_MATCH'})}
     await db.query('COMMIT')
     return res.json(await getMatchmakingState(pool,req.userId!))
-  }catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}
+  }catch(err:any){await db.query('ROLLBACK');return err?.message===noServerInSelectedRegionError?res.status(409).json({error:noServerInSelectedRegionError,code:'NO_SERVER_IN_SELECTED_REGION'}):sendDatabaseError(res,err)}finally{db.release()}
 })
 
 app.post('/matchmaking/maps',requireAuth,async(req:AuthRequest,res)=>{

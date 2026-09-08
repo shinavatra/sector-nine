@@ -3,6 +3,8 @@
 // No Supabase. Pure PostgreSQL backend.
 // =====================================================
 
+import type { SupportedRegionId } from '../shared/regions'
+
 const configuredApiUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, '')
 const API_URL = configuredApiUrl || (import.meta.env.DEV ? 'http://localhost:3001' : '')
 
@@ -138,7 +140,7 @@ export const userAPI = {
 // =====================================================
 
 export const matchmakingAPI = {
-  joinQueue: async (gameId: string, gameMode: string, selectedMaps: string[], preferredRegion = '') =>
+  joinQueue: async (gameId: string, gameMode: string, selectedMaps: string[], preferredRegion: SupportedRegionId) =>
     apiFetch('/matchmaking/join', { method: 'POST', body: JSON.stringify({ gameId, gameMode, selectedMaps, preferredRegion }) }),
 
   leaveQueue: async () =>

@@ -13,6 +13,6 @@
     "noEmit": false,
     "sourceMap": true
   },
-  "include": ["src/server", "src/db.ts"],
+  "include": ["src/server", "src/shared", "src/db.ts"],
   "exclude": ["node_modules", "dist", "src/pages", "src/components", "src/contexts", "src/utils"]
 }
