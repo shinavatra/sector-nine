@@ -52,10 +52,12 @@ const pageFallback=<div className="grid min-h-[55vh] place-items-center font-mon
 const pagePaths: Record<string, string> = {
   auth: '/', hub: '/hub', lobby: '/matchmaking', tournament: '/tournaments', stats: '/stats',
   store: '/store', profile: '/profile', notifications:'/notifications', achievements:'/achievements', configuration: '/configuration', support: '/support',
-  'steam-callback': '/auth/steam/callback', admin: '/admin',
+  'forgot-password': '/forgot-password', 'new-password': '/new-password', 'steam-callback': '/auth/steam/callback', admin: '/admin',
 };
+const authFlowPages = ['auth', 'forgot-password', 'new-password', 'steam-callback'];
 const pageFromPath = (pathname: string) => {
   if (pathname === '/admin' || pathname.startsWith('/admin/')) return 'admin';
+  if (pathname === '/auth/forgot-password' || pathname === '/reset-password' || pathname === '/password-reset') return 'forgot-password';
   const match = Object.entries(pagePaths).find(([, path]) => path === pathname);
   return match?.[0] || pathname.replace(/^\//, '') || 'auth';
 };
@@ -123,8 +125,7 @@ useEffect(() => {
 }, [isAuthenticated, isLoading, currentPage, navigate]);
 
 useEffect(() => {
-  const publicPages = ['auth', 'forgot-password', 'new-password', 'steam-callback'];
-  if (!isLoading && !isAuthenticated && !publicPages.includes(currentPage)) navigate('auth', true);
+  if (!isLoading && !isAuthenticated && !authFlowPages.includes(currentPage)) navigate('auth', true);
 }, [isAuthenticated, isLoading, currentPage, navigate]);
 
 const handleLogin = async (isNewUser: boolean = false) => {
@@ -158,13 +159,7 @@ const handleLogin = async (isNewUser: boolean = false) => {
         ?'New account registration is currently disabled.'
         :undefined
     // Unauthenticated users can only see auth pages
-    if (
-      !isAuthenticated &&
-      currentPage !== 'auth' &&
-      currentPage !== 'forgot-password' &&
-      currentPage !== 'new-password' &&
-      currentPage !== 'steam-callback'
-    ) {
+    if (!isAuthenticated && !authFlowPages.includes(currentPage)) {
       return <Auth onLogin={handleLogin} onNavigate={setCurrentPage} registrationUnavailableReason={registrationUnavailableReason} />;
     }
 
@@ -286,7 +281,7 @@ const handleLogin = async (isNewUser: boolean = false) => {
     <div className="min-h-screen bg-background relative">
       <AnimatedBackground />
 
-      {isAuthenticated && currentPage !== 'auth' && currentPage !== 'admin' && (
+      {isAuthenticated && !authFlowPages.includes(currentPage) && currentPage !== 'admin' && (
         <Header
           onNavigate={setCurrentPage}
           currentPage={currentPage}
@@ -321,13 +316,13 @@ const handleLogin = async (isNewUser: boolean = false) => {
         <Suspense fallback={pageFallback}>{renderPage()}</Suspense>
       </div>
 
-      {isAuthenticated && currentPage !== 'auth' && currentPage !== 'admin' && (
+      {isAuthenticated && !authFlowPages.includes(currentPage) && currentPage !== 'admin' && (
         <GlobalChat />
       )}
 
       <Toaster />
 
-      {isAuthenticated && currentPage !== 'auth' && currentPage !== 'admin' && (
+      {isAuthenticated && !authFlowPages.includes(currentPage) && currentPage !== 'admin' && (
         <footer className="border-t border-orange-900/20 bg-black/60 mt-16 relative z-10">
           <div className="container mx-auto px-4 py-8">
             <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4">

@@ -19,8 +19,9 @@ export function ForgotPassword({ onNavigate }: ForgotPasswordProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isLoading) return;
     setIsLoading(true);
     setMessage(null);
 
@@ -29,7 +30,7 @@ export function ForgotPassword({ onNavigate }: ForgotPasswordProps) {
       
       setMessage({
         type: 'success',
-        text: 'Password reset instructions have been sent to your email. Please check your inbox.'
+        text: 'Password reset instructions have been sent. Check your email.'
       });
       
       toast.success('Reset email sent!', {
@@ -88,10 +89,10 @@ export function ForgotPassword({ onNavigate }: ForgotPasswordProps) {
               </div>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleSubmit} className="space-y-4" noValidate={false}>
                 {/* Message Alert */}
                 {message && (
-                  <Alert className={`${
+                  <Alert aria-live="polite" className={`${
                     message.type === 'success' 
                       ? 'bg-green-900/20 border-green-900/30' 
                       : 'bg-red-900/20 border-red-900/30'

@@ -11,13 +11,8 @@ import { matchmakingAPI, reportAPI } from "../utils/api";
 import { toast } from "sonner";
 import { GameQueue, type MatchmakingSnapshot } from "../components/GameQueue";
 import { useGame } from "../contexts/GameContext";
+import { SUPPORTED_REGIONS, isSupportedRegionId, type SupportedRegionId } from "../shared/regions";
 import type { ReactNode } from "react";
-
-const MATCHMAKING_REGIONS = [
-  { value: "us-east", label: "US East" },
-  { value: "eu-west", label: "Europe" },
-  { value: "central", label: "Central" },
-] as const;
 
 interface LobbyProps {
   onNavigate: (page: string) => void;
@@ -29,10 +24,10 @@ interface LobbyProps {
 export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: LobbyProps) {
   const {selectedGame}=useGame();
   const [activeTab, setActiveTab] = useState("server-config");
-  const [selectedServer, setSelectedServer] = useState<string>(MATCHMAKING_REGIONS[0].value);
+  const [selectedServer, setSelectedServer] = useState<SupportedRegionId>(SUPPORTED_REGIONS[0].id);
   const [selectedMod, setSelectedMod] = useState<string>("classic-deathmatch");
   const [selectedMaps, setSelectedMaps] = useState<string[]>([]);
-  const [servers,setServers]=useState<Array<{value:string;label:string;available:number;total:number}>>([]);
+  const [servers,setServers]=useState<Array<{value:SupportedRegionId;label:string;available:number;total:number}>>([]);
   const [queue, setQueue] = useState<MatchmakingSnapshot>({ state: "idle" });
   const [queueBusy, setQueueBusy] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
@@ -59,16 +54,17 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
     setOptionsError('');
     matchmakingAPI.getOptions(selectedGame.id).then(data=>{
       if(!active)return;
-      const liveRegions=new Map(
+      const liveRegions=new Map<string,{available:number;total:number}>(
         (Array.isArray(data?.regions)?data.regions:[]).map((region:any)=>[
           String(region.region),
           {available:Number(region.available_servers)||0,total:Number(region.total_servers)||0},
         ]),
       );
-      setServers(MATCHMAKING_REGIONS.map(region=>({
-        ...region,
-        available:liveRegions.get(region.value)?.available||0,
-        total:liveRegions.get(region.value)?.total||0,
+      setServers(SUPPORTED_REGIONS.map(region=>({
+        value:region.id,
+        label:region.label,
+        available:liveRegions.get(region.id)?.available||0,
+        total:liveRegions.get(region.id)?.total||0,
       })));
       const modes=Array.isArray(data?.modes)?data.modes:[];
       setGameModes(modes);
@@ -235,7 +231,6 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
   };
 
   const isReadyToSearch =
-    selectedServer !== "" &&
     selectedMod !== "" &&
     selectedMaps.length === requiredMapCount &&
     queue.state === "idle" &&
@@ -327,7 +322,7 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
                   </div>
 
                   <div className="max-w-md mx-auto">
-                    <Select value={selectedServer} onValueChange={setSelectedServer}>
+                    <Select value={selectedServer} onValueChange={value=>isSupportedRegionId(value)&&setSelectedServer(value)}>
                       <SelectTrigger className="w-full bg-gray-900/50 border-orange-900/30 font-mono">
                         <SelectValue placeholder="SELECT SERVER REGION" />
                       </SelectTrigger>
@@ -484,7 +479,7 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
                 </div>
 
                 <div className="flex flex-col items-center gap-4">
-                  <GameQueue snapshot={queue} busy={queueBusy} disabled={!isReadyToSearch} selectedGame={selectedGame.name} connectedRegion={MATCHMAKING_REGIONS.find(region=>region.value===selectedServer)?.label||selectedServer} selectedMaps={selectedMaps} onStart={handleFindMatch} onCancel={stopSearching} onAccept={acceptMatch} onDecline={declineMatch} onSubmitMaps={submitMatchMaps} onBanMap={banMatchMap} onLaunch={()=>queue.match&&onStartMatch?.(queue.match.game_mode,queue.match.selected_map)}/>
+                  <GameQueue snapshot={queue} busy={queueBusy} disabled={!isReadyToSearch} selectedGame={selectedGame.name} connectedRegion={SUPPORTED_REGIONS.find(region=>region.id===selectedServer)?.label||selectedServer} selectedMaps={selectedMaps} onStart={handleFindMatch} onCancel={stopSearching} onAccept={acceptMatch} onDecline={declineMatch} onSubmitMaps={submitMatchMaps} onBanMap={banMatchMap} onLaunch={()=>queue.match&&onStartMatch?.(queue.match.game_mode,queue.match.selected_map)}/>
                 </div>
 
                 {!isReadyToSearch && queue.state === "idle" && !isBanned && (
