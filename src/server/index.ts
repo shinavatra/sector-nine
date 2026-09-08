@@ -48,6 +48,53 @@ const passwordResetEnabled=process.env.PASSWORD_RESET_ENABLED==='true'
 const publicAppUrl=String(process.env.PUBLIC_APP_URL||process.env.APP_ORIGIN||'').split(',')[0].trim().replace(/\/$/,'')
 const smtpPort=Number(process.env.SMTP_PORT||587)
 const smtpConfigured=Boolean(process.env.SMTP_HOST&&process.env.SMTP_FROM&&publicAppUrl&&Number.isInteger(smtpPort)&&smtpPort>0&&smtpPort<=65535)
+const SMTP_CONNECTION_TIMEOUT_MS=10_000
+const SMTP_GREETING_TIMEOUT_MS=10_000
+const SMTP_SOCKET_TIMEOUT_MS=15_000
+const smtpSecure=process.env.SMTP_SECURE==='true'
+const smtpAuthConfigured=Boolean(process.env.SMTP_USER&&process.env.SMTP_PASS)
+const sanitizeSmtpLogText=(value:any)=>String(value||'Unknown SMTP error')
+  .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,'[redacted-email]')
+  .replace(/token=[^&\s"']+/gi,'token=[redacted]')
+const classifySmtpFailure=(error:any)=>{
+  const code=String(error?.code||'').toUpperCase()
+  const command=String(error?.command||'').toUpperCase()
+  const syscall=String(error?.syscall||'').toLowerCase()
+  const message=String(error?.message||'').toLowerCase()
+  const responseCode=Number(error?.responseCode||0)
+  if(['ENOTFOUND','EAI_AGAIN'].includes(code))return 'dns'
+  if(code==='ETIMEDOUT'||(syscall==='connect'&&command==='CONN'))return 'tcp_connection_timeout'
+  if(command==='GREET')return 'greeting_timeout'
+  if(code==='EAUTH'||[534,535].includes(responseCode))return 'authentication'
+  if(code==='ETLS'||message.includes('tls')||message.includes('ssl')||message.includes('certificate'))return 'tls'
+  if(responseCode>=400)return 'smtp_rejection'
+  return 'other'
+}
+const smtpTimeoutType=(error:any)=>{
+  const code=String(error?.code||'').toUpperCase()
+  const command=String(error?.command||'').toUpperCase()
+  if(code==='ETIMEDOUT'&&command==='CONN')return 'connection'
+  if(code==='ETIMEDOUT'&&command==='GREET')return 'greeting'
+  if(code==='ETIMEDOUT')return 'socket'
+  return null
+}
+const safeSmtpErrorDetails=(error:any)=>({
+  smtpHost:process.env.SMTP_HOST||null,
+  hostname:error?.hostname||process.env.SMTP_HOST||null,
+  smtpPort,
+  smtpSecure,
+  smtpAuthConfigured,
+  connectionTimeoutMs:SMTP_CONNECTION_TIMEOUT_MS,
+  greetingTimeoutMs:SMTP_GREETING_TIMEOUT_MS,
+  socketTimeoutMs:SMTP_SOCKET_TIMEOUT_MS,
+  failureType:classifySmtpFailure(error),
+  timeoutType:smtpTimeoutType(error),
+  errorCode:error?.code||null,
+  errorCommand:error?.command||null,
+  responseCode:error?.responseCode||null,
+  syscall:error?.syscall||null,
+  message:sanitizeSmtpLogText(error?.message),
+})
 if(process.env.NODE_ENV==='production'){
   const databaseUrl=process.env.DATABASE_URL||''
   const steamApiKey=process.env.STEAM_API_KEY||''
@@ -63,9 +110,31 @@ if(process.env.NODE_ENV==='production'){
 const mailTransport=smtpConfigured?nodemailer.createTransport({
   host:process.env.SMTP_HOST,
   port:smtpPort,
-  secure:process.env.SMTP_SECURE==='true',
-  ...(process.env.SMTP_USER&&process.env.SMTP_PASS?{auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS}}:{}),
+  secure:smtpSecure,
+  connectionTimeout:SMTP_CONNECTION_TIMEOUT_MS,
+  greetingTimeout:SMTP_GREETING_TIMEOUT_MS,
+  socketTimeout:SMTP_SOCKET_TIMEOUT_MS,
+  ...(smtpAuthConfigured?{auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS}}:{}),
 }):null
+if(mailTransport&&passwordResetEnabled){
+  logEvent('info','smtp_transport_configured',{
+    smtpHost:process.env.SMTP_HOST,
+    smtpPort,
+    smtpSecure,
+    smtpAuthConfigured,
+    connectionTimeoutMs:SMTP_CONNECTION_TIMEOUT_MS,
+    greetingTimeoutMs:SMTP_GREETING_TIMEOUT_MS,
+    socketTimeoutMs:SMTP_SOCKET_TIMEOUT_MS,
+  })
+  mailTransport.verify()
+    .then(()=>logEvent('info','smtp_transport_verify_succeeded',{
+      smtpHost:process.env.SMTP_HOST,
+      smtpPort,
+      smtpSecure,
+      smtpAuthConfigured,
+    }))
+    .catch(error=>logEvent('error','smtp_transport_verify_failed',safeSmtpErrorDetails(error)))
+}
 const runtimeSettingDefaults:any={maintenance_mode:false,registration_enabled:true,platform_announcement:{enabled:false,title:'',message:''},matchmaking_defaults:{gameMode:'classic-deathmatch',selectedMaps:['dm_crossfire'],queueTimeoutMinutes:15},xp_defaults:{win:50,loss:10},points_defaults:{startingBalance:1000,win:0,loss:0}}
 const parseStoredSetting=(value:any)=>{if(typeof value!=='string')return value;try{return JSON.parse(value)}catch{return value}}
 const storedBoolean=(value:any,fallback:boolean)=>{const parsed=parseStoredSetting(value);return typeof parsed==='boolean'?parsed:fallback}
@@ -759,6 +828,7 @@ app.post('/auth/reset-password', async (req, res) => {
         html:`<p>A password reset was requested for your Sector Nine account.</p><p><a href="${resetUrl}">Reset password</a></p><p>This link expires in one hour. If you did not request this, ignore this message.</p>`,
       })
     }catch(error){
+      logEvent('error','password_reset_smtp_send_failed',safeSmtpErrorDetails(error))
       await pool.query('UPDATE users SET reset_token=NULL,reset_token_hash=NULL,reset_token_expires=NULL WHERE id=$1',[user.id])
       throw error
     }
