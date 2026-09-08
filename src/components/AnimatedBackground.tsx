@@ -119,26 +119,26 @@ export function AnimatedBackground() {
     <div className="fixed inset-0 pointer-events-none overflow-hidden">
       {/* Combat Zone Grid Overlay */}
       <div 
-        className="absolute inset-0 opacity-10"
+        className="absolute inset-0 opacity-[0.03]"
         style={{
           backgroundImage: `
-            linear-gradient(rgba(255, 136, 0, 0.1) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255, 136, 0, 0.1) 1px, transparent 1px),
-            radial-gradient(circle at 50% 50%, rgba(255, 136, 0, 0.05) 0%, transparent 70%)
+            linear-gradient(rgba(255, 136, 0, 0.04) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255, 136, 0, 0.04) 1px, transparent 1px),
+            radial-gradient(circle at 50% 50%, rgba(255, 136, 0, 0.025) 0%, transparent 70%)
           `,
           backgroundSize: '50px 50px, 50px 50px, 200px 200px'
         }}
       />
       
       {/* Crosshair Targeting Systems */}
-      <div className="absolute top-10 left-10 w-12 h-12 opacity-30">
+      <div className="absolute top-10 left-10 w-12 h-12 opacity-10">
         <div className="absolute top-1/2 left-0 w-full h-px bg-orange-400"></div>
         <div className="absolute top-0 left-1/2 w-px h-full bg-orange-400"></div>
         <div className="absolute top-1/2 left-1/2 w-2 h-2 bg-orange-400 rounded-full transform -translate-x-1/2 -translate-y-1/2"></div>
         <div className="absolute top-1/2 left-1/2 w-8 h-8 border border-orange-400 rounded-full transform -translate-x-1/2 -translate-y-1/2"></div>
       </div>
       
-      <div className="absolute bottom-20 right-20 w-12 h-12 opacity-25">
+      <div className="absolute bottom-20 right-20 w-12 h-12 opacity-10">
         <div className="absolute top-1/2 left-0 w-full h-px bg-green-400"></div>
         <div className="absolute top-0 left-1/2 w-px h-full bg-green-400"></div>
         <div className="absolute top-1/2 left-1/2 w-2 h-2 bg-green-400 rounded-full transform -translate-x-1/2 -translate-y-1/2"></div>
@@ -146,7 +146,7 @@ export function AnimatedBackground() {
       </div>
 
       {/* Radar Sweep with Enhanced Design */}
-      <div className="absolute top-4 right-4 w-24 h-24 opacity-40">
+      <div className="absolute top-4 right-4 w-24 h-24 opacity-15">
         <div className="relative w-full h-full border-2 border-orange-400/40 rounded-full">
           <div 
             className="absolute top-1/2 left-1/2 w-px h-10 bg-gradient-to-t from-orange-400 to-transparent origin-bottom animate-spin"
@@ -239,14 +239,14 @@ export function AnimatedBackground() {
 
       {/* Environmental Scanning Lines */}
       <div 
-        className="absolute inset-0 opacity-5"
+        className="absolute inset-0 opacity-[0.02]"
         style={{
           background: `repeating-linear-gradient(
             0deg,
             transparent,
             transparent 3px,
-            rgba(0, 255, 0, 0.1) 3px,
-            rgba(0, 255, 0, 0.1) 4px
+            rgba(0, 255, 0, 0.04) 3px,
+            rgba(0, 255, 0, 0.04) 4px
           )`,
           animation: 'scan 6s linear infinite'
         }}
@@ -254,14 +254,14 @@ export function AnimatedBackground() {
 
       {/* Motion Detector Grid */}
       <div 
-        className="absolute inset-0 opacity-5"
+        className="absolute inset-0 opacity-[0.012]"
         style={{
           background: `repeating-linear-gradient(
             45deg,
             transparent,
             transparent 100px,
-            rgba(255, 136, 0, 0.1) 100px,
-            rgba(255, 136, 0, 0.1) 101px
+            rgba(255, 136, 0, 0.035) 100px,
+            rgba(255, 136, 0, 0.035) 101px
           )`
         }}
       />
