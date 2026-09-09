@@ -38,7 +38,7 @@ export function SteamSetup({ onNavigate }: SteamSetupProps) {
       }
 
       // Initiate Steam OpenID authentication
-      await initiateSteamLogin();
+      await initiateSteamLogin('link');
       
       // Don't reset loading if in iframe (user needs to complete in new window)
       if (!isInIframe()) {

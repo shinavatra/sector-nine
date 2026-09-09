@@ -2881,6 +2881,153 @@ const toSteamStatus = (user: any) => {
   }
 }
 
+type SteamAuthIntent = 'login' | 'link'
+
+type SteamProfileSummary = {
+  personaName: string | null
+  steamAvatar: string | null
+  steamProfileUrl: string | null
+  countryCode: string | null
+  visibility: number | null
+}
+
+const parseSteamAuthIntent = (value: unknown): SteamAuthIntent | null => {
+  if (value === 'login' || value === 'link') return value
+  return null
+}
+
+const fallbackSteamProfileSummary = (steamId: string): SteamProfileSummary => ({
+  personaName: null,
+  steamAvatar: null,
+  steamProfileUrl: `https://steamcommunity.com/profiles/${steamId}`,
+  countryCode: null,
+  visibility: null,
+})
+
+const fetchSteamProfileSummary = async (steamId: string): Promise<SteamProfileSummary> => {
+  const apiKey = process.env.STEAM_API_KEY
+  if (!apiKey) return fallbackSteamProfileSummary(steamId)
+  const data = await fetchSteamJson(
+    `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${encodeURIComponent(apiKey)}&steamids=${encodeURIComponent(steamId)}`
+  )
+  const player = data.response?.players?.[0]
+  if (!player) return fallbackSteamProfileSummary(steamId)
+  return {
+    personaName: typeof player.personaname === 'string' ? player.personaname : null,
+    steamAvatar: player.avatarfull || null,
+    steamProfileUrl: player.profileurl || `https://steamcommunity.com/profiles/${steamId}`,
+    countryCode: typeof player.loccountrycode === 'string' && /^[A-Za-z]{2}$/.test(player.loccountrycode)
+      ? player.loccountrycode.toUpperCase()
+      : null,
+    visibility: Number.isFinite(Number(player.communityvisibilitystate))
+      ? Number(player.communityvisibilitystate)
+      : null,
+  }
+}
+
+const safeFetchSteamProfileSummary = async (steamId: string): Promise<SteamProfileSummary> => {
+  try {
+    return await fetchSteamProfileSummary(steamId)
+  } catch (error: any) {
+    logEvent('warn', 'steam_profile_summary_fetch_failed', {
+      steamId,
+      message: error?.message || 'Steam profile summary unavailable',
+    })
+    return fallbackSteamProfileSummary(steamId)
+  }
+}
+
+const saveSteamProfileSummary = async (userId: string, steamId: string, summary: SteamProfileSummary) => {
+  const result = await pool.query(
+    `UPDATE users SET
+       steam_id=$1,
+       steam_avatar=COALESCE($2,steam_avatar),
+       steam_profile_url=COALESCE($3,steam_profile_url),
+       country_code=COALESCE($4,country_code),
+       steam_verified=true,
+       steam_persona_name=COALESCE($5,steam_persona_name),
+       steam_visibility=COALESCE($6,steam_visibility),
+       updated_at=NOW()
+     WHERE id=$7
+     RETURNING *`,
+    [
+      steamId,
+      summary.steamAvatar,
+      summary.steamProfileUrl,
+      summary.countryCode,
+      summary.personaName,
+      summary.visibility,
+      userId,
+    ],
+  )
+  return result.rows[0]
+}
+
+const steamUsernameBase = (personaName: string | null) => {
+  const normalized = String(personaName || 'Player')
+    .normalize('NFKD')
+    .replace(/[^\w-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  const base = normalized || 'Player'
+  const trimmed = base.slice(0, 32).replace(/[_-]+$/g, '') || 'Player'
+  return trimmed.length >= 3 ? trimmed : `${trimmed}___`.slice(0, 3)
+}
+
+const uniqueSteamUsername = async (personaName: string | null) => {
+  const base = steamUsernameBase(personaName).slice(0, 30)
+  for (let index = 0; index < 200; index += 1) {
+    const suffix = index === 0 ? '' : `_${index + 1}`
+    const candidate = `${base.slice(0, 32 - suffix.length)}${suffix}`
+    const existing = await pool.query('SELECT id FROM users WHERE lower(username)=lower($1) LIMIT 1', [candidate])
+    if (!existing.rows[0]) return candidate
+  }
+  return `Player_${crypto.randomBytes(4).toString('hex')}`
+}
+
+const createSteamUser = async (steamId: string, summary: SteamProfileSummary) => {
+  const settings = await getPlatformSettings()
+  if (settings.maintenance_mode) {
+    const error = new Error('MAINTENANCE_MODE')
+    throw error
+  }
+  if (!settings.registration_enabled) {
+    const error = new Error('REGISTRATION_DISABLED')
+    throw error
+  }
+  const username = await uniqueSteamUsername(summary.personaName)
+  const result = await pool.query(
+    `INSERT INTO users (
+       email,username,password_hash,display_name,points,role,auth_provider,
+       steam_id,steam_verified,steam_avatar,steam_profile_url,country_code,
+       steam_persona_name,steam_visibility
+     )
+     VALUES (NULL,$1,NULL,$2,$3,'user','steam',$4,true,$5,$6,$7,$8,$9)
+     RETURNING *`,
+    [
+      username,
+      summary.personaName || username,
+      settings.points_defaults.startingBalance,
+      steamId,
+      summary.steamAvatar,
+      summary.steamProfileUrl,
+      summary.countryCode,
+      summary.personaName,
+      summary.visibility,
+    ],
+  )
+  return result.rows[0]
+}
+
+const issueAuthSession = async (user: any, method: 'password' | 'steam', req: Request) => {
+  await pool.query(touchUserPresenceSql, [user.id])
+  await pool.query(
+    `INSERT INTO login_history(user_id,method,success,ip,user_agent) VALUES($1,$2,true,$3,$4)`,
+    [user.id, method, req.ip || null, req.get('user-agent') || null],
+  ).catch(() => undefined)
+  return jwt.sign({ sub: user.id, email: user.email || undefined, av: Number(user.auth_version || 0) }, JWT_SECRET, { expiresIn: JWT_EXPIRES })
+}
+
 const getOptionalUserId = async (req: Request): Promise<string | null> => {
   const header = req.headers.authorization
   if (!header) return null
@@ -2901,11 +3048,24 @@ app.get('/steam/auth/start',async(req,res)=>{
   const requestOrigin=String(req.get('origin')||'').replace(/\/$/,'')
   const origin=allowedOrigins.has(requestOrigin)?requestOrigin:(process.env.NODE_ENV==='production'?configuredOrigins[0]:developmentOrigins[0])
   if(!origin)return res.status(503).json({error:'Steam authentication origin is not configured',code:'STEAM_ORIGIN_NOT_CONFIGURED'})
+  const intent = parseSteamAuthIntent(req.query.intent) || 'login'
+  let linkUserId: string | null = null
+  if (intent === 'link') {
+    try {
+      linkUserId = await getOptionalUserId(req)
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired token', code: 'INVALID_SESSION' })
+    }
+    if (!linkUserId) return res.status(401).json({ error: 'Sign in before connecting Steam', code: 'AUTH_REQUIRED' })
+  }
   const nonce=crypto.randomBytes(24).toString('base64url')
   const nonceHash=crypto.createHash('sha256').update(nonce).digest('hex')
   try{
     await pool.query('DELETE FROM steam_auth_nonces WHERE expires_at<=NOW()')
-    await pool.query("INSERT INTO steam_auth_nonces(nonce_hash,origin,expires_at) VALUES($1,$2,NOW()+INTERVAL '10 minutes')",[nonceHash,origin])
+    await pool.query(
+      "INSERT INTO steam_auth_nonces(nonce_hash,origin,expires_at,intent,user_id) VALUES($1,$2,NOW()+INTERVAL '10 minutes',$3,$4)",
+      [nonceHash,origin,intent,linkUserId],
+    )
   }catch(error:any){return sendDatabaseError(res,error)}
   const state=jwt.sign({purpose:'steam_openid',nonce,origin},JWT_SECRET,{expiresIn:'10m'})
   const returnTo=`${origin}/auth/steam/callback?state=${encodeURIComponent(state)}`
@@ -2917,10 +3077,10 @@ app.get('/steam/auth/start',async(req,res)=>{
     'openid.identity':'http://specs.openid.net/auth/2.0/identifier_select',
     'openid.claimed_id':'http://specs.openid.net/auth/2.0/identifier_select',
   })
-  return res.json({state,loginUrl:`https://steamcommunity.com/openid/login?${params.toString()}`,expiresInSeconds:600})
+  return res.json({state,loginUrl:`https://steamcommunity.com/openid/login?${params.toString()}`,expiresInSeconds:600,intent})
 })
 
-const verifySteamOpenIdResponse = async (callbackParams: unknown,state:unknown): Promise<string> => {
+const verifySteamOpenIdResponse = async (callbackParams: unknown,state:unknown): Promise<{ steamId: string; intent: SteamAuthIntent; userId: string | null }> => {
   if (!callbackParams || typeof callbackParams !== 'object' || Array.isArray(callbackParams)) {
     throw new Error('INVALID_STEAM_CALLBACK')
   }
@@ -2961,55 +3121,74 @@ const verifySteamOpenIdResponse = async (callbackParams: unknown,state:unknown):
   if (!isValid) throw new Error('INVALID_STEAM_CALLBACK')
 
   const nonceHash=crypto.createHash('sha256').update(statePayload.nonce).digest('hex')
-  const consumed=await pool.query('DELETE FROM steam_auth_nonces WHERE nonce_hash=$1 AND origin=$2 AND expires_at>NOW() RETURNING nonce_hash',[nonceHash,statePayload.origin])
+  const consumed=await pool.query(
+    'DELETE FROM steam_auth_nonces WHERE nonce_hash=$1 AND origin=$2 AND expires_at>NOW() RETURNING nonce_hash,intent,user_id',
+    [nonceHash,statePayload.origin],
+  )
   if(!consumed.rows[0])throw new Error('INVALID_STEAM_STATE')
 
-  return claimedMatch[1]
+  return {
+    steamId: claimedMatch[1],
+    intent: parseSteamAuthIntent(consumed.rows[0].intent) || 'login',
+    userId: consumed.rows[0].user_id || null,
+  }
 }
 
 // POST /steam/auth
 // Verifies Steam's signed OpenID callback before either signing in an existing
-// linked user or linking Steam to the currently authenticated email account.
+// Steam account or linking Steam to the authenticated Sector Nine account.
 app.post('/steam/auth', async (req, res) => {
   try {
-    const authenticatedUserId = await getOptionalUserId(req)
-    const steamId = await verifySteamOpenIdResponse(req.body?.callbackParams,req.body?.state)
-
+    const verified = await verifySteamOpenIdResponse(req.body?.callbackParams,req.body?.state)
+    const { steamId, intent } = verified
     const linkedResult = await pool.query('SELECT * FROM users WHERE steam_id=$1 AND deleted_at IS NULL LIMIT 1', [steamId])
-    let user = linkedResult.rows[0]
+    const linkedUser = linkedResult.rows[0]
+    const summary = await safeFetchSteamProfileSummary(steamId)
+    let user = linkedUser
+    let createdAccount = false
 
-    if (!user) {
-      if (!authenticatedUserId) {
-        return res.status(404).json({
-          error: 'Register or sign in with email/password, then connect this Steam account.',
-          code: 'STEAM_ACCOUNT_NOT_LINKED',
+    if (intent === 'link') {
+      const authenticatedUserId = await getOptionalUserId(req)
+      if (!verified.userId || !authenticatedUserId || authenticatedUserId !== verified.userId) {
+        return res.status(401).json({ error: 'Invalid or expired token', code: 'INVALID_SESSION' })
+      }
+      if (linkedUser && linkedUser.id !== verified.userId) {
+        return res.status(409).json({
+          error: 'This Steam account is already linked to another Sector Nine account.',
+          code: 'STEAM_ACCOUNT_ALREADY_LINKED',
         })
       }
-
-      const authenticatedResult = await pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [authenticatedUserId])
+      const authenticatedResult = await pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [verified.userId])
       user = authenticatedResult.rows[0]
       if (!user) return res.status(401).json({ error: 'Invalid session', code: 'INVALID_SESSION' })
+      user = await saveSteamProfileSummary(user.id, steamId, summary)
+    } else if (linkedUser) {
+      user = await saveSteamProfileSummary(linkedUser.id, steamId, summary)
+    } else {
+      user = await createSteamUser(steamId, summary)
+      createdAccount = true
     }
 
-    // A fresh linked record already contains the profile, ownership, and ban data.
-    // Otherwise make exactly one parallel Steam Web API refresh and cache it.
-    if (user.steam_id !== steamId || !isFreshSteamCheck(user.last_steam_check)) {
-      const steam = await fetchSteamData(steamId)
-      user = await saveSteamData(user.id, steam)
-    }
-
-    await pool.query(touchUserPresenceSql, [user.id])
-    await pool.query(
-      `INSERT INTO login_history(user_id,method,success,ip,user_agent) VALUES($1,'steam',true,$2,$3)`,
-      [user.id, req.ip || null, req.get('user-agent') || null]
-    ).catch(() => undefined)
+    const token = await issueAuthSession(user, 'steam', req)
     const profile = toProfile(user)
-    const token = jwt.sign({ sub: user.id, email: user.email, av: Number(user.auth_version||0) }, JWT_SECRET, { expiresIn: JWT_EXPIRES })
 
-    return res.json({ user: profile, profile, session: { access_token: token } })
+    return res.status(createdAccount ? 201 : 200).json({
+      user: profile,
+      profile,
+      session: { access_token: token },
+      steam: toSteamStatus(user),
+      authIntent: intent,
+      createdAccount,
+    })
   } catch (err: any) {
     if (err.message === 'INVALID_SESSION') {
       return res.status(401).json({ error: 'Invalid or expired token', code: 'INVALID_SESSION' })
+    }
+    if (err.message === 'MAINTENANCE_MODE') {
+      return res.status(503).json({ error: 'Platform registration is unavailable during maintenance', code: 'MAINTENANCE_MODE' })
+    }
+    if (err.message === 'REGISTRATION_DISABLED') {
+      return res.status(403).json({ error: 'New account registration is currently disabled', code: 'REGISTRATION_DISABLED' })
     }
     if (err.message === 'INVALID_STEAM_CALLBACK') {
       return res.status(401).json({ error: 'Steam OpenID verification failed', code: 'INVALID_STEAM_CALLBACK' })

@@ -399,8 +399,8 @@ export const reportAPI = {
 // =====================================================
 
 export const steamAPI = {
-  startAuthentication: async () =>
-    apiFetch('/steam/auth/start'),
+  startAuthentication: async (intent: 'login' | 'link' = 'login') =>
+    apiFetch(`/steam/auth/start?intent=${encodeURIComponent(intent)}`),
 
   authenticate: async (callbackParams: Record<string, string>, state: string) => {
     const data = await apiFetch('/steam/auth', {

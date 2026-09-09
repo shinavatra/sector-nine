@@ -87,6 +87,7 @@
     "db:migrate": "node scripts/migrate-postgres.mjs",
     "db:migrate:baseline": "node scripts/migrate-postgres.mjs --baseline",
     "db:migrate:status": "node scripts/migrate-postgres.mjs --status",
+    "test:steam-auth": "node scripts/test-steam-auth-flow.mjs",
     "db:test": "node -e \"require('dotenv').config(); const {Pool}=require('pg'); const p=new Pool({connectionString:process.env.DATABASE_URL}); p.query('SELECT version()').then(r=>{console.log('✅ Connected:',r.rows[0].version.slice(0,50));p.end()}).catch(e=>{console.error('❌',e.message);p.end()})\""
   }
 }

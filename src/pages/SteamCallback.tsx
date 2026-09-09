@@ -35,17 +35,19 @@ export function SteamCallback({
     void handleSteamCallback();
   }, []);
 
-  const returnToHub = (delay = 4000) => {
-  window.setTimeout(() => {
-    onLogin(false);
-  }, delay);
-};
+  const returnToHub = (delay = 1200) => {
+    window.setTimeout(() => {
+      onLogin(false);
+    }, delay);
+  };
 
   const handleSteamCallback = async () => {
     try {
       // The server verifies Steam's signed OpenID response before returning a JWT.
       const linkResult = await authenticateSteamCallback(window.location.href);
       const profile = linkResult.profile;
+      const intent = linkResult.authIntent === "link" ? "link" : "login";
+      const createdAccount = linkResult.createdAccount === true;
       const hasHalfLife = profile.ownsHL1 === true;
       const isVacBanned = profile.vacBanned === true;
       const isGameBanned = profile.gameBanned === true;
@@ -65,79 +67,44 @@ export function SteamCallback({
         isVacBanned || isGameBanned ? "banned" : "clean"
       );
 
-      if (!hasHalfLife) {
-        setStatus("error");
-        setMessage(
-          "Steam account linked, but Half-Life 1 was not found in the library."
-        );
-
-        toast.error("Half-Life 1 not found", {
-          description:
-            "You remain logged in, but matchmaking is unavailable until HL1 is verified.",
-          className: "bg-red-900/90 border-red-700 text-red-100",
-        });
-
-        // Korisnik ostaje prijavljen.
-        returnToHub(5000);
-        return;
-      }
-
-      if (isVacBanned || isGameBanned) {
-        setStatus("error");
-        setMessage(
-          "Steam account linked, but it is not eligible for matchmaking."
-        );
-
-        toast.error("Steam account restricted", {
-          description:
-            "VAC or game-banned accounts cannot join matchmaking.",
-          className: "bg-red-900/90 border-red-700 text-red-100",
-        });
-
-        // Korisnik ostaje prijavljen, samo nema matchmaking.
-        returnToHub(5000);
-        return;
-      }
-
       setStatus("success");
-      setMessage("Steam account linked and verified!");
+      setMessage(createdAccount
+        ? "Creating Sector Nine account..."
+        : intent === "link"
+          ? "Steam account connected. Signing you in..."
+          : "Signing you in...");
 
-      toast.success("Steam integration complete", {
-        description: "Half-Life 1 ownership verified successfully.",
+      toast.success(intent === "link" ? "Steam account connected" : "Steam authentication complete", {
+        description: createdAccount
+          ? "Your Sector Nine account was created from your verified Steam identity."
+          : "Your Sector Nine session is ready.",
         className: "bg-green-900/90 border-green-700 text-green-100",
       });
 
-      window.setTimeout(() => {
-        /*
-         * Ovo treba ponovo učitati korisnički profil.
-         * Ako onLogin kod tebe samo mijenja ekran, i dalje je u redu.
-         */
-        onLogin(false);
-      }, 2000);
+      returnToHub();
     } catch (error) {
-      const isUnlinked = error instanceof ApiError && error.code === "STEAM_ACCOUNT_NOT_LINKED";
+      const isLinkConflict = error instanceof ApiError && error.code === "STEAM_ACCOUNT_ALREADY_LINKED";
       setStatus("error");
-      setMessage(isUnlinked
-        ? "This Steam account is not linked. Register or sign in with email/password, then connect Steam."
+      setMessage(isLinkConflict
+        ? "This Steam account is already linked to another Sector Nine account."
         : error instanceof Error ? error.message : "An unexpected Steam error occurred");
 
       toast.error("Steam authentication failed", {
-        description: isUnlinked
-          ? "No account was created. Sign in with email/password and connect Steam from your profile."
+        description: isLinkConflict
+          ? "Sector Nine did not change either account."
           : "Your existing Sector Nine session remains active. Please try again later.",
         className: "bg-red-900/90 border-red-700 text-red-100",
       });
 
       window.setTimeout(() => {
-        if (isUnlinked) onNavigate("auth");
-        else if (getSessionToken()) returnToHub(0);
+        if (getSessionToken()) returnToHub(0);
         else onNavigate("auth");
       }, 4000);
     } finally {
       // Steam signs the return_to URL, so clean it only after server verification.
       // replaceState removes the sensitive OpenID response without reloading or
       // changing the current Sector Nine session.
-      window.history.replaceState({}, document.title, '/');
+      window.history.replaceState({}, document.title, '/auth/steam/callback');
     }
   };
 
@@ -209,7 +176,7 @@ export function SteamCallback({
             <XCircle className="w-16 h-16 mx-auto text-red-400" />
 
             <h3 className="text-xl text-red-400 font-mono">
-              STEAM VERIFICATION INCOMPLETE
+              STEAM AUTHENTICATION FAILED
             </h3>
 
             <Alert className="bg-red-900/20 border-red-900/30">

@@ -1,6 +1,7 @@
 import { steamAPI } from './api';
 
 const STEAM_STATE_KEY = 'sector_nine_steam_openid_state';
+type SteamAuthIntent = 'login' | 'link';
 
 const checkSteamEnvironment=()=>{
   const isLocalhost=['localhost','127.0.0.1','::1'].includes(window.location.hostname)
@@ -8,8 +9,8 @@ const checkSteamEnvironment=()=>{
   return{ready,issues:ready?[]:['Steam authentication requires HTTPS outside local development.']}
 }
 
-const createSteamLogin=async()=>{
-  const request=await steamAPI.startAuthentication();
+const createSteamLogin=async(intent: SteamAuthIntent)=>{
+  const request=await steamAPI.startAuthentication(intent);
   if(typeof request?.state!=='string'||typeof request?.loginUrl!=='string')throw new Error('Steam login could not be initialized');
   sessionStorage.setItem(STEAM_STATE_KEY,request.state);
   return request.loginUrl as string;
@@ -42,9 +43,9 @@ export const isInIframe = (): boolean => {
   return window.self !== window.top;
 };
 
-export const openSteamLoginInNewWindow = async () => {
+export const openSteamLoginInNewWindow = async (intent: SteamAuthIntent = 'login') => {
   try {
-    const steamLoginUrl=await createSteamLogin();
+    const steamLoginUrl=await createSteamLogin(intent);
     const width = 800;
     const height = 600;
     const left = (screen.width - width) / 2;
@@ -61,13 +62,13 @@ export const openSteamLoginInNewWindow = async () => {
   }
 };
 
-export const initiateSteamLogin = async () => {
+export const initiateSteamLogin = async (intent: SteamAuthIntent = 'login') => {
   try {
     const envCheck = checkSteamEnvironment();
     if (!envCheck.ready) {
       console.error('Steam environment check failed:', envCheck.issues);
       if (isInIframe()) {
-        const opened = await openSteamLoginInNewWindow();
+        const opened = await openSteamLoginInNewWindow(intent);
         if (!opened) {
           throw new Error('Unable to open Steam login. Please open in a new tab.');
         }
@@ -77,11 +78,11 @@ export const initiateSteamLogin = async () => {
     }
 
     if (isInIframe()) {
-      await openSteamLoginInNewWindow();
+      await openSteamLoginInNewWindow(intent);
       return;
     }
 
-    window.location.href = await createSteamLogin();
+    window.location.href = await createSteamLogin(intent);
   } catch (error) {
     console.error('Failed to initiate Steam login:', error);
     throw error;

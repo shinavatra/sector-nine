@@ -119,7 +119,7 @@ export function SteamGameVerification({ onNavigate, onComplete }: SteamGameVerif
                     Sign in through Steam OpenID first. Sector Nine never receives your Steam password.
                   </p>
                 </div>
-                <Button onClick={() => void initiateSteamLogin().catch(error => toast.error("Steam connection failed", { description: error instanceof Error ? error.message : "Unable to connect to Steam" }))} className="bg-blue-700 hover:bg-blue-800">
+                <Button onClick={() => void initiateSteamLogin('link').catch(error => toast.error("Steam connection failed", { description: error instanceof Error ? error.message : "Unable to connect to Steam" }))} className="bg-blue-700 hover:bg-blue-800">
                   <ExternalLink className="mr-2 h-4 w-4" />
                   Connect Steam
                 </Button>

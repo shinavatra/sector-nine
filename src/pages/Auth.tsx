@@ -119,7 +119,7 @@ export function Auth({ onLogin, onNavigate, registrationUnavailableReason }: Aut
           return;
         }
         
-        await initiateSteamLogin();
+        await initiateSteamLogin('login');
         
         // Don't set loading to false for new window approach
         // User needs to complete auth in new window

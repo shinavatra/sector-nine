@@ -99,7 +99,7 @@ export function SteamIntegration() {
           description: "Allow popups if the Steam sign-in window is blocked.",
         });
       }
-      await initiateSteamLogin();
+      await initiateSteamLogin('link');
     } catch (connectError) {
       setIsConnecting(false);
       toast.error("Steam connection failed", { description: errorMessage(connectError) });
