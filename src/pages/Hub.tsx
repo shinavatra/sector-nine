@@ -8,6 +8,7 @@ import { statsAPI } from "../utils/api";
 import { NewsFeed } from "../components/NewsFeed";
 import { useState, useEffect } from "react";
 import heroImage from '../assets/sector-nine-hub-hero.jpg';
+import { displayPlayerName } from "../utils/displayName";
 
 interface HubProps {
   onNavigate?: (page: string) => void;
@@ -33,12 +34,13 @@ export function Hub({ onNavigate }: HubProps) {
   const deaths = numberOrZero(user?.stats?.deaths ?? user?.totalDeaths);
   const level = numberOrZero(user?.level);
   const experience = numberOrZero(user?.experience);
+  const playerName = displayPlayerName(user, "Operative");
   const levelStartXp = level * level * 100;
   const nextLevelXp = (level + 1) * (level + 1) * 100;
 
   // Create player data from normalized, real profile values.
   const playerData = {
-    name: user?.username || "Operative",
+    name: playerName,
     avatar: user?.resolvedAvatar || "",
     rank: user?.isPremium ? "VIP RESEARCHER" : `LEVEL ${user?.level || 0} RESEARCHER`,
     level,

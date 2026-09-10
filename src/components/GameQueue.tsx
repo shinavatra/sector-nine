@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { displayPlayerName } from "../utils/displayName";
 
 export type MatchmakingState = "idle" | "searching" | "found" | "accepting" | "map_selecting" | "map_banning" | "accepted" | "server_assigned";
 
@@ -12,7 +13,7 @@ export interface MatchmakingSnapshot {
   viewerAccepted?: boolean;
   acceptedCount?: number;
   totalPlayers?: number;
-  match?: { id: string; game_id?: string; game_mode: string; selected_map: string; maps?: string[]; opponent_username?: string };
+  match?: { id: string; game_id?: string; game_mode: string; selected_map: string; maps?: string[]; opponent_username?: string; opponent_display_name?: string | null };
   mapSelection?: { requiredCount: number; availableMaps: string[]; viewerMaps: string[]; viewerConfirmed: boolean; opponentConfirmed: boolean; opponentSelectedCount: number; unavailableMaps: string[] } | null;
   mapBan?: { pool: string[]; remainingMaps: string[]; bans: Array<{ sequence: number; user_id: string; map_id: string; created_at: string }>; currentTurnUserId: string | null; isViewerTurn: boolean } | null;
   server?: { id: string; name: string; region: string; host: string; port: number } | null;
@@ -53,7 +54,7 @@ export function GameQueue({ snapshot, busy = false, disabled = false, onStart, o
       <CardHeader><CardTitle className="flex flex-wrap items-center justify-center gap-2 text-orange-400"><Gamepad2 className="size-5"/><span>MATCHMAKING STATE</span><Badge variant="outline" className="border-orange-700/40 text-orange-300">{labels[state]}</Badge></CardTitle></CardHeader>
       <CardContent className="space-y-4">
         {state === "searching" && <State icon={<Loader2 className="size-7 animate-spin"/>} title="SEARCHING FOR A COMPATIBLE PLAYER" detail="Your PostgreSQL queue entry is active and synchronized."/>}
-        {state === "found" && <State icon={<Users className="size-7"/>} title="MATCH FOUND" detail={`${snapshot.match?.opponent_username || "Opponent"} is ready. Confirm your participation.`}/>}
+        {state === "found" && <State icon={<Users className="size-7"/>} title="MATCH FOUND" detail={`${displayPlayerName({ displayName: snapshot.match?.opponent_display_name, username: snapshot.match?.opponent_username }, "Opponent")} is ready. Confirm your participation.`}/>}
         {state === "accepting" && <State icon={<UserCheck className="size-7"/>} title="ACCEPTING" detail={`${snapshot.acceptedCount || 0}/${snapshot.totalPlayers || 2} players have accepted.`}/>}
         {state === "map_selecting" && <State icon={<Map className="size-7"/>} title="SELECT 5 MAPS" detail={selection?.viewerConfirmed ? "Your five maps are locked. Waiting for your opponent." : `Choose five maps not already claimed by your opponent (${selection?.opponentSelectedCount || 0}/5).`}/>}
         {state === "map_banning" && <State icon={<Map className="size-7"/>} title="MAP VETO" detail={veto?.isViewerTurn ? "Your turn. Ban one map from the remaining pool." : "Opponent's turn. Waiting for their ban."}/>}

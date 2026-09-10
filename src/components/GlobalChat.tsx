@@ -12,6 +12,7 @@ import { friendsAPI, chatAPI } from "../utils/api";
 import { toast } from "sonner";
 import { useUser } from "../contexts/UserContext";
 import { notifyNotificationsChanged } from "../utils/notificationEvents";
+import { displayPlayerName, playerInitials } from "../utils/displayName";
 
 interface Friend {
   id: string;
@@ -147,7 +148,7 @@ export function GlobalChat() {
       // Map friends data to the Friend interface
       const mappedFriends: Friend[] = friendsData.map((f: any) => ({
         id: f.userId,
-        name: f.username || 'Unknown',
+        name: displayPlayerName(f, 'Unknown'),
         status: f.isOnline ? 'online' : 'offline',
         avatar: f.resolvedAvatar || f.steam_avatar || '',
         lastSeen: f.lastSeen || 'Recently'
@@ -168,7 +169,7 @@ export function GlobalChat() {
     const createdAt = String(message.created_at ?? message.createdAt);
     return {
       id: String(message.id),
-      sender: message.user_id === user?.id || message.userId === user?.id ? 'You' : message.username,
+      sender: message.user_id === user?.id || message.userId === user?.id ? 'You' : displayPlayerName(message, 'Unknown'),
       message: message.message,
       createdAt,
       timestamp: new Date(createdAt).toLocaleTimeString('en-US', {
@@ -531,7 +532,7 @@ export function GlobalChat() {
                           <Avatar className="w-8 h-8">
                             <AvatarImage src={friends.find(f => f.name === room.name)?.avatar} />
                             <AvatarFallback className="bg-orange-900/20 text-orange-400 text-xs">
-                              {room.name.slice(0, 2)}
+                              {playerInitials({ displayName: room.name }, "U")}
                             </AvatarFallback>
                           </Avatar>
                           <div className="flex-1 min-w-0">
@@ -575,7 +576,7 @@ export function GlobalChat() {
                             <Avatar className="w-8 h-8">
                               <AvatarImage src={friend.avatar} />
                               <AvatarFallback className="bg-orange-900/20 text-orange-400 text-xs">
-                                {friend.name.slice(0, 2)}
+                                {playerInitials({ displayName: friend.name }, "U")}
                               </AvatarFallback>
                             </Avatar>
                             <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border border-black ${getStatusColor(friend.status)}`}></div>

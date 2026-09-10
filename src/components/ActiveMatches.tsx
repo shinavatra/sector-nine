@@ -6,15 +6,18 @@ import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Play, Users, Clock, Eye, Loader2 } from "lucide-react";
 import { statsAPI } from "../utils/api";
 import { useGame } from "../contexts/GameContext";
+import { displayPlayerName, playerInitials } from "../utils/displayName";
 
 interface ActiveMatch {
   id: string;
   match_type: string;
   status: string;
   player1_username: string;
+  player1_display_name?: string | null;
   player1_avatar: string;
   player1_level: number;
   player2_username: string;
+  player2_display_name?: string | null;
   player2_avatar: string;
   player2_level: number;
   selected_map: string;
@@ -111,13 +114,13 @@ export function ActiveMatches() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
                       <Avatar className="w-6 h-6 border border-orange-900/30">
-                        <AvatarImage src={match.player1_avatar} alt={match.player1_username} />
+                        <AvatarImage src={match.player1_avatar} alt={displayPlayerName({ displayName: match.player1_display_name, username: match.player1_username })} />
                         <AvatarFallback className="text-xs bg-orange-900/20 text-orange-400">
-                          {match.player1_username?.slice(0, 2).toUpperCase()}
+                          {playerInitials({ displayName: match.player1_display_name, username: match.player1_username })}
                         </AvatarFallback>
                       </Avatar>
                       <Users className="w-4 h-4 text-orange-400" />
-                      <span className="font-medium text-orange-400 font-mono">{match.player1_username}</span>
+                      <span className="font-medium text-orange-400 font-mono">{displayPlayerName({ displayName: match.player1_display_name, username: match.player1_username })}</span>
                       <span className="text-xs text-gray-500 font-mono">LVL {match.player1_level}</span>
                     </div>
                     <span className="text-xl font-bold text-orange-400 font-mono">{match.score_p1}</span>
@@ -129,13 +132,13 @@ export function ActiveMatches() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
                       <Avatar className="w-6 h-6 border border-orange-900/30">
-                        <AvatarImage src={match.player2_avatar} alt={match.player2_username} />
+                        <AvatarImage src={match.player2_avatar} alt={displayPlayerName({ displayName: match.player2_display_name, username: match.player2_username })} />
                         <AvatarFallback className="text-xs bg-orange-900/20 text-orange-400">
-                          {match.player2_username?.slice(0, 2).toUpperCase()}
+                          {playerInitials({ displayName: match.player2_display_name, username: match.player2_username })}
                         </AvatarFallback>
                       </Avatar>
                       <Users className="w-4 h-4 text-orange-400" />
-                      <span className="font-medium text-orange-400 font-mono">{match.player2_username}</span>
+                      <span className="font-medium text-orange-400 font-mono">{displayPlayerName({ displayName: match.player2_display_name, username: match.player2_username })}</span>
                       <span className="text-xs text-gray-500 font-mono">LVL {match.player2_level}</span>
                     </div>
                     <span className="text-xl font-bold text-orange-400 font-mono">{match.score_p2}</span>

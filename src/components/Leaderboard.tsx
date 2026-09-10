@@ -12,6 +12,7 @@ import { FramedAvatar } from "./FramedAvatar";
 import { ProfileComments } from "./ProfileComments";
 import { useGame } from "../contexts/GameContext";
 import { useUser } from "../contexts/UserContext";
+import { displayPlayerName, playerInitials } from "../utils/displayName";
 
 interface LeaderboardEntry {
   id: string;
@@ -206,12 +207,12 @@ export function Leaderboard() {
                       <span title="Movement since the player's latest recorded match">{movement(player.rank_movement)}</span>
                     </div>
                     <div className="relative">
-                      <FramedAvatar frameId={player.equippedFrame}><Avatar className="size-10 border-2 border-orange-900/30"><AvatarImage src={player.resolvedAvatar || player.steam_avatar || ""} alt={player.username} /><AvatarFallback className="bg-orange-900/20 text-orange-400">{player.username.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar></FramedAvatar>
+                      <FramedAvatar frameId={player.equippedFrame}><Avatar className="size-10 border-2 border-orange-900/30"><AvatarImage src={player.resolvedAvatar || player.steam_avatar || ""} alt={displayPlayerName({ display_name: player.display_name, username: player.username })} /><AvatarFallback className="bg-orange-900/20 text-orange-400">{playerInitials({ display_name: player.display_name, username: player.username })}</AvatarFallback></Avatar></FramedAvatar>
                       <span className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-black ${player.is_online ? "bg-green-400" : "bg-gray-600"}`} aria-label={player.is_online ? "Online" : "Offline"} />
                     </div>
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-mono font-medium text-orange-400">{player.display_name || player.username}{isCurrentUser&&<span className="ml-2 text-xs text-green-400">[YOU]</span>}{player.is_premium && <span className="ml-2 text-xs text-yellow-400">[VIP]</span>}</p>
+                    <p className="truncate font-mono font-medium text-orange-400">{displayPlayerName({ display_name: player.display_name, username: player.username })}{isCurrentUser&&<span className="ml-2 text-xs text-green-400">[YOU]</span>}{player.is_premium && <span className="ml-2 text-xs text-yellow-400">[VIP]</span>}</p>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
                       <span className="inline-flex items-center gap-1 rounded border border-orange-900/30 bg-orange-950/20 px-1.5 py-0.5 font-mono text-[10px] text-orange-300"><Gamepad2 className="size-3" />{game.toUpperCase()}</span>
                       <Badge variant="outline" className="border-green-900/30 bg-green-900/10 text-xs text-green-400">LVL {player.level}</Badge>
@@ -240,8 +241,8 @@ export function Leaderboard() {
           {profileLoading ? <div className="flex justify-center py-12"><Loader2 className="size-7 animate-spin text-orange-400" /></div> : profileError ? <div className="rounded border border-red-900/40 bg-red-950/20 p-4 font-mono text-red-300">{profileError}</div> : profile && (
             <div className="space-y-5">
               <div className="flex items-center gap-4">
-                <FramedAvatar frameId={profile.equippedFrame}><Avatar className="size-16 border-2 border-orange-900/30"><AvatarImage src={profile.resolvedAvatar || ""} /><AvatarFallback>{profile.username.slice(0, 2).toUpperCase()}</AvatarFallback></Avatar></FramedAvatar>
-                <div><h3 className="font-mono text-xl text-orange-300">{profile.displayName || profile.username}</h3><p className={profile.isOnline ? "text-green-400" : "text-gray-500"}>{profile.isOnline ? "Online" : "Offline"} - {profile.countryCode || "Country not set"}</p></div>
+                <FramedAvatar frameId={profile.equippedFrame}><Avatar className="size-16 border-2 border-orange-900/30"><AvatarImage src={profile.resolvedAvatar || ""} /><AvatarFallback>{playerInitials(profile)}</AvatarFallback></Avatar></FramedAvatar>
+                <div><h3 className="font-mono text-xl text-orange-300">{displayPlayerName(profile)}</h3><p className={profile.isOnline ? "text-green-400" : "text-gray-500"}>{profile.isOnline ? "Online" : "Offline"} - {profile.countryCode || "Country not set"}</p></div>
               </div>
               {profile.bio && <p className="rounded border border-orange-900/20 bg-black/30 p-3 text-sm text-gray-300">{profile.bio}</p>}
               <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">

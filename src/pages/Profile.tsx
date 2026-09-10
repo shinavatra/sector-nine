@@ -21,6 +21,7 @@ import { useUser } from "../contexts/UserContext";
 import { achievementAPI } from "../utils/api";
 import { MatchHistory } from "../components/MatchHistory";
 import { FramedAvatar } from "../components/FramedAvatar";
+import { displayPlayerName } from "../utils/displayName";
 
 interface ProfileProps {
   onNavigate?: (page: string) => void;
@@ -90,7 +91,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
     );
   }
 
-  const name = user.displayName || user.username;
+  const name = displayPlayerName(user);
   const wins = Number(user.stats?.wins || 0);
   const losses = Number(user.stats?.losses || 0);
   const matches = Number(user.stats?.matchesPlayed || wins + losses);

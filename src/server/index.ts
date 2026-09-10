@@ -359,6 +359,22 @@ const canViewUserProfile = async (viewerId: string | undefined, profileUserId: s
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const normalizedEmail = (value: unknown) => typeof value === 'string' ? value.trim().toLowerCase() : ''
 const validPassword = (value: unknown) => typeof value === 'string' && value.length >= 8 && value.length <= 128
+const sanitizeDisplayName = (value: unknown) => {
+  if (typeof value !== 'string') return ''
+  return value
+    .normalize('NFKC')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+}
+const resolveDisplayName = (user: any) =>
+  sanitizeDisplayName(user?.steam_verified && user?.steam_persona_name ? user.steam_persona_name : '') ||
+  sanitizeDisplayName(user?.display_name) ||
+  sanitizeDisplayName(user?.username) ||
+  'Player'
+const displayNameSql = (alias: string) =>
+  `COALESCE(NULLIF(BTRIM(CASE WHEN ${alias}.steam_verified=true THEN ${alias}.steam_persona_name ELSE NULL END),''),NULLIF(BTRIM(${alias}.display_name),''),${alias}.username)`
 
 // =====================================================
 // PROFILE MAPPER
@@ -386,8 +402,10 @@ const toProfile = (u: any) => {
     id: u.id,
     email: u.email,
     username: u.username,
+    accountUsername: u.username,
     role: u.role || 'user',
-    displayName: u.display_name,
+    displayName: resolveDisplayName(u),
+    localDisplayName: u.display_name || null,
     bio: u.bio || '',
     isPremium: u.is_premium,
     vipSince: u.vip_since,
@@ -575,7 +593,7 @@ app.get('/news', async (req, res) => {
       pool.query(
         `SELECT n.id,n.title,n.summary,n.content,n.category,n.is_pinned,n.comments_enabled,
                 n.published_at,n.created_at,n.updated_at,
-                COALESCE(u.display_name,u.username,'Sector Nine') author_name,
+                COALESCE(${displayNameSql('u')},'Sector Nine') author_name,
                 0::int comment_count
          FROM news_articles n
          LEFT JOIN users u ON u.id=n.author_id
@@ -604,7 +622,7 @@ app.get('/news/:id', async (req, res) => {
     const article = (await pool.query(
       `SELECT n.id,n.title,n.summary,n.content,n.category,n.is_pinned,n.comments_enabled,
               n.published_at,n.created_at,n.updated_at,
-              COALESCE(u.display_name,u.username,'Sector Nine') author_name,
+              COALESCE(${displayNameSql('u')},'Sector Nine') author_name,
               0::int comment_count
        FROM news_articles n
        LEFT JOIN users u ON u.id=n.author_id
@@ -625,7 +643,7 @@ app.get('/news/:id/comments',async(req,res)=>{
     if(!article)return res.status(404).json({error:'News article not found',code:'NEWS_NOT_FOUND'})
     const comments=await pool.query(
       `SELECT c.id,c.article_id,c.user_id,c.parent_id,c.content,c.created_at,c.updated_at,
-              COALESCE(u.display_name,u.username,'Deleted user') author_name,
+              COALESCE(${displayNameSql('u')},'Deleted user') author_name,
               COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) author_avatar
        FROM news_comments c LEFT JOIN users u ON u.id=c.user_id
        WHERE c.article_id=$1 AND c.is_deleted=false ORDER BY c.created_at,c.id`,[req.params.id])
@@ -643,7 +661,7 @@ app.post('/news/:id/comments',requireAuth,async(req:AuthRequest,res)=>{
     if(parentId){const parent=(await pool.query('SELECT id FROM news_comments WHERE id=$1 AND article_id=$2 AND is_deleted=false',[parentId,req.params.id])).rows[0];if(!parent)return res.status(400).json({error:'Reply target was not found',code:'INVALID_PARENT_COMMENT'})}
     const comment=(await pool.query(
       `WITH inserted AS (INSERT INTO news_comments(article_id,user_id,parent_id,content) VALUES($1,$2,$3,$4) RETURNING *)
-       SELECT i.*,COALESCE(u.display_name,u.username) author_name,
+       SELECT i.*,${displayNameSql('u')} author_name,
               COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) author_avatar
        FROM inserted i JOIN users u ON u.id=i.user_id`,[req.params.id,req.userId,parentId,content])).rows[0]
     return res.status(201).json({comment})
@@ -665,7 +683,7 @@ app.get('/users/:id/comments',optionalAuth,async(req:AuthRequest,res)=>{
     if(!access.allowed)return res.status(403).json({error:'This profile is not visible to you',code:'PROFILE_PRIVATE'})
     const comments=await pool.query(
       `SELECT c.id,c.profile_user_id,c.author_user_id,c.content,c.created_at,c.updated_at,
-              COALESCE(u.display_name,u.username,'Deleted user') author_name,
+              COALESCE(${displayNameSql('u')},'Deleted user') author_name,
               COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) author_avatar
        FROM profile_comments c LEFT JOIN users u ON u.id=c.author_user_id
        WHERE c.profile_user_id=$1 AND c.is_deleted=false ORDER BY c.created_at DESC,c.id DESC LIMIT 100`,[req.params.id])
@@ -682,7 +700,7 @@ app.post('/users/:id/comments',requireAuth,async(req:AuthRequest,res)=>{
     if(!access.allowed)return res.status(403).json({error:'This profile is not visible to you',code:'PROFILE_PRIVATE'})
     const comment=(await pool.query(
       `WITH inserted AS (INSERT INTO profile_comments(profile_user_id,author_user_id,content) VALUES($1,$2,$3) RETURNING *)
-       SELECT i.*,COALESCE(u.display_name,u.username) author_name,
+       SELECT i.*,${displayNameSql('u')} author_name,
               COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) author_avatar
        FROM inserted i JOIN users u ON u.id=i.author_user_id`,[req.params.id,req.userId,content])).rows[0]
     return res.status(201).json({comment})
@@ -717,19 +735,19 @@ app.get('/community/activity',async(_req,res)=>{
       `SELECT * FROM (
          SELECT 'match'::text type,m.id::text id,m.completed_at occurred_at,m.game_id,
                 CASE WHEN COALESCE(w.profile_visibility,'public')='public'
-                     THEN COALESCE(w.display_name,w.username,'A player') ELSE 'A player' END actor_name,
+                     THEN COALESCE(${displayNameSql('w')},'A player') ELSE 'A player' END actor_name,
                 'won a ranked match on '||COALESCE(m.selected_map,'an unselected map') detail
          FROM matches m LEFT JOIN users w ON w.id=m.winner_id WHERE m.status='completed' AND m.completed_at IS NOT NULL
          UNION ALL
          SELECT 'tournament_registration',tp.id::text,tp.registered_at,t.game_id,
                 CASE WHEN COALESCE(u.profile_visibility,'public')='public'
-                     THEN COALESCE(u.display_name,u.username,'A player') ELSE 'A player' END,
+                     THEN COALESCE(${displayNameSql('u')},'A player') ELSE 'A player' END,
                 'registered for '||t.name
          FROM tournament_participants tp JOIN tournaments t ON t.id=tp.tournament_id LEFT JOIN users u ON u.id=tp.user_id
          UNION ALL
          SELECT 'profile_comment',c.id::text,c.created_at,NULL,
                 CASE WHEN COALESCE(u.profile_visibility,'public')='public'
-                     THEN COALESCE(u.display_name,u.username,'A player') ELSE 'A player' END,
+                     THEN COALESCE(${displayNameSql('u')},'A player') ELSE 'A player' END,
                 'left a profile comment'
          FROM profile_comments c
          JOIN users profile_owner ON profile_owner.id=c.profile_user_id
@@ -922,10 +940,18 @@ app.post('/user/display-name', requireAuth, async (req: AuthRequest, res) => {
     const result = await pool.query(
       `UPDATE users
        SET display_name=$1,
-           points=CASE WHEN display_name IS DISTINCT FROM $1 THEN points-1500 ELSE points END,
+           points=CASE
+             WHEN steam_verified=true AND NULLIF(BTRIM(steam_persona_name),'') IS NOT NULL THEN points
+             WHEN display_name IS DISTINCT FROM $1 THEN points-1500
+             ELSE points
+           END,
            updated_at=NOW()
        WHERE id=$2
-         AND (display_name IS NOT DISTINCT FROM $1 OR points >= 1500)
+         AND (
+           display_name IS NOT DISTINCT FROM $1
+           OR steam_verified=true AND NULLIF(BTRIM(steam_persona_name),'') IS NOT NULL
+           OR points >= 1500
+         )
        RETURNING *`,
       [displayName, req.userId]
     )
@@ -1351,7 +1377,7 @@ app.get('/users/:userId/profile',optionalAuth,async(req:AuthRequest,res)=>{
     if(!access.exists)return res.status(404).json({error:'Profile not found'})
     if(!access.allowed)return res.status(403).json({error:'This profile is not visible to you',code:'PROFILE_PRIVATE'})
     const result=await pool.query(
-      `SELECT id,username,display_name,bio,level,experience,wins,losses,total_kills,total_deaths,equipped_frame,
+      `SELECT id,username,${displayNameSql('users')} AS display_name,bio,level,experience,wins,losses,total_kills,total_deaths,equipped_frame,
               is_premium,steam_verified,country_code,created_at,last_seen,(${onlineUserPredicate('users')}) AS is_online,
               COALESCE(CASE WHEN avatar_source='custom' THEN NULLIF(custom_avatar_url,'') END,steam_avatar) AS resolved_avatar
        FROM users WHERE id=$1 AND deleted_at IS NULL`,[req.params.userId])
@@ -1390,7 +1416,7 @@ app.get('/leaderboard', async (req, res) => {
       if(selectedSeason){
         const result=await pool.query(
           `WITH ranked AS (
-             SELECT u.id,u.username,u.display_name,u.steam_avatar,u.is_premium,u.level,u.experience,
+             SELECT u.id,u.username,${displayNameSql('u')} AS display_name,u.steam_avatar,u.is_premium,u.level,u.experience,
                     le.wins,le.losses,le.win_streak,le.points AS score,
                     CASE WHEN le.wins+le.losses>0 THEN ROUND(le.wins::numeric/(le.wins+le.losses)*100,2) ELSE 0 END AS win_rate,
                     u.country_code,(${onlineUserPredicate('u')}) AS is_online,
@@ -1412,7 +1438,7 @@ app.get('/leaderboard', async (req, res) => {
     }else{
       const result=await pool.query(
         `WITH ranked AS (
-           SELECT u.id,u.username,u.display_name,u.steam_avatar,u.is_premium,
+           SELECT u.id,u.username,${displayNameSql('u')} AS display_name,u.steam_avatar,u.is_premium,
                   gs.level,gs.experience,gs.wins,gs.losses,gs.win_streak,gs.best_win_streak,
                   CASE WHEN gs.matches_played>0 THEN ROUND(gs.wins::numeric/gs.matches_played*100,2) ELSE 0 END AS win_rate,
                   gs.rating AS score,u.country_code,(${onlineUserPredicate('u')}) AS is_online,
@@ -1456,10 +1482,10 @@ app.get('/matches/history', requireAuth, async (req: AuthRequest, res) => {
     if(!isSupportedGameId(gameId))return res.status(400).json({error:'Invalid game ID',code:'INVALID_GAME_ID'})
     const result = await pool.query(
       `SELECT m.*,
-        p1.username AS player1_username,p1.display_name AS player1_display_name,
+        p1.username AS player1_username,${displayNameSql('p1')} AS player1_display_name,
         COALESCE(CASE WHEN p1.avatar_source='custom' THEN NULLIF(p1.custom_avatar_url,'') END,p1.steam_avatar) AS player1_avatar,
         p1.level AS player1_level,p1.equipped_frame AS player1_frame,
-        p2.username AS player2_username,p2.display_name AS player2_display_name,
+        p2.username AS player2_username,${displayNameSql('p2')} AS player2_display_name,
         COALESCE(CASE WHEN p2.avatar_source='custom' THEN NULLIF(p2.custom_avatar_url,'') END,p2.steam_avatar) AS player2_avatar,
         p2.level AS player2_level,p2.equipped_frame AS player2_frame,
         CASE WHEN m.winner_id=m.player1_id THEN m.player1_id WHEN m.winner_id=m.player2_id THEN m.player2_id END AS mvp_id,
@@ -1485,7 +1511,21 @@ app.get('/matches/active', async (req, res) => {
   try {
     const gameId=String(req.query.game_id||'hl1')
     if(!isSupportedGameId(gameId))return res.status(400).json({error:'Invalid game ID',code:'INVALID_GAME_ID'})
-    const result = await pool.query('SELECT * FROM active_matches WHERE game_id=$1 LIMIT 20',[gameId])
+    const result = await pool.query(
+      `SELECT m.id,m.match_type,m.status,m.selected_map,m.score_p1,m.score_p2,m.created_at,m.started_at,m.game_id,
+              p1.username AS player1_username,${displayNameSql('p1')} AS player1_display_name,
+              COALESCE(CASE WHEN p1.avatar_source='custom' THEN NULLIF(p1.custom_avatar_url,'') END,p1.steam_avatar) AS player1_avatar,
+              p1.level AS player1_level,
+              p2.username AS player2_username,${displayNameSql('p2')} AS player2_display_name,
+              COALESCE(CASE WHEN p2.avatar_source='custom' THEN NULLIF(p2.custom_avatar_url,'') END,p2.steam_avatar) AS player2_avatar,
+              p2.level AS player2_level
+       FROM matches m
+       JOIN users p1 ON p1.id=m.player1_id
+       JOIN users p2 ON p2.id=m.player2_id
+       WHERE m.status IN ('pending','in_progress') AND m.game_id=$1
+       LIMIT 20`,
+      [gameId],
+    )
     return res.json({ matches: result.rows })
   } catch (err: any) {
     return sendInternalError(res, err)
@@ -1502,7 +1542,7 @@ const getMatchmakingState=async(db:any,userId:string)=>{
   if(queue)return{state:'searching',queue}
   const match=(await db.query(
     `SELECT m.*,mine.status AS viewer_acceptance,counts.accepted_count,counts.pending_count,
-            opponent.id AS opponent_id,opponent.username AS opponent_username,
+            opponent.id AS opponent_id,opponent.username AS opponent_username,${displayNameSql('opponent')} AS opponent_display_name,
             gs.id AS assigned_server_id,gs.name AS server_name,gs.region AS server_region,
             gs.ip_address AS server_host,gs.port AS server_port
      FROM match_acceptances mine
@@ -1796,7 +1836,7 @@ app.get('/match/:id/timeline',requireAuth,async(req:AuthRequest,res)=>{
     if(!match)return res.status(404).json({error:'Match not found'})
     if(req.userId!==match.player1_id&&req.userId!==match.player2_id)return res.status(403).json({error:'Only match participants may view the timeline'})
     const events=await pool.query(
-      `SELECT e.*,COALESCE(a.display_name,a.username) actor_name,COALESCE(t.display_name,t.username) target_name
+      `SELECT e.*,COALESCE(${displayNameSql('a')},'A player') actor_name,COALESCE(${displayNameSql('t')},'A player') target_name
        FROM match_events e LEFT JOIN users a ON a.id=e.actor_user_id LEFT JOIN users t ON t.id=e.target_user_id
        WHERE e.match_id=$1 ORDER BY e.sequence`,[req.params.id])
     return res.json({events:events.rows,replay:match.demo_url?{url:match.demo_url,uploadedAt:match.demo_uploaded_at}:null})
@@ -1968,7 +2008,7 @@ app.get('/tournaments/:id', async (req, res) => {
     const t = await pool.query('SELECT * FROM tournaments WHERE id=$1', [req.params.id])
     if (!t.rows[0]) return res.status(404).json({ error: 'Tournament not found' })
     const p = await pool.query(
-      `SELECT tp.*, u.username, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar, u.level, u.is_premium
+      `SELECT tp.*, u.username, ${displayNameSql('u')} AS display_name, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar, u.level, u.is_premium
        FROM tournament_participants tp JOIN users u ON tp.user_id=u.id
        WHERE tp.tournament_id=$1 ORDER BY tp.placement NULLS LAST, tp.wins DESC`,
       [req.params.id]
@@ -1982,7 +2022,7 @@ app.get('/tournaments/:id', async (req, res) => {
 app.get('/tournament/:id/participants', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT tp.*, u.username, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar, u.level, u.is_premium
+      `SELECT tp.*, u.username, ${displayNameSql('u')} AS display_name, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar, u.level, u.is_premium
        FROM tournament_participants tp JOIN users u ON tp.user_id=u.id
        WHERE tp.tournament_id=$1 ORDER BY tp.wins DESC`,
       [req.params.id]
@@ -2077,7 +2117,7 @@ app.get('/ladder/:season', async (req, res) => {
     }
     const s = seasonResult.rows[0]
     const entries = await pool.query(
-      `SELECT le.*, u.username, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar,COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS "resolvedAvatar",u.equipped_frame AS "equippedFrame", u.level, u.is_premium,
+      `SELECT le.*, u.username, ${displayNameSql('u')} AS display_name, COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar,COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS "resolvedAvatar",u.equipped_frame AS "equippedFrame", u.level, u.is_premium,
               ROW_NUMBER() OVER (ORDER BY le.points DESC) as rank
        FROM ladder_entries le
        JOIN users u ON le.user_id = u.id
@@ -2120,7 +2160,7 @@ app.get('/chat/unread', requireAuth, async (req: AuthRequest, res) => {
     const result = await pool.query(
       `SELECT n.id AS notification_id, cm.id AS message_id,
               cm.user_id AS sender_id, cm.username AS sender_username,
-              COALESCE(NULLIF(sender.display_name, ''), sender.username, cm.username) AS sender_name,
+              COALESCE(${displayNameSql('sender')}, cm.username) AS sender_name,
               cm.created_at
        FROM notifications n
        JOIN chat_messages cm ON cm.id=n.related_chat_message_id
@@ -2144,9 +2184,11 @@ app.get('/chat/:recipientId', requireAuth, async (req: AuthRequest, res) => {
     if (!(await directChatAccess(req.userId!, recipientId))) return res.status(403).json({ error: 'An accepted friendship is required for this conversation' })
     const result = await pool.query(
       `SELECT * FROM (
-         SELECT * FROM chat_messages
-         WHERE (user_id=$1 AND recipient_id=$2) OR (user_id=$2 AND recipient_id=$1)
-         ORDER BY created_at DESC, id DESC
+         SELECT cm.*, COALESCE(${displayNameSql('sender')}, cm.username) AS username
+         FROM chat_messages cm
+         LEFT JOIN users sender ON sender.id=cm.user_id
+         WHERE (cm.user_id=$1 AND cm.recipient_id=$2) OR (cm.user_id=$2 AND cm.recipient_id=$1)
+         ORDER BY cm.created_at DESC, cm.id DESC
          LIMIT 50
        ) recent_messages
        ORDER BY created_at ASC, id ASC`,
@@ -2175,10 +2217,10 @@ app.post('/chat/:recipientId', requireAuth, async (req: AuthRequest, res) => {
       [req.userId],
     )
     if(activeMute.rows[0])return res.status(403).json({error:'Messaging is unavailable while your account is muted',code:'USER_MUTED'})
-    const uResult = await pool.query('SELECT username, display_name, is_premium FROM users WHERE id=$1', [req.userId])
+    const uResult = await pool.query(`SELECT username, ${displayNameSql('users')} AS display_name, is_premium FROM users WHERE id=$1`, [req.userId])
     const u = uResult.rows[0]
     if (!u) return res.status(404).json({ error: 'Sender not found' })
-    const senderName = u.display_name?.trim() || u.username
+    const senderName = sanitizeDisplayName(u.display_name) || u.username
     const room = `dm:${[req.userId!, recipientId].sort().join(':')}`
     const db = await pool.connect()
     try {
@@ -2186,7 +2228,7 @@ app.post('/chat/:recipientId', requireAuth, async (req: AuthRequest, res) => {
       const result = await db.query(
         `INSERT INTO chat_messages (user_id, recipient_id, username, message, room, is_premium)
          VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-        [req.userId, recipientId, u.username, message.trim(), room, u.is_premium || false]
+        [req.userId, recipientId, senderName, message.trim(), room, u.is_premium || false]
       )
       await db.query(
         `INSERT INTO notifications
@@ -2256,7 +2298,7 @@ app.delete('/chat/:room/:messageId', requireAuth, async (req: AuthRequest, res) 
 app.get('/friends', requireAuth, async (req: AuthRequest, res) => {
   try {
     const result = await pool.query(
-      `SELECT f.id, f.status, f.created_at AS "addedAt", u.id AS "userId", u.username,
+      `SELECT f.id, f.status, f.created_at AS "addedAt", u.id AS "userId", u.username, ${displayNameSql('u')} AS "displayName",
               COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar,
               u.level, u.is_premium AS "isPremium", u.last_seen AS "lastSeen",
               (${onlineUserPredicate('u')}) AS "isOnline"
@@ -2267,7 +2309,7 @@ app.get('/friends', requireAuth, async (req: AuthRequest, res) => {
     )
     const requests = await pool.query(
       `SELECT f.id,f.status,f.created_at AS "sentAt",f.user_id AS "senderId",f.friend_id AS "recipientId",
-              u.username,COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS avatar
+              u.username,${displayNameSql('u')} AS "displayName",COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS avatar
        FROM friendships f JOIN users u ON u.id=CASE WHEN f.user_id=$1 THEN f.friend_id ELSE f.user_id END
        WHERE (f.user_id=$1 OR f.friend_id=$1) AND f.status='pending' AND u.deleted_at IS NULL
        ORDER BY f.created_at DESC`,[req.userId])
@@ -2284,7 +2326,7 @@ app.get('/friends', requireAuth, async (req: AuthRequest, res) => {
 app.get('/friends/online', requireAuth, async (req: AuthRequest, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id,u.username,u.display_name AS "displayName",
+      `SELECT u.id,u.username,${displayNameSql('u')} AS "displayName",
               COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS "resolvedAvatar",
               u.equipped_frame AS "equippedFrame",u.last_seen AS "lastSeen",TRUE AS "isOnline"
        FROM friendships f
@@ -2325,8 +2367,8 @@ app.get('/friends/search', requireAuth, async (req: AuthRequest, res) => {
     const q = req.query.q as string
     if (!q || q.length < 2) return res.json({ users: [] })
     const result = await pool.query(
-      `SELECT id, username, COALESCE(CASE WHEN avatar_source='custom' THEN NULLIF(custom_avatar_url,'') END,steam_avatar) AS steam_avatar, level, is_premium
-       FROM users WHERE username ILIKE $1 AND id != $2 AND deleted_at IS NULL LIMIT 20`,
+      `SELECT id, username, ${displayNameSql('users')} AS "displayName", COALESCE(CASE WHEN avatar_source='custom' THEN NULLIF(custom_avatar_url,'') END,steam_avatar) AS steam_avatar, level, is_premium
+       FROM users WHERE (username ILIKE $1 OR ${displayNameSql('users')} ILIKE $1) AND id != $2 AND deleted_at IS NULL LIMIT 20`,
       [`%${q}%`, req.userId]
     )
     return res.json({ users: result.rows })
@@ -2348,13 +2390,13 @@ app.post('/friends/request', requireAuth, async (req: AuthRequest, res) => {
     const request=existing.rows[0]
       ?await db.query(`UPDATE friendships SET user_id=$1,friend_id=$2,status='pending',updated_at=NOW() WHERE id=$3 RETURNING *`,[req.userId,targetUserId,existing.rows[0].id])
       :await db.query(`INSERT INTO friendships(user_id,friend_id,status) VALUES($1,$2,'pending') RETURNING *`,[req.userId,targetUserId])
-    const uResult = await db.query('SELECT username FROM users WHERE id=$1', [req.userId])
+    const uResult = await db.query(`SELECT username,${displayNameSql('users')} AS display_name FROM users WHERE id=$1`, [req.userId])
     await db.query(
       `INSERT INTO notifications (user_id,type,title,message,related_user_id,related_friendship_id,read)
        VALUES ($1,'friend_request','Friend Request',$2,$3,$4,false)
        ON CONFLICT (related_friendship_id) WHERE related_friendship_id IS NOT NULL
        DO UPDATE SET user_id=EXCLUDED.user_id,message=EXCLUDED.message,related_user_id=EXCLUDED.related_user_id,read=false,created_at=NOW()`,
-      [targetUserId, `${uResult.rows[0]?.username} sent you a friend request`, req.userId,request.rows[0].id]
+      [targetUserId, `${resolveDisplayName(uResult.rows[0])} sent you a friend request`, req.userId,request.rows[0].id]
     )
     await db.query('COMMIT')
     return res.status(201).json({ request:request.rows[0] })
@@ -2412,13 +2454,13 @@ app.get('/notifications', requireAuth, async (req: AuthRequest, res) => {
          n.id, n.user_id, n.type, n.title,
          CASE
            WHEN n.type='message' AND cm.id IS NOT NULL
-             THEN COALESCE(NULLIF(sender.display_name, ''), sender.username, cm.username) || ' sent you a message'
+             THEN COALESCE(${displayNameSql('sender')}, cm.username) || ' sent you a message'
            ELSE n.message
          END AS message,
          n.read, n.related_user_id, n.related_match_id,
          n.related_chat_message_id, n.related_friendship_id,
          n.related_conversation_id, n.created_at,
-         COALESCE(NULLIF(sender.display_name, ''), sender.username, cm.username) AS sender_name
+         COALESCE(${displayNameSql('sender')}, cm.username) AS sender_name
        FROM notifications n
        LEFT JOIN chat_messages cm ON cm.id=n.related_chat_message_id
        LEFT JOIN users sender ON sender.id=cm.user_id
@@ -2535,7 +2577,7 @@ app.post('/support/tickets',requireAuth,async(req:AuthRequest,res)=>{
 app.get('/blocks',requireAuth,async(req:AuthRequest,res)=>{
   try{
     const result=await pool.query(
-      `SELECT b.blocked_user_id AS player_id,COALESCE(u.display_name,u.username) AS player_name,b.created_at AS blocked_at
+      `SELECT b.blocked_user_id AS player_id,${displayNameSql('u')} AS player_name,b.created_at AS blocked_at
        FROM user_blocks b JOIN users u ON u.id=b.blocked_user_id
        WHERE b.blocker_id=$1 AND u.deleted_at IS NULL ORDER BY b.created_at DESC`,
       [req.userId],
@@ -2556,7 +2598,7 @@ app.post('/blocks',requireAuth,async(req:AuthRequest,res)=>{
       [req.userId,blockedUserId],
     )).rows[0]
     if(!blocked)return res.status(404).json({error:'User not found',code:'USER_NOT_FOUND'})
-    const user=(await pool.query('SELECT COALESCE(display_name,username) AS player_name FROM users WHERE id=$1',[blockedUserId])).rows[0]
+    const user=(await pool.query(`SELECT ${displayNameSql('users')} AS player_name FROM users WHERE id=$1`,[blockedUserId])).rows[0]
     return res.status(201).json({blockedPlayer:{...blocked,...user}})
   }catch(err:any){return sendDatabaseError(res,err)}
 })

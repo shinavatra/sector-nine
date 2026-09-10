@@ -4,6 +4,7 @@ import { Input } from '../ui/input';
 import type { UserProfile } from '../../contexts/UserContext';
 import type { AdminSection } from './adminTypes';
 import { sectionMeta } from './adminTypes';
+import { displayPlayerName } from '../../utils/displayName';
 
 export function AdminTopbar({
   section,
@@ -80,7 +81,7 @@ export function AdminTopbar({
         </Button>
         <div className="hidden shrink-0 border-l border-orange-900/25 pl-3 sm:block">
           <p className="max-w-36 truncate text-xs font-medium text-slate-200">
-            {user.displayName || user.username}
+            {displayPlayerName(user)}
           </p>
           <p className="text-[10px] uppercase tracking-wider text-orange-500">Administrator</p>
         </div>

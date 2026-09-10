@@ -6,6 +6,7 @@ import { Bell, Settings, LogOut, User, Shield } from "lucide-react";
 import { CrowbarLogo } from "./CrowbarLogo";
 import { FramedAvatar } from "./FramedAvatar";
 import { useUser } from "../contexts/UserContext";
+import { displayPlayerName, playerInitials } from "../utils/displayName";
 
 interface HeaderProps {
   onNavigate?: (page: string) => void;
@@ -17,6 +18,7 @@ interface HeaderProps {
 
 export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = false, notificationUnreadCount = 0 }: HeaderProps) {
   const { user } = useUser();
+  const playerName = displayPlayerName(user, "Player");
   
   const routeFor = (page: string) => ({ hub: '/hub', lobby: '/matchmaking', tournament: '/tournaments', stats: '/stats', store: '/store', notifications: '/notifications', profile: '/profile', achievements:'/achievements', configuration: '/configuration' }[page] || `/${page}`);
   const follow = (event: React.MouseEvent<HTMLAnchorElement>, page: string) => {
@@ -77,8 +79,8 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
                   <div className="relative">
                     <FramedAvatar frameId={user?.equippedFrame}>
                       <Avatar className={`h-10 w-10 border-2 ${isPremium?'border-yellow-400/50':'border-orange-900/30'}`}>
-                        <AvatarImage src={user?.resolvedAvatar} alt={user?.username || "Player"} />
-                        <AvatarFallback className="bg-orange-900/20 text-orange-400">{user?.username?.[0]?.toUpperCase() || 'P'}</AvatarFallback>
+                        <AvatarImage src={user?.resolvedAvatar} alt={playerName} />
+                        <AvatarFallback className="bg-orange-900/20 text-orange-400">{playerInitials(user)}</AvatarFallback>
                       </Avatar>
                     </FramedAvatar>
                     {isPremium && (
@@ -93,7 +95,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
                 <div className="flex items-center justify-start gap-2 p-2">
                   <div className="flex flex-col space-y-1 leading-none">
                     <div className="flex items-center gap-2">
-                      <p className="font-medium text-orange-400">{user?.username || 'Freeman_G'}</p>
+                      <p className="font-medium text-orange-400">{playerName}</p>
                       {isPremium && (
                         <Badge className="bg-gradient-to-r from-yellow-400 to-orange-400 text-black text-xs font-bold px-1.5 py-0.5">
                           VIP

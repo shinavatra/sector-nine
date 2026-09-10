@@ -18,6 +18,7 @@ import { ReportingSystem } from "../components/ReportingSystem";
 import { Friends } from "../components/Friends";
 import { FramedAvatar } from "../components/FramedAvatar";
 import { authAPI, storeAPI, userAPI } from "../utils/api";
+import { displayPlayerName } from "../utils/displayName";
 
 type ProfileFrame = {
   id: string;
@@ -51,7 +52,8 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   const [framesLoading, setFramesLoading] = useState(true);
   const [equippingFrame, setEquippingFrame] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState("");
-  const canChangeDisplayName = (user?.points ?? 0) >= 1500;
+  const steamDisplayNameAuthoritative = Boolean(user?.steamVerified && user?.steamPersonaName);
+  const canChangeDisplayName = steamDisplayNameAuthoritative || (user?.points ?? 0) >= 1500;
   
   // Notification preferences
   const [notifyMatchFound, setNotifyMatchFound] = useState(true);
@@ -62,7 +64,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
 
   useEffect(() => {
     if (user) {
-      setDisplayName(user.displayName || user.username || "");
+      setDisplayName(steamDisplayNameAuthoritative ? displayPlayerName(user) : user.localDisplayName || user.displayName || user.username || "");
       setBio(user.bio || "");
       setProfileVisibility(user.profileVisibility || "friends");
       setShowOnlineStatus(user.showOnlineStatus !== false);
@@ -77,7 +79,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
       setNotifyMessages(user.notificationPreferences.messages);
       setNotifySocial(user.notificationPreferences.social);
     }
-  }, [user]);
+  }, [steamDisplayNameAuthoritative, user]);
 
   useEffect(() => {
     setDraftThemeMode(themeMode);
@@ -141,8 +143,8 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
     }
     setIsSaving(true);
     try {
-      const savedDisplayName = user?.displayName || user?.username || '';
-      if (displayName.trim() !== savedDisplayName) {
+      const savedDisplayName = steamDisplayNameAuthoritative ? displayPlayerName(user) : user?.localDisplayName || user?.displayName || user?.username || '';
+      if (!steamDisplayNameAuthoritative && displayName.trim() !== savedDisplayName) {
         if (!window.confirm('Change display name — 1500 points?')) return;
         await changeDisplayName(displayName.trim());
       }
@@ -191,8 +193,9 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   const handleChangeDisplayName = async () => {
     if (!canChangeDisplayName) return;
     const nextName = displayName.trim();
-    const currentName = user?.displayName || user?.username || '';
+    const currentName = steamDisplayNameAuthoritative ? displayPlayerName(user) : user?.localDisplayName || user?.displayName || user?.username || '';
     if (nextName === currentName) return void toast.info('Display name is unchanged');
+    if (steamDisplayNameAuthoritative) return void toast.info('Display name is synced from Steam', { description: 'Local display-name edits apply only when Steam is not verified.' });
     if (!nextName || nextName.length > 80) return void toast.error('Display name must be between 1 and 80 characters');
     if (!window.confirm('Change display name — 1500 points?')) return;
     setIsSaving(true);
@@ -294,17 +297,27 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
                     aria-label="Display name"
                     value={displayName}
                     onChange={(event) => setDisplayName(event.target.value)}
-                    disabled={!canChangeDisplayName || isSaving}
+                    disabled={steamDisplayNameAuthoritative || !canChangeDisplayName || isSaving}
                     maxLength={80}
                     className="bg-black/20 border-orange-900/20 text-gray-300 font-mono"
                   />
                   <p className="text-xs text-gray-500 font-mono">
-                    Change display name — 1500 points. Username remains unchanged.
+                    {steamDisplayNameAuthoritative ? 'Synced from Steam. Local display names apply only when Steam is not verified.' : 'Change display name — 1500 points. Username remains unchanged.'}
                   </p>
-                  <Button type="button" variant="outline" onClick={handleChangeDisplayName} disabled={!canChangeDisplayName || isSaving} title={!canChangeDisplayName ? 'You need 1500 points to change your display name.' : undefined} className="w-full border-orange-900/30 text-orange-400 font-mono">
-                    EDIT DISPLAY NAME — 1500 POINTS
+                  <Button type="button" variant="outline" onClick={handleChangeDisplayName} disabled={steamDisplayNameAuthoritative || !canChangeDisplayName || isSaving} title={steamDisplayNameAuthoritative ? 'Display name is synced from Steam.' : !canChangeDisplayName ? 'You need 1500 points to change your display name.' : undefined} className="w-full border-orange-900/30 text-orange-400 font-mono">
+                    {steamDisplayNameAuthoritative ? 'SYNCED FROM STEAM' : 'EDIT DISPLAY NAME — 1500 POINTS'}
                   </Button>
-                  {!canChangeDisplayName && <p className="text-xs text-gray-500 font-mono">You need 1500 points to change your display name.</p>}
+                  {!steamDisplayNameAuthoritative && !canChangeDisplayName && <p className="text-xs text-gray-500 font-mono">You need 1500 points to change your display name.</p>}
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-gray-400 font-mono">Account Username</Label>
+                  <Input
+                    aria-label="Account username"
+                    value={user?.accountUsername || user?.username || ""}
+                    disabled
+                    className="bg-black/20 border-orange-900/20 text-gray-500 font-mono cursor-not-allowed"
+                  />
+                  <p className="text-xs text-gray-500 font-mono">Internal unique account identity</p>
                 </div>
                 
                 <div className="space-y-2">
@@ -518,7 +531,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
           <SettingsGroup title="FRIENDS" description="Requests, accepted friends, and player search">
           <Friends
             currentPlayerId={user?.id || ''}
-            currentPlayerName={user?.displayName || user?.username || ''}
+            currentPlayerName={displayPlayerName(user)}
           />
           </SettingsGroup>
           

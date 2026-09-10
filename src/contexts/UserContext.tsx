@@ -23,7 +23,9 @@ export interface UserProfile {
   role: 'user' | 'admin';
   email: string;
   username: string;
+  accountUsername: string;
   displayName: string | null;
+  localDisplayName: string | null;
   bio: string;
 
   // VIP / subscription
@@ -275,7 +277,9 @@ function normalizeProfile(raw: any): UserProfile {
     role:              raw.role === 'admin' ? 'admin' : 'user',
     email:             raw.email ?? '',
     username:          raw.username ?? '',
+    accountUsername:   raw.accountUsername ?? raw.username ?? '',
     displayName:       raw.displayName ?? null,
+    localDisplayName:  raw.localDisplayName ?? null,
     bio:               raw.bio ?? '',
     isPremium:         raw.isPremium ?? false,
     vipSince:          raw.vipSince ?? null,
