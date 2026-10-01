@@ -1,7 +1,11 @@
 import { steamAPI } from './api';
 
 const STEAM_STATE_KEY = 'sector_nine_steam_openid_state';
+const STEAM_CALLBACK_COMPLETED_KEY = 'sector_nine_steam_callback_completed';
 type SteamAuthIntent = 'login' | 'link';
+
+export const markSteamCallbackCompleted = () => sessionStorage.setItem(STEAM_CALLBACK_COMPLETED_KEY, '1');
+export const wasSteamCallbackCompleted = () => sessionStorage.getItem(STEAM_CALLBACK_COMPLETED_KEY) === '1';
 
 const checkSteamEnvironment=()=>{
   const isLocalhost=['localhost','127.0.0.1','::1'].includes(window.location.hostname)
@@ -10,6 +14,7 @@ const checkSteamEnvironment=()=>{
 }
 
 const createSteamLogin=async(intent: SteamAuthIntent)=>{
+  sessionStorage.removeItem(STEAM_CALLBACK_COMPLETED_KEY);
   const request=await steamAPI.startAuthentication(intent);
   if(typeof request?.state!=='string'||typeof request?.loginUrl!=='string')throw new Error('Steam login could not be initialized');
   sessionStorage.setItem(STEAM_STATE_KEY,request.state);

@@ -10,6 +10,10 @@ const API_URL = configuredApiUrl || (import.meta.env.DEV ? 'http://localhost:300
 
 let sessionToken: string | null = null
 
+export const logFrontendAuthEvent = (event: string, details: Record<string, unknown> = {}) => {
+  console.info(JSON.stringify({ event, ...details }))
+}
+
 export const setSessionToken = (token: string | null) => {
   sessionToken = token
   if (token) {
@@ -407,7 +411,10 @@ export const steamAPI = {
       method: 'POST',
       body: JSON.stringify({callbackParams,state}),
     })
-    if (data.session?.access_token) setSessionToken(data.session.access_token)
+    if (data.session?.access_token) {
+      setSessionToken(data.session.access_token)
+      logFrontendAuthEvent('steam_callback_token_stored', { authIntent: data.authIntent || 'login' })
+    }
     return data
   },
 

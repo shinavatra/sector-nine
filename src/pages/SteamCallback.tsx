@@ -3,13 +3,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { CheckCircle, XCircle, Loader2, Shield } from "lucide-react";
-import { authenticateSteamCallback } from "../utils/steamAuth";
-import { ApiError, getSessionToken } from "../utils/api";
+import { authenticateSteamCallback, markSteamCallbackCompleted, wasSteamCallbackCompleted } from "../utils/steamAuth";
+import { ApiError, getSessionToken, logFrontendAuthEvent } from "../utils/api";
 import { toast } from "sonner";
 
 interface SteamCallbackProps {
   onNavigate: (page: string) => void;
-  onLogin: (isNewUser?: boolean) => void;
+  onLogin: (isNewUser?: boolean) => void | Promise<void>;
 }
 
 export function SteamCallback({
@@ -32,19 +32,25 @@ export function SteamCallback({
   >("unknown");
 
   useEffect(() => {
+    if (wasSteamCallbackCompleted() && getSessionToken()) {
+      logFrontendAuthEvent('steam_callback_navigation_started', { destination: 'hub', reason: 'already_completed' });
+      void Promise.resolve().then(() => onLogin(false)).catch(() => onNavigate("auth"));
+      return;
+    }
     void handleSteamCallback();
   }, []);
 
-  const returnToHub = (delay = 1200) => {
-    window.setTimeout(() => {
-      onLogin(false);
-    }, delay);
-  };
-
   const handleSteamCallback = async () => {
+    let steamAuthenticationSucceeded = false;
     try {
       // The server verifies Steam's signed OpenID response before returning a JWT.
       const linkResult = await authenticateSteamCallback(window.location.href);
+      logFrontendAuthEvent('steam_callback_frontend_received', {
+        authIntent: linkResult.authIntent === "link" ? "link" : "login",
+        createdAccount: linkResult.createdAccount === true,
+      });
+      markSteamCallbackCompleted();
+      steamAuthenticationSucceeded = true;
       const profile = linkResult.profile;
       const intent = linkResult.authIntent === "link" ? "link" : "login";
       const createdAccount = linkResult.createdAccount === true;
@@ -81,7 +87,7 @@ export function SteamCallback({
         className: "bg-green-900/90 border-green-700 text-green-100",
       });
 
-      returnToHub();
+      await onLogin(false);
     } catch (error) {
       const isLinkConflict = error instanceof ApiError && error.code === "STEAM_ACCOUNT_ALREADY_LINKED";
       setStatus("error");
@@ -96,15 +102,23 @@ export function SteamCallback({
         className: "bg-red-900/90 border-red-700 text-red-100",
       });
 
-      window.setTimeout(() => {
-        if (getSessionToken()) returnToHub(0);
-        else onNavigate("auth");
-      }, 4000);
+      if (!steamAuthenticationSucceeded && getSessionToken()) {
+        logFrontendAuthEvent('steam_callback_navigation_started', { destination: 'hub', reason: 'existing_session' });
+        try {
+          await onLogin(false);
+        } catch {
+          onNavigate("auth");
+        }
+      } else {
+        onNavigate("auth");
+      }
     } finally {
       // Steam signs the return_to URL, so clean it only after server verification.
       // replaceState removes the sensitive OpenID response without reloading or
       // changing the current Sector Nine session.
-      window.history.replaceState({}, document.title, '/auth/steam/callback');
+      if (window.location.pathname === '/auth/steam/callback') {
+        window.history.replaceState({}, document.title, '/auth/steam/callback');
+      }
     }
   };
 

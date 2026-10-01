@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
-import { authAPI, friendsAPI, presenceAPI, userAPI } from '../utils/api';
+import { authAPI, friendsAPI, getSessionToken, presenceAPI, userAPI } from '../utils/api';
 const defaultAvatar = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%230b0b0b"/%3E%3Ctext x="50" y="68" text-anchor="middle" font-size="62" fill="%23fb923c"%3E%CE%BB%3C/text%3E%3C/svg%3E';
 
 // =====================================================
@@ -213,7 +213,10 @@ export function UserProvider({ children }: { children: ReactNode }) {
           try {
             await refreshProfile();
           } catch {
-            authAPI.signout();
+            // A Steam callback can replace an expired token while this initial
+            // request is in flight. Never clear a newer session because the
+            // request made with the older token failed.
+            if (getSessionToken() === token) authAPI.signout();
           }
         }
       } catch (error) {

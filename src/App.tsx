@@ -12,7 +12,7 @@ import { Auth } from "./pages/Auth";
 
 import { GlobalChat } from "./components/GlobalChat";
 import { Toaster } from "./components/ui/sonner";
-import { notificationsAPI, platformAPI, type PublicPlatformSettings } from "./utils/api";
+import { logFrontendAuthEvent, notificationsAPI, platformAPI, type PublicPlatformSettings } from "./utils/api";
 import { subscribeToNotificationChanges } from "./utils/notificationEvents";
 
 const lazyPage = <T extends Record<string, unknown>>(loader: () => Promise<T>, name: keyof T) =>
@@ -129,13 +129,20 @@ useEffect(() => {
 }, [isAuthenticated, isLoading, currentPage, navigate]);
 
 const handleLogin = async (isNewUser: boolean = false) => {
+  const isSteamCallback = currentPage === 'steam-callback';
+  if (isSteamCallback) logFrontendAuthEvent('steam_callback_profile_loading');
   await refreshProfile();
+  if (isSteamCallback) logFrontendAuthEvent('steam_callback_profile_loaded');
 
   if (isNewUser) {
     // New users go through Steam verification first
     setCurrentPage('steam-game-verification');
   } else {
-    navigate('hub');
+    if (isSteamCallback) {
+      logFrontendAuthEvent('steam_callback_login_completed');
+      logFrontendAuthEvent('steam_callback_navigation_started', { destination: 'hub' });
+    }
+    navigate('hub', isSteamCallback);
   }
 };
   const handleLogout = () => {
