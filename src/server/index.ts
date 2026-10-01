@@ -14,6 +14,7 @@ import { createAdminRouter } from './admin'
 import { onlineUserPredicate } from './presence'
 import { provisionMatchServer, startGameServerMonitor } from './rcon'
 import { SUPPORTED_REGIONS, isSupportedRegionId } from '../shared/regions'
+import { resolveSteamLoginUser } from './steamAuthAccount'
 
 dotenv.config()
 
@@ -3109,6 +3110,7 @@ app.get('/steam/auth/start',async(req,res)=>{
       [nonceHash,origin,intent,linkUserId],
     )
   }catch(error:any){return sendDatabaseError(res,error)}
+  logEvent('info','steam_auth_started',{requestId:res.locals.requestId,intent})
   const state=jwt.sign({purpose:'steam_openid',nonce,origin},JWT_SECRET,{expiresIn:'10m'})
   const returnTo=`${origin}/auth/steam/callback?state=${encodeURIComponent(state)}`
   const params=new URLSearchParams({
@@ -3183,7 +3185,10 @@ app.post('/steam/auth', async (req, res) => {
   try {
     const verified = await verifySteamOpenIdResponse(req.body?.callbackParams,req.body?.state)
     const { steamId, intent } = verified
-    const linkedResult = await pool.query('SELECT * FROM users WHERE steam_id=$1 AND deleted_at IS NULL LIMIT 1', [steamId])
+    logEvent('info','steam_openid_validated',{requestId:res.locals.requestId,intent})
+    // users_steam_id_key covers all rows. Filtering deleted rows here could
+    // incorrectly enter creation and violate that constraint.
+    const linkedResult = await pool.query('SELECT * FROM users WHERE steam_id=$1 LIMIT 1', [steamId])
     const linkedUser = linkedResult.rows[0]
     const summary = await safeFetchSteamProfileSummary(steamId)
     let user = linkedUser
@@ -3204,15 +3209,28 @@ app.post('/steam/auth', async (req, res) => {
       user = authenticatedResult.rows[0]
       if (!user) return res.status(401).json({ error: 'Invalid session', code: 'INVALID_SESSION' })
       user = await saveSteamProfileSummary(user.id, steamId, summary)
-    } else if (linkedUser) {
-      user = await saveSteamProfileSummary(linkedUser.id, steamId, summary)
+      logEvent('info','steam_link_succeeded',{requestId:res.locals.requestId,userId:user.id})
     } else {
-      user = await createSteamUser(steamId, summary)
-      createdAccount = true
+      const resolved = await resolveSteamLoginUser({
+        steamId,
+        summary,
+        findBySteamId: async (id) => (await pool.query('SELECT * FROM users WHERE steam_id=$1 LIMIT 1', [id])).rows[0],
+        createUser: createSteamUser,
+        updateProfile: (account, id, profileSummary) => saveSteamProfileSummary(account.id, id, profileSummary),
+      })
+      user = resolved.user
+      createdAccount = resolved.createdAccount
+      const event = resolved.resolution === 'created'
+        ? 'steam_login_new_user_created'
+        : resolved.resolution === 'race_existing'
+          ? 'steam_login_race_existing_user'
+          : 'steam_login_existing_user'
+      logEvent('info',event,{requestId:res.locals.requestId,userId:user.id})
     }
 
     const token = await issueAuthSession(user, 'steam', req)
     const profile = toProfile(user)
+    logEvent('info','steam_auth_succeeded',{requestId:res.locals.requestId,intent,userId:user.id,createdAccount})
 
     return res.status(createdAccount ? 201 : 200).json({
       user: profile,
@@ -3223,6 +3241,7 @@ app.post('/steam/auth', async (req, res) => {
       createdAccount,
     })
   } catch (err: any) {
+    logEvent('error','steam_auth_failed',{requestId:res.locals.requestId,errorCode:err?.code||err?.message||'UNKNOWN'})
     if (err.message === 'INVALID_SESSION') {
       return res.status(401).json({ error: 'Invalid or expired token', code: 'INVALID_SESSION' })
     }
@@ -3241,7 +3260,7 @@ app.post('/steam/auth', async (req, res) => {
     if (err.message === 'STEAM_OPENID_UNAVAILABLE') {
       return res.status(502).json({ error: 'Steam OpenID verification is unavailable', code: 'STEAM_OPENID_UNAVAILABLE' })
     }
-    return sendInternalError(res, err, 'steam_auth_failed')
+    return sendInternalError(res, err, 'steam_auth_request_failed')
   }
 })
 

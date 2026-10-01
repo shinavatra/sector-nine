@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+require('ts-node/register/transpile-only')
+const { resolveSteamLoginUser } = require('../src/server/steamAuthAccount.ts')
 
 const server = fs.readFileSync('src/server/index.ts', 'utf8')
 const api = fs.readFileSync('src/utils/api.tsx', 'utf8')
@@ -10,6 +15,7 @@ const integration = fs.readFileSync('src/components/SteamIntegration.tsx', 'utf8
 const setup = fs.readFileSync('src/pages/SteamSetup.tsx', 'utf8')
 const verification = fs.readFileSync('src/pages/SteamGameVerification.tsx', 'utf8')
 const migration = fs.readFileSync('src/server/040_steam_auth_login_and_link.sql', 'utf8')
+const baseSchema = fs.readFileSync('src/server/001_schema.sql', 'utf8')
 
 const steamAuthRoute = server.slice(
   server.indexOf("app.post('/steam/auth'"),
@@ -20,9 +26,12 @@ assert.match(server, /INSERT INTO steam_auth_nonces\(nonce_hash,origin,expires_a
 assert.match(server, /DELETE FROM steam_auth_nonces[\s\S]+RETURNING nonce_hash,intent,user_id/, 'nonce is consumed once and returns bound intent')
 assert.match(server, /intent === 'link'[\s\S]+authenticatedUserId !== verified\.userId/, 'link callback requires matching authenticated session')
 assert.match(server, /STEAM_ACCOUNT_ALREADY_LINKED/, 'linking rejects SteamID already linked to another user')
-assert.match(server, /const linkedResult = await pool\.query\('SELECT \* FROM users WHERE steam_id=\$1/, 'Steam auth looks up existing users by steam_id')
-assert.match(server, /else if \(linkedUser\)[\s\S]+saveSteamProfileSummary/, 'existing linked SteamID signs in without creating duplicate user')
-assert.match(server, /else \{[\s\S]+createSteamUser\(steamId, summary\)/, 'unknown SteamID creates a Steam-only user')
+assert.match(server, /SELECT \* FROM users WHERE steam_id=\$1 LIMIT 1/, 'Steam auth looks up every SteamID owner before insert')
+assert.doesNotMatch(steamAuthRoute, /WHERE steam_id=\$1 AND deleted_at IS NULL/, 'Steam owner lookup matches users_steam_id_key scope')
+assert.match(server, /resolveSteamLoginUser\(/, 'login intent uses race-safe Steam account resolution')
+assert.match(server, /steam_login_race_existing_user/, 'race recovery is logged explicitly')
+assert.match(server, /steam_link_succeeded/, 'successful linking is logged explicitly')
+assert.match(server, /steam_auth_succeeded/, 'successful Steam auth is logged explicitly')
 assert.match(server, /email,username,password_hash[\s\S]+VALUES \(NULL,\$1,NULL/, 'Steam-only user is created without fake email or password')
 assert.match(server, /role,auth_provider,[\s\S]+'user','steam'/, 'new Steam users are normal users with steam auth provider')
 assert.doesNotMatch(steamAuthRoute, /fetchSteamData\(/, 'Steam login does not run ownership/VAC verification path')
@@ -39,5 +48,77 @@ assert.match(setup, /initiateSteamLogin\('link'\)/, 'Steam setup starts link int
 assert.match(verification, /initiateSteamLogin\('link'\)/, 'Steam verification starts link intent')
 assert.doesNotMatch(callbackPage, /This Steam account is not linked\. Register or sign in with email\/password, then connect Steam\./, 'login callback no longer shows link-only failure')
 assert.match(server, /bcrypt\.compare\(password, user\.password_hash\)/, 'email/password signin path remains present')
+
+const summary = { personaName: 'Gordon' }
+const makeHarness = (initialUsers = []) => {
+  const users = [...initialUsers]
+  let creates = 0
+  return {
+    users,
+    get creates() { return creates },
+    findBySteamId: async steamId => users.find(user => user.steam_id === steamId),
+    createUser: async steamId => {
+      await Promise.resolve()
+      if (users.some(user => user.steam_id === steamId)) {
+        throw Object.assign(new Error('duplicate'), { code: '23505', constraint: 'users_steam_id_key' })
+      }
+      creates += 1
+      const user = { id: `steam-${creates}`, steam_id: steamId, auth_provider: 'steam', owns_hl1: false }
+      users.push(user)
+      return user
+    },
+    updateProfile: async user => ({ ...user, profileUpdated: true }),
+  }
+}
+
+const existing = { id: 'existing-user', steam_id: '76561198000000001', owns_hl1: false }
+const existingHarness = makeHarness([existing])
+const existingResult = await resolveSteamLoginUser({ steamId: existing.steam_id, summary, ...existingHarness })
+assert.equal(existingResult.user.id, existing.id, 'existing SteamID logs into its exact owner')
+assert.equal(existingHarness.creates, 0, 'existing SteamID is never inserted again')
+
+const newHarness = makeHarness()
+const firstLogin = await resolveSteamLoginUser({ steamId: '76561198000000002', summary, ...newHarness })
+const secondLogin = await resolveSteamLoginUser({ steamId: '76561198000000002', summary, ...newHarness })
+assert.equal(firstLogin.createdAccount, true, 'unknown SteamID creates a Steam-only account')
+assert.equal(secondLogin.user.id, firstLogin.user.id, 'second login reuses the existing Steam account')
+assert.equal(newHarness.creates, 1, 'repeated login creates only one account')
+assert.equal(firstLogin.user.owns_hl1, false, 'Steam login does not grant game ownership')
+
+let releaseCreate
+const createGate = new Promise(resolve => { releaseCreate = resolve })
+const raceUsers = []
+let raceAttempts = 0
+const raceHarness = {
+  findBySteamId: async steamId => raceUsers.find(user => user.steam_id === steamId),
+  createUser: async steamId => {
+    raceAttempts += 1
+    await createGate
+    if (raceUsers.length) throw Object.assign(new Error('duplicate'), { code: '23505', constraint: 'users_steam_id_key' })
+    const user = { id: 'race-winner', steam_id: steamId, owns_hl1: false }
+    raceUsers.push(user)
+    return user
+  },
+  updateProfile: async user => user,
+}
+const concurrent = [
+  resolveSteamLoginUser({ steamId: '76561198000000003', summary, ...raceHarness }),
+  resolveSteamLoginUser({ steamId: '76561198000000003', summary, ...raceHarness }),
+]
+await Promise.resolve()
+releaseCreate()
+const raceResults = await Promise.all(concurrent)
+assert.equal(raceAttempts, 2, 'concurrent callbacks both reach the attempted first insert')
+assert.equal(raceUsers.length, 1, 'concurrent first login creates only one user')
+assert.deepEqual(raceResults.map(result => result.user.id), ['race-winner', 'race-winner'], '23505 loser re-queries and authenticates the winner')
+
+assert.match(steamAuthRoute, /if \(intent === 'link'\)/, 'link behavior remains isolated to link intent')
+assert.match(steamAuthRoute, /linkedUser && linkedUser\.id !== verified\.userId/, 'link refuses a SteamID owned by another user')
+assert.match(steamAuthRoute, /STEAM_ACCOUNT_ALREADY_LINKED/, 'link conflict keeps its stable error code')
+const loginBranch = steamAuthRoute.slice(steamAuthRoute.indexOf('} else {'), steamAuthRoute.indexOf('const token ='))
+assert.doesNotMatch(loginBranch, /getOptionalUserId\(req\)/, 'login ignores a stale or unrelated browser JWT')
+assert.match(baseSchema, /steam_id\s+TEXT\s+UNIQUE/, 'users.steam_id remains uniquely constrained')
+assert.match(migration, /users_email_or_steam_auth_check/, 'email/password and Steam account invariants remain present')
+assert.match(api, /if \(data\.session\?\.access_token\) setSessionToken\(data\.session\.access_token\)/, 'frontend replaces an old local session with the Steam session')
 
 console.log('Steam auth flow regression checks passed')
