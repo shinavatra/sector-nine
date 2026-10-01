@@ -15,11 +15,14 @@ export const logFrontendAuthEvent = (event: string, details: Record<string, unkn
 }
 
 export const setSessionToken = (token: string | null) => {
+  const previousPresent = Boolean(sessionToken || localStorage.getItem('session_token'))
   sessionToken = token
   if (token) {
     localStorage.setItem('session_token', token)
+    logFrontendAuthEvent('session_token_changed', { previousPresent, nextPresent: true })
   } else {
     localStorage.removeItem('session_token')
+    logFrontendAuthEvent('session_token_cleared', { previousPresent, nextPresent: false })
   }
 }
 

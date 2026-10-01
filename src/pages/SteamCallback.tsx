@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription } from "../components/ui/alert";
@@ -30,19 +30,26 @@ export function SteamCallback({
   const [vacStatus, setVacStatus] = useState<
     "clean" | "banned" | "unknown"
   >("unknown");
+  const processingStarted = useRef(false);
 
   useEffect(() => {
+    logFrontendAuthEvent('steam_callback_mounted');
     if (wasSteamCallbackCompleted() && getSessionToken()) {
       logFrontendAuthEvent('steam_callback_navigation_started', { destination: 'hub', reason: 'already_completed' });
       void Promise.resolve().then(() => onLogin(false)).catch(() => onNavigate("auth"));
-      return;
+      return () => logFrontendAuthEvent('steam_callback_unmounted');
     }
-    void handleSteamCallback();
+    if (!processingStarted.current) {
+      processingStarted.current = true;
+      void handleSteamCallback();
+    }
+    return () => logFrontendAuthEvent('steam_callback_unmounted');
   }, []);
 
   const handleSteamCallback = async () => {
     let steamAuthenticationSucceeded = false;
     try {
+      logFrontendAuthEvent('steam_callback_processing_started');
       // The server verifies Steam's signed OpenID response before returning a JWT.
       const linkResult = await authenticateSteamCallback(window.location.href);
       logFrontendAuthEvent('steam_callback_frontend_received', {
@@ -51,6 +58,7 @@ export function SteamCallback({
       });
       markSteamCallbackCompleted();
       steamAuthenticationSucceeded = true;
+      logFrontendAuthEvent('steam_callback_auth_success', { authIntent: linkResult.authIntent === "link" ? "link" : "login" });
       const profile = linkResult.profile;
       const intent = linkResult.authIntent === "link" ? "link" : "login";
       const createdAccount = linkResult.createdAccount === true;
@@ -80,14 +88,14 @@ export function SteamCallback({
           ? "Steam account connected. Signing you in..."
           : "Signing you in...");
 
+      await onLogin(false);
       toast.success(intent === "link" ? "Steam account connected" : "Steam authentication complete", {
         description: createdAccount
           ? "Your Sector Nine account was created from your verified Steam identity."
           : "Your Sector Nine session is ready.",
         className: "bg-green-900/90 border-green-700 text-green-100",
       });
-
-      await onLogin(false);
+      logFrontendAuthEvent('steam_callback_success_toast');
     } catch (error) {
       const isLinkConflict = error instanceof ApiError && error.code === "STEAM_ACCOUNT_ALREADY_LINKED";
       setStatus("error");
@@ -101,6 +109,7 @@ export function SteamCallback({
           : "Your existing Sector Nine session remains active. Please try again later.",
         className: "bg-red-900/90 border-red-700 text-red-100",
       });
+      logFrontendAuthEvent('steam_callback_failure_toast', { postAuthFailure: steamAuthenticationSucceeded });
 
       if (!steamAuthenticationSucceeded && getSessionToken()) {
         logFrontendAuthEvent('steam_callback_navigation_started', { destination: 'hub', reason: 'existing_session' });

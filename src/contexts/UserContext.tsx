@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
-import { authAPI, friendsAPI, getSessionToken, presenceAPI, userAPI } from '../utils/api';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from 'react';
+import { authAPI, friendsAPI, getSessionToken, logFrontendAuthEvent, presenceAPI, userAPI } from '../utils/api';
 const defaultAvatar = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%230b0b0b"/%3E%3Ctext x="50" y="68" text-anchor="middle" font-size="62" fill="%23fb923c"%3E%CE%BB%3C/text%3E%3C/svg%3E';
 
 // =====================================================
@@ -114,7 +114,7 @@ interface UserContextType {
   user: UserProfile | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  refreshProfile: () => Promise<void>;
+  refreshProfile: (source?: 'steam_callback') => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   adoptProfile: (profile: unknown) => void;
   changeDisplayName: (displayName: string) => Promise<void>;
@@ -153,6 +153,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [onlineFriends, setOnlineFriends] = useState<OnlineFriend[]>([]);
+  const profileRequestRevision = useRef(0);
+  const previousUserId = useRef<string | null>(null);
 
   const refreshOnlineFriends = useCallback(async () => {
     const result = await friendsAPI.getOnline();
@@ -160,16 +162,33 @@ export function UserProvider({ children }: { children: ReactNode }) {
     setOnlineFriends(current => sameOnlineFriends(current, next) ? current : next);
   }, []);
 
-  const refreshProfile = useCallback(async () => {
+  const refreshProfile = useCallback(async (source?: 'steam_callback') => {
+    const requestToken = getSessionToken();
+    const requestRevision = ++profileRequestRevision.current;
+    if (source === 'steam_callback') logFrontendAuthEvent('steam_callback_profile_request_started');
     try {
       const { profile } = await userAPI.getProfile();
-      setUser(normalizeProfile(profile));
+      if (requestRevision !== profileRequestRevision.current || getSessionToken() !== requestToken) return;
+      const normalized = normalizeProfile(profile);
+      setUser(normalized);
+      if (source === 'steam_callback') {
+        logFrontendAuthEvent('steam_callback_profile_request_success', { userId: normalized.id });
+        logFrontendAuthEvent('steam_callback_user_state_updated', { userId: normalized.id });
+      }
     } catch (error) {
       console.error('Failed to refresh profile:', error);
-      setUser(null);
+      if (requestRevision === profileRequestRevision.current && getSessionToken() === requestToken) setUser(null);
       throw error;
     }
   }, []);
+
+  useEffect(() => {
+    const nextUserId = user?.id || null;
+    if (previousUserId.current !== nextUserId) {
+      logFrontendAuthEvent('app_authenticated_user_changed', { previousUserId: previousUserId.current, nextUserId });
+      previousUserId.current = nextUserId;
+    }
+  }, [user?.id]);
 
   const updateProfile = useCallback(async (updates: Partial<UserProfile>) => {
     const { profile } = await userAPI.updateProfile(updates);

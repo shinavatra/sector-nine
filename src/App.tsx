@@ -74,10 +74,16 @@ function AppContent() {
   const notificationPollInFlight=useRef(false);
   const notificationPollQueued=useRef(false);
   const notificationPollRevision=useRef(0);
+  const previousPage=useRef(currentPage);
+  const previousPath=useRef(window.location.pathname);
 
   const navigate = useCallback((page: string, replace = false) => {
     const path = pagePaths[page] || `/${page}`;
-    if (window.location.pathname !== path) window.history[replace ? 'replaceState' : 'pushState']({ page }, '', path);
+    const previousPathname = window.location.pathname;
+    if (previousPathname !== path) {
+      window.history[replace ? 'replaceState' : 'pushState']({ page }, '', path);
+      logFrontendAuthEvent('app_path_changed', { previousPath: previousPathname, nextPath: path, method: replace ? 'replaceState' : 'pushState' });
+    }
     setCurrentPageState(page);
   }, []);
   const setCurrentPage = navigate;
@@ -112,10 +118,23 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
-  const handlePopState = () => setCurrentPageState(pageFromPath(window.location.pathname));
+  const handlePopState = () => {
+    const nextPath = window.location.pathname;
+    logFrontendAuthEvent('app_path_changed', { previousPath: previousPath.current, nextPath, method: 'popstate' });
+    previousPath.current = nextPath;
+    setCurrentPageState(pageFromPath(nextPath));
+  };
   window.addEventListener('popstate', handlePopState);
   return () => window.removeEventListener('popstate', handlePopState);
 }, []);
+
+useEffect(() => {
+  if (previousPage.current !== currentPage) {
+    logFrontendAuthEvent('app_current_page_changed', { previousPage: previousPage.current, nextPage: currentPage });
+    previousPage.current = currentPage;
+  }
+  previousPath.current = window.location.pathname;
+}, [currentPage]);
 
 
 useEffect(() => {
@@ -131,7 +150,7 @@ useEffect(() => {
 const handleLogin = async (isNewUser: boolean = false) => {
   const isSteamCallback = currentPage === 'steam-callback';
   if (isSteamCallback) logFrontendAuthEvent('steam_callback_profile_loading');
-  await refreshProfile();
+  await refreshProfile(isSteamCallback ? 'steam_callback' : undefined);
   if (isSteamCallback) logFrontendAuthEvent('steam_callback_profile_loaded');
 
   if (isNewUser) {
@@ -141,6 +160,7 @@ const handleLogin = async (isNewUser: boolean = false) => {
     if (isSteamCallback) {
       logFrontendAuthEvent('steam_callback_login_completed');
       logFrontendAuthEvent('steam_callback_navigation_started', { destination: 'hub' });
+      logFrontendAuthEvent('steam_callback_navigate_hub');
     }
     navigate('hub', isSteamCallback);
   }

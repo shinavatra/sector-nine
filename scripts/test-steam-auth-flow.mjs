@@ -124,9 +124,9 @@ assert.match(migration, /users_email_or_steam_auth_check/, 'email/password and S
 assert.match(api, /if \(data\.session\?\.access_token\) \{[\s\S]+setSessionToken\(data\.session\.access_token\)/, 'frontend replaces an old local session with the Steam session')
 assert.match(api, /steam_callback_token_stored/, 'token replacement emits safe frontend diagnostics')
 assert.match(callbackPage, /await onLogin\(false\)/, 'successful callback awaits normal login completion instead of an unobserved timer')
-assert.match(app, /steam_callback_profile_loading[\s\S]+await refreshProfile\(\)[\s\S]+steam_callback_profile_loaded/, 'successful callback verifies the stored token through profile loading')
+assert.match(app, /steam_callback_profile_loading[\s\S]+await refreshProfile\(isSteamCallback \? 'steam_callback' : undefined\)[\s\S]+steam_callback_profile_loaded/, 'successful callback verifies the stored token through profile loading')
 assert.match(app, /steam_callback_login_completed/, 'successful callback records completed login')
-assert.match(app, /const handleLogin[\s\S]+await refreshProfile\(\)[\s\S]+steam_callback_navigation_started[\s\S]+navigate\('hub', isSteamCallback\)/, 'normal login completion loads authenticated state before Hub navigation')
+assert.match(app, /const handleLogin[\s\S]+await refreshProfile\(isSteamCallback \? 'steam_callback' : undefined\)[\s\S]+steam_callback_navigation_started[\s\S]+navigate\('hub', isSteamCallback\)/, 'normal login completion loads authenticated state before Hub navigation')
 assert.match(userContext, /localStorage\.getItem\('session_token'\)[\s\S]+await refreshProfile\(\)/, 'page refresh restores the Steam session through the normal profile path')
 assert.match(userContext, /if \(getSessionToken\(\) === token\) authAPI\.signout\(\)/, 'failed stale-token initialization cannot clear a newer Steam JWT')
 assert.match(callbackPage, /if \(window\.location\.pathname === '\/auth\/steam\/callback'\)/, 'callback cleanup cannot overwrite a completed Hub URL')
@@ -136,5 +136,20 @@ assert.match(steamAuth, /createSteamLogin[\s\S]+removeItem\(STEAM_CALLBACK_COMPL
 assert.match(callbackPage, /wasSteamCallbackCompleted\(\) && getSessionToken\(\)[\s\S]+onLogin\(false\)/, 'refresh after a completed callback restores the valid session without replaying OpenID')
 assert.match(callbackPage, /if \(!steamAuthenticationSucceeded && getSessionToken\(\)\)[\s\S]+reason: 'existing_session'[\s\S]+await onLogin\(false\)/, 'expired callback with an existing valid session resolves through normal login completion')
 assert.match(app, /navigate\('hub', isSteamCallback\)/, 'Steam callback completion replaces the callback URL while unmounting the callback page')
+assert.ok(callbackPage.indexOf('await onLogin(false)') < callbackPage.indexOf('toast.success('), 'success toast is emitted only after profile and Hub completion')
+assert.equal((callbackPage.match(/toast\.success\(/g) || []).length, 1, 'Steam callback has exactly one success terminal toast')
+assert.equal((callbackPage.match(/toast\.error\(/g) || []).length, 1, 'Steam callback has exactly one failure terminal toast')
+assert.match(userContext, /requestRevision !== profileRequestRevision\.current \|\| getSessionToken\(\) !== requestToken/, 'stale profile success cannot overwrite the current Steam session')
+assert.match(userContext, /requestRevision === profileRequestRevision\.current && getSessionToken\(\) === requestToken\) setUser\(null\)/, 'stale profile failure cannot clear the authenticated Steam user')
+for (const event of [
+  'steam_callback_mounted', 'steam_callback_processing_started', 'steam_callback_auth_success',
+  'steam_callback_profile_request_started', 'steam_callback_profile_request_success',
+  'steam_callback_user_state_updated', 'steam_callback_navigate_hub', 'steam_callback_unmounted',
+  'app_current_page_changed', 'app_path_changed', 'app_authenticated_user_changed',
+  'session_token_changed', 'session_token_cleared', 'steam_callback_success_toast',
+  'steam_callback_failure_toast',
+]) {
+  assert.ok([callbackPage, app, userContext, api].some(source => source.includes(event)), `safe transition log ${event} is present`)
+}
 
 console.log('Steam auth flow regression checks passed')
