@@ -2,10 +2,17 @@ import { steamAPI } from './api';
 
 const STEAM_STATE_KEY = 'sector_nine_steam_openid_state';
 const STEAM_CALLBACK_COMPLETED_KEY = 'sector_nine_steam_callback_completed';
+const activeSteamCallbackStates = new Set<string>();
 type SteamAuthIntent = 'login' | 'link';
 
 export const markSteamCallbackCompleted = () => sessionStorage.setItem(STEAM_CALLBACK_COMPLETED_KEY, '1');
 export const wasSteamCallbackCompleted = () => sessionStorage.getItem(STEAM_CALLBACK_COMPLETED_KEY) === '1';
+export const claimSteamCallback = (url: string) => {
+  const state = new URL(url).searchParams.get('state');
+  if (!state || activeSteamCallbackStates.has(state)) return false;
+  activeSteamCallbackStates.add(state);
+  return true;
+};
 
 const checkSteamEnvironment=()=>{
   const isLocalhost=['localhost','127.0.0.1','::1'].includes(window.location.hostname)

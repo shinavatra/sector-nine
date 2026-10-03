@@ -177,7 +177,10 @@ export function UserProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       console.error('Failed to refresh profile:', error);
-      if (requestRevision === profileRequestRevision.current && getSessionToken() === requestToken) setUser(null);
+      if (requestRevision === profileRequestRevision.current && getSessionToken() === requestToken) {
+        logFrontendAuthEvent('user_cleared', { reason: 'profile_request_failed', source: source || 'refresh_profile', requestRevision });
+        setUser(null);
+      }
       throw error;
     }
   }, []);
@@ -203,7 +206,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     void presenceAPI.offline().catch(() => undefined);
-    authAPI.signout();
+    authAPI.signout({ reason: 'explicit_logout', source: 'UserContext.logout' });
+    logFrontendAuthEvent('user_cleared', { reason: 'explicit_logout', source: 'UserContext.logout' });
     setUser(null);
     setOnlineFriends([]);
   }, []);
@@ -235,7 +239,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
             // A Steam callback can replace an expired token while this initial
             // request is in flight. Never clear a newer session because the
             // request made with the older token failed.
-            if (getSessionToken() === token) authAPI.signout();
+            if (getSessionToken() === token) authAPI.signout({ reason: 'initial_profile_request_failed', source: 'UserContext.initUser' });
           }
         }
       } catch (error) {

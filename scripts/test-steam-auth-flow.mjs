@@ -128,10 +128,12 @@ assert.match(app, /steam_callback_profile_loading[\s\S]+await refreshProfile\(is
 assert.match(app, /steam_callback_login_completed/, 'successful callback records completed login')
 assert.match(app, /const handleLogin[\s\S]+await refreshProfile\(isSteamCallback \? 'steam_callback' : undefined\)[\s\S]+steam_callback_navigation_started[\s\S]+navigate\('hub', isSteamCallback\)/, 'normal login completion loads authenticated state before Hub navigation')
 assert.match(userContext, /localStorage\.getItem\('session_token'\)[\s\S]+await refreshProfile\(\)/, 'page refresh restores the Steam session through the normal profile path')
-assert.match(userContext, /if \(getSessionToken\(\) === token\) authAPI\.signout\(\)/, 'failed stale-token initialization cannot clear a newer Steam JWT')
+assert.match(userContext, /if \(getSessionToken\(\) === token\) authAPI\.signout\(\{ reason: 'initial_profile_request_failed'/, 'failed stale-token initialization cannot clear a newer Steam JWT')
 assert.match(callbackPage, /if \(window\.location\.pathname === '\/auth\/steam\/callback'\)/, 'callback cleanup cannot overwrite a completed Hub URL')
 assert.doesNotMatch(callbackPage.slice(callbackPage.indexOf('setStatus("success")'), callbackPage.indexOf('} catch')), /setTimeout[\s\S]+onLogin/, 'successful callback cannot remain indefinitely behind a navigation timer')
 assert.match(steamAuth, /STEAM_CALLBACK_COMPLETED_KEY[\s\S]+markSteamCallbackCompleted[\s\S]+wasSteamCallbackCompleted/, 'completed callback state is tracked separately from the one-time OpenID nonce')
+assert.match(steamAuth, /activeSteamCallbackStates = new Set<string>\(\)[\s\S]+claimSteamCallback[\s\S]+activeSteamCallbackStates\.has\(state\)/, 'duplicate component instances cannot process the same callback state')
+assert.match(callbackPage, /!claimSteamCallback\(window\.location\.href\)[\s\S]+steam_callback_duplicate_ignored/, 'a duplicate callback instance exits without a second terminal result or auth redirect')
 assert.match(steamAuth, /createSteamLogin[\s\S]+removeItem\(STEAM_CALLBACK_COMPLETED_KEY\)/, 'a new Steam login clears the prior callback completion marker')
 assert.match(callbackPage, /wasSteamCallbackCompleted\(\) && getSessionToken\(\)[\s\S]+onLogin\(false\)/, 'refresh after a completed callback restores the valid session without replaying OpenID')
 assert.match(callbackPage, /if \(!steamAuthenticationSucceeded && getSessionToken\(\)\)[\s\S]+reason: 'existing_session'[\s\S]+await onLogin\(false\)/, 'expired callback with an existing valid session resolves through normal login completion')
@@ -140,16 +142,21 @@ assert.ok(callbackPage.indexOf('await onLogin(false)') < callbackPage.indexOf('t
 assert.equal((callbackPage.match(/toast\.success\(/g) || []).length, 1, 'Steam callback has exactly one success terminal toast')
 assert.equal((callbackPage.match(/toast\.error\(/g) || []).length, 1, 'Steam callback has exactly one failure terminal toast')
 assert.match(userContext, /requestRevision !== profileRequestRevision\.current \|\| getSessionToken\(\) !== requestToken/, 'stale profile success cannot overwrite the current Steam session')
-assert.match(userContext, /requestRevision === profileRequestRevision\.current && getSessionToken\(\) === requestToken\) setUser\(null\)/, 'stale profile failure cannot clear the authenticated Steam user')
+assert.match(userContext, /requestRevision === profileRequestRevision\.current && getSessionToken\(\) === requestToken\)[\s\S]+setUser\(null\)/, 'stale profile failure cannot clear the authenticated Steam user')
 for (const event of [
   'steam_callback_mounted', 'steam_callback_processing_started', 'steam_callback_auth_success',
   'steam_callback_profile_request_started', 'steam_callback_profile_request_success',
   'steam_callback_user_state_updated', 'steam_callback_navigate_hub', 'steam_callback_unmounted',
   'app_current_page_changed', 'app_path_changed', 'app_authenticated_user_changed',
   'session_token_changed', 'session_token_cleared', 'steam_callback_success_toast',
-  'steam_callback_failure_toast',
+  'steam_callback_failure_toast', 'navigate_auth', 'user_cleared',
 ]) {
   assert.ok([callbackPage, app, userContext, api].some(source => source.includes(event)), `safe transition log ${event} is present`)
 }
+assert.match(callbackPage, /callbackAttemptId[\s\S]+steam_callback_success_toast[\s\S]+callbackAttemptId/, 'terminal callback logs identify the component attempt without exposing credentials')
+assert.match(callbackPage, /post_auth_login_completion_failed/, 'post-auth callback fallback records the exact auth navigation reason')
+assert.match(app, /reason: 'unauthenticated_protected_page'[\s\S]+source: 'App\.unauthenticated_redirect_effect'/, 'App auth redirect records its exact reason and source')
+assert.match(userContext, /reason: 'profile_request_failed'[\s\S]+requestRevision/, 'profile failures record why and which request cleared the user')
+assert.match(api, /session_token_cleared'[\s\S]+\.\.\.metadata/, 'token clearing logs include caller-provided reason metadata')
 
 console.log('Steam auth flow regression checks passed')

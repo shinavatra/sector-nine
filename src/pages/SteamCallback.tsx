@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { CheckCircle, XCircle, Loader2, Shield } from "lucide-react";
-import { authenticateSteamCallback, markSteamCallbackCompleted, wasSteamCallbackCompleted } from "../utils/steamAuth";
+import { authenticateSteamCallback, claimSteamCallback, markSteamCallbackCompleted, wasSteamCallbackCompleted } from "../utils/steamAuth";
 import { ApiError, getSessionToken, logFrontendAuthEvent } from "../utils/api";
 import { toast } from "sonner";
 
@@ -31,25 +31,30 @@ export function SteamCallback({
     "clean" | "banned" | "unknown"
   >("unknown");
   const processingStarted = useRef(false);
+  const callbackAttemptId = useRef(crypto.randomUUID());
 
   useEffect(() => {
-    logFrontendAuthEvent('steam_callback_mounted');
+    logFrontendAuthEvent('steam_callback_mounted', { callbackAttemptId: callbackAttemptId.current });
     if (wasSteamCallbackCompleted() && getSessionToken()) {
       logFrontendAuthEvent('steam_callback_navigation_started', { destination: 'hub', reason: 'already_completed' });
       void Promise.resolve().then(() => onLogin(false)).catch(() => onNavigate("auth"));
-      return () => logFrontendAuthEvent('steam_callback_unmounted');
+      return () => logFrontendAuthEvent('steam_callback_unmounted', { callbackAttemptId: callbackAttemptId.current });
+    }
+    if (!claimSteamCallback(window.location.href)) {
+      logFrontendAuthEvent('steam_callback_duplicate_ignored', { callbackAttemptId: callbackAttemptId.current });
+      return () => logFrontendAuthEvent('steam_callback_unmounted', { callbackAttemptId: callbackAttemptId.current });
     }
     if (!processingStarted.current) {
       processingStarted.current = true;
       void handleSteamCallback();
     }
-    return () => logFrontendAuthEvent('steam_callback_unmounted');
+    return () => logFrontendAuthEvent('steam_callback_unmounted', { callbackAttemptId: callbackAttemptId.current });
   }, []);
 
   const handleSteamCallback = async () => {
     let steamAuthenticationSucceeded = false;
     try {
-      logFrontendAuthEvent('steam_callback_processing_started');
+      logFrontendAuthEvent('steam_callback_processing_started', { callbackAttemptId: callbackAttemptId.current });
       // The server verifies Steam's signed OpenID response before returning a JWT.
       const linkResult = await authenticateSteamCallback(window.location.href);
       logFrontendAuthEvent('steam_callback_frontend_received', {
@@ -58,7 +63,7 @@ export function SteamCallback({
       });
       markSteamCallbackCompleted();
       steamAuthenticationSucceeded = true;
-      logFrontendAuthEvent('steam_callback_auth_success', { authIntent: linkResult.authIntent === "link" ? "link" : "login" });
+      logFrontendAuthEvent('steam_callback_auth_success', { callbackAttemptId: callbackAttemptId.current, authIntent: linkResult.authIntent === "link" ? "link" : "login" });
       const profile = linkResult.profile;
       const intent = linkResult.authIntent === "link" ? "link" : "login";
       const createdAccount = linkResult.createdAccount === true;
@@ -95,7 +100,7 @@ export function SteamCallback({
           : "Your Sector Nine session is ready.",
         className: "bg-green-900/90 border-green-700 text-green-100",
       });
-      logFrontendAuthEvent('steam_callback_success_toast');
+      logFrontendAuthEvent('steam_callback_success_toast', { callbackAttemptId: callbackAttemptId.current });
     } catch (error) {
       const isLinkConflict = error instanceof ApiError && error.code === "STEAM_ACCOUNT_ALREADY_LINKED";
       setStatus("error");
@@ -109,16 +114,32 @@ export function SteamCallback({
           : "Your existing Sector Nine session remains active. Please try again later.",
         className: "bg-red-900/90 border-red-700 text-red-100",
       });
-      logFrontendAuthEvent('steam_callback_failure_toast', { postAuthFailure: steamAuthenticationSucceeded });
+      logFrontendAuthEvent('steam_callback_failure_toast', {
+        callbackAttemptId: callbackAttemptId.current,
+        postAuthFailure: steamAuthenticationSucceeded,
+        errorCode: error instanceof ApiError ? error.code || `HTTP_${error.status}` : error instanceof Error ? error.name : 'UNKNOWN',
+      });
 
       if (!steamAuthenticationSucceeded && getSessionToken()) {
         logFrontendAuthEvent('steam_callback_navigation_started', { destination: 'hub', reason: 'existing_session' });
         try {
           await onLogin(false);
         } catch {
+          logFrontendAuthEvent('navigate_auth', {
+            reason: 'existing_session_profile_failed_after_callback_error',
+            source: 'SteamCallback.catch',
+            pathname: window.location.pathname,
+            hasSessionToken: Boolean(getSessionToken()),
+          });
           onNavigate("auth");
         }
       } else {
+        logFrontendAuthEvent('navigate_auth', {
+          reason: steamAuthenticationSucceeded ? 'post_auth_login_completion_failed' : 'steam_callback_failed_without_session',
+          source: 'SteamCallback.catch',
+          pathname: window.location.pathname,
+          hasSessionToken: Boolean(getSessionToken()),
+        });
         onNavigate("auth");
       }
     } finally {

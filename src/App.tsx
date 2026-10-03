@@ -141,10 +141,20 @@ useEffect(() => {
   if (!isLoading && isAuthenticated && currentPage === 'auth') {
     navigate('hub', true);
   }
-}, [isAuthenticated, isLoading, currentPage, navigate]);
+}, [isAuthenticated, isLoading, currentPage, navigate, user]);
 
 useEffect(() => {
-  if (!isLoading && !isAuthenticated && !authFlowPages.includes(currentPage)) navigate('auth', true);
+  if (!isLoading && !isAuthenticated && !authFlowPages.includes(currentPage)) {
+    logFrontendAuthEvent('navigate_auth', {
+      reason: 'unauthenticated_protected_page',
+      source: 'App.unauthenticated_redirect_effect',
+      pathname: window.location.pathname,
+      currentPage,
+      hasSessionToken: Boolean(localStorage.getItem('session_token')),
+      hasUser: Boolean(user),
+    });
+    navigate('auth', true);
+  }
 }, [isAuthenticated, isLoading, currentPage, navigate]);
 
 const handleLogin = async (isNewUser: boolean = false) => {

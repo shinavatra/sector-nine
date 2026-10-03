@@ -14,15 +14,15 @@ export const logFrontendAuthEvent = (event: string, details: Record<string, unkn
   console.info(JSON.stringify({ event, ...details }))
 }
 
-export const setSessionToken = (token: string | null) => {
+export const setSessionToken = (token: string | null, metadata: { reason?: string; source?: string } = {}) => {
   const previousPresent = Boolean(sessionToken || localStorage.getItem('session_token'))
   sessionToken = token
   if (token) {
     localStorage.setItem('session_token', token)
-    logFrontendAuthEvent('session_token_changed', { previousPresent, nextPresent: true })
+    logFrontendAuthEvent('session_token_changed', { previousPresent, nextPresent: true, ...metadata })
   } else {
     localStorage.removeItem('session_token')
-    logFrontendAuthEvent('session_token_cleared', { previousPresent, nextPresent: false })
+    logFrontendAuthEvent('session_token_cleared', { previousPresent, nextPresent: false, ...metadata })
   }
 }
 
@@ -104,7 +104,7 @@ export const authAPI = {
   changePassword: async (currentPassword: string, newPassword: string) =>
     apiFetch('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
 
-  signout: () => setSessionToken(null),
+  signout: (metadata: { reason?: string; source?: string } = {}) => setSessionToken(null, metadata),
 }
 
 // =====================================================
