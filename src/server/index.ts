@@ -16,6 +16,10 @@ import { provisionMatchServer, startGameServerMonitor } from './rcon'
 import { SUPPORTED_REGIONS, isSupportedRegionId } from '../shared/regions'
 import { resolveSteamLoginUser } from './steamAuthAccount'
 import { authSessionRejection, AuthTokenPayload } from './authSession'
+import { normalizePublicServerEndpoint } from '../shared/serverEndpoint'
+import { HostAgentProtocolError, parseHostAgentReport } from './hostAgentProtocol'
+import { isDevelopmentPlayerResultEnabled, playerResultRejection } from './competitiveResultSecurity'
+import { HostAgentEventError, parseHostAgentEvent } from './hostAgentEventProtocol'
 
 dotenv.config()
 
@@ -27,6 +31,7 @@ const app = express()
 app.set('trust proxy', 1)
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001
 const serveFrontend = process.env.SERVE_FRONTEND === 'true'
+const developmentPlayerResultEnabled=isDevelopmentPlayerResultEnabled()
 type LogLevel = 'info' | 'warn' | 'error'
 const configuredLogLevel=String(process.env.LOG_LEVEL||'info').toLowerCase()
 if(!['info','warn','error'].includes(configuredLogLevel))throw new Error('LOG_LEVEL must be info, warn, or error')
@@ -38,6 +43,7 @@ const logEvent = (level: LogLevel, event: string, details: Record<string, unknow
   else if (level === 'warn') console.warn(entry)
   else console.log(entry)
 }
+if(developmentPlayerResultEnabled)logEvent('warn','development_player_result_submission_enabled',{nodeEnv:process.env.NODE_ENV||'development'})
 const developmentJwtSecret = 'sector-nine-dev-secret-change-in-production'
 const configuredJwtSecret = process.env.JWT_SECRET
 if (process.env.NODE_ENV === 'production' &&
@@ -553,30 +559,85 @@ app.post('/game-server/:id/heartbeat',async(req,res)=>{
   const authorization=String(req.headers.authorization||''),token=authorization.startsWith('Bearer ')?authorization.slice(7):''
   if(!token)return res.status(401).json({error:'Server agent token required'})
   const tokenHash=crypto.createHash('sha256').update(token).digest('hex')
-  const playerCount=Number(req.body.playerCount),mapName=typeof req.body.map==='string'?req.body.map.trim().slice(0,100):null
-  const players=Array.isArray(req.body.players)?req.body.players.slice(0,128).map((player:any)=>({name:String(player?.name||'').slice(0,100),steamId:player?.steamId?String(player.steamId).slice(0,40):null})):[]
-  if(!Number.isInteger(playerCount)||playerCount<0||playerCount>256)return res.status(400).json({error:'Invalid player count'})
+  let report
+  try{report=parseHostAgentReport(req.body)}catch(error){const failure=error as HostAgentProtocolError;logEvent('warn','host_agent_report_rejected',{serverId:req.params.id,code:failure.code});return res.status(failure.status||400).json({error:failure.message,code:failure.code})}
   const db=await pool.connect()
   try{
     await db.query('BEGIN')
     const server=(await db.query('SELECT id,current_match_id,server_token_hash FROM game_servers WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0]
-    if(!server||!server.server_token_hash){await db.query('ROLLBACK');return res.status(401).json({error:'Invalid server agent token'})}
+    if(!server||!server.server_token_hash){await db.query('ROLLBACK');logEvent('warn','host_agent_auth_rejected',{serverId:req.params.id,reason:server?'token_not_configured':'unknown_server'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
     const expected=Buffer.from(server.server_token_hash,'hex'),actual=Buffer.from(tokenHash,'hex')
-    if(expected.length!==actual.length||!crypto.timingSafeEqual(expected,actual)){await db.query('ROLLBACK');return res.status(401).json({error:'Invalid server agent token'})}
-    await db.query("UPDATE game_servers SET current_players=$1,current_map=$2,last_heartbeat=NOW(),last_error=NULL,telemetry=$3,status=CASE WHEN current_match_id IS NULL THEN 'online' ELSE 'in_use' END,updated_at=NOW() WHERE id=$4",[playerCount,mapName,JSON.stringify({players,source:'agent'}),server.id])
-    await db.query('INSERT INTO game_server_player_snapshots(server_id,player_count,map_name,players) VALUES($1,$2,$3,$4)',[server.id,playerCount,mapName,JSON.stringify(players)])
-    if(server.current_match_id&&req.body.matchState==='running'){
-      await db.query("UPDATE matches SET status='in_progress',started_at=COALESCE(started_at,NOW()),result_source='game_server' WHERE id=$1 AND status='pending'",[server.current_match_id])
-      await db.query("INSERT INTO match_events(match_id,sequence,event_type,occurred_at,details) VALUES($1,1,'match_started',NOW(),jsonb_build_object('map',$2::text,'source','server_agent')) ON CONFLICT(match_id,sequence) DO NOTHING",[server.current_match_id,mapName])
+    if(expected.length!==actual.length||!crypto.timingSafeEqual(expected,actual)){await db.query('ROLLBACK');logEvent('warn','host_agent_auth_rejected',{serverId:req.params.id,reason:'token_mismatch'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
+    const payloadHash=crypto.createHash('sha256').update(JSON.stringify(report)).digest('hex')
+    if(report.type==='match_completed'){
+      const receipt=(await db.query('SELECT match_id,payload_hash FROM game_server_agent_reports WHERE server_id=$1 AND report_id=$2',[server.id,report.reportId])).rows[0]
+      if(receipt){
+        if(receipt.payload_hash!==payloadHash)throw new HostAgentProtocolError('IDEMPOTENCY_CONFLICT','reportId was already used with a different payload',409)
+        await db.query('COMMIT');logEvent('info','host_agent_completion_replayed',{serverId:server.id,matchId:receipt.match_id,reportId:report.reportId});return res.json({ok:true,matchId:receipt.match_id,idempotent:true})
+      }
     }
-    if(server.current_match_id&&req.body.matchState==='completed'){
-      await finalizeServerReportedMatch(db,server.current_match_id,String(req.body.winnerId||''),req.body.stats)
+    if(['match_running','match_completed'].includes(report.type)&&!server.current_match_id)throw new HostAgentProtocolError('NO_CURRENT_MATCH','Server has no current match',409)
+    let match:any=null
+    if(server.current_match_id){
+      match=(await db.query('SELECT id,server_id,status,player1_id,player2_id FROM matches WHERE id=$1 FOR UPDATE',[server.current_match_id])).rows[0]
+      if(!match||match.server_id!==server.id)throw new HostAgentProtocolError('STALE_MATCH_ASSOCIATION','Server current match is not authoritatively assigned to this server',409)
     }
-    const demoUrl=typeof req.body.demoUrl==='string'?req.body.demoUrl.trim():''
-    if(server.current_match_id&&demoUrl){let parsed:URL;try{parsed=new URL(demoUrl)}catch{await db.query('ROLLBACK');return res.status(400).json({error:'Invalid demo URL'})}if(!['http:','https:'].includes(parsed.protocol)||demoUrl.length>2000){await db.query('ROLLBACK');return res.status(400).json({error:'Invalid demo URL'})}await db.query('UPDATE matches SET demo_url=$1,demo_uploaded_at=NOW() WHERE id=$2',[demoUrl,server.current_match_id])}
+    if(report.type==='match_running'&&!['pending','in_progress'].includes(match.status))throw new HostAgentProtocolError('UNSUPPORTED_MATCH_TRANSITION',`Cannot report running from ${match.status}`,409)
+    if(report.type==='match_completed'&&match.status!=='in_progress')throw new HostAgentProtocolError('UNSUPPORTED_MATCH_TRANSITION',`Cannot report completed from ${match.status}`,409)
+    await db.query("UPDATE game_servers SET current_players=$1,current_map=$2,last_heartbeat=NOW(),last_error=NULL,telemetry=$3,status=CASE WHEN current_match_id IS NULL THEN 'online' ELSE 'in_use' END,updated_at=NOW() WHERE id=$4",[report.playerCount,report.map,JSON.stringify({players:report.players,source:'agent',observedAt:report.observedAt}),server.id])
+    if(report.type!=='heartbeat')await db.query('INSERT INTO game_server_player_snapshots(server_id,player_count,map_name,players,observed_at) VALUES($1,$2,$3,$4,COALESCE($5::timestamptz,NOW()))',[server.id,report.playerCount,report.map,JSON.stringify(report.players),report.observedAt])
+    if(report.type==='match_running'){
+      await db.query("UPDATE matches SET status='in_progress',started_at=COALESCE(started_at,$2::timestamptz,NOW()),result_source='game_server' WHERE id=$1",[match.id,report.observedAt])
+      await db.query("INSERT INTO match_events(match_id,sequence,event_type,occurred_at,details) VALUES($1,1,'match_started',COALESCE($2::timestamptz,NOW()),jsonb_build_object('map',$3::text,'source','server_agent')) ON CONFLICT(match_id,sequence) DO NOTHING",[match.id,report.observedAt,report.map])
+    }
+    if((report.type==='match_running'||report.type==='match_completed')&&report.demoUrl)await db.query('UPDATE matches SET demo_url=$1,demo_uploaded_at=NOW() WHERE id=$2',[report.demoUrl,match.id])
+    if(report.type==='match_completed'){
+      if(![match.player1_id,match.player2_id].includes(report.winnerId))throw new HostAgentProtocolError('INVALID_WINNER','Winner must be a current match participant',400)
+      await finalizeServerReportedMatch(db,match.id,report.winnerId,report.stats)
+      await db.query('INSERT INTO game_server_agent_reports(server_id,report_id,report_type,match_id,payload_hash) VALUES($1,$2,$3,$4,$5)',[server.id,report.reportId,report.type,match.id,payloadHash])
+    }
     await db.query('COMMIT')
-    return res.json({ok:true,matchId:server.current_match_id||null})
-  }catch(err:any){await db.query('ROLLBACK');return err?.message===noServerInSelectedRegionError?res.status(409).json({error:noServerInSelectedRegionError,code:'NO_SERVER_IN_SELECTED_REGION'}):sendDatabaseError(res,err)}finally{db.release()}
+    logEvent('info','host_agent_report_accepted',{serverId:server.id,matchId:match?.id||null,reportType:report.type,playerCount:report.playerCount,reportId:report.type==='match_completed'?report.reportId:undefined})
+    return res.json({ok:true,matchId:match?.id||null,idempotent:false})
+  }catch(err:any){await db.query('ROLLBACK');if(err instanceof HostAgentProtocolError){logEvent('warn','host_agent_report_rejected',{serverId:req.params.id,reportType:report.type,code:err.code});return res.status(err.status).json({error:err.message,code:err.code})}return sendDatabaseError(res,err)}finally{db.release()}
+})
+
+app.post('/game-server/:id/events',async(req,res)=>{
+  const authorization=String(req.headers.authorization||''),token=authorization.startsWith('Bearer ')?authorization.slice(7):''
+  if(!token)return res.status(401).json({error:'Server agent token required',code:'INVALID_SERVER_TOKEN'})
+  let event
+  try{event=parseHostAgentEvent(req.body)}catch(error){const failure=error as HostAgentEventError;logEvent('warn','host_agent_event_rejected',{serverId:req.params.id,code:failure.code});return res.status(failure.status).json({error:failure.message,code:failure.code})}
+  const tokenHash=crypto.createHash('sha256').update(token).digest('hex')
+  const payloadHash=crypto.createHash('sha256').update(JSON.stringify(event)).digest('hex')
+  const db=await pool.connect()
+  try{
+    await db.query('BEGIN')
+    const server=(await db.query('SELECT id,current_match_id,server_token_hash FROM game_servers WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0]
+    if(!server||!server.server_token_hash){await db.query('ROLLBACK');logEvent('warn','host_agent_event_auth_rejected',{serverId:req.params.id,reason:server?'token_not_configured':'unknown_server'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
+    const expected=Buffer.from(server.server_token_hash,'hex'),actual=Buffer.from(tokenHash,'hex')
+    if(expected.length!==actual.length||!crypto.timingSafeEqual(expected,actual)){await db.query('ROLLBACK');logEvent('warn','host_agent_event_auth_rejected',{serverId:req.params.id,reason:'token_mismatch'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
+    const existing=(await db.query('SELECT match_id,source_payload_hash FROM match_events WHERE source_server_id=$1 AND source_event_id=$2',[server.id,event.eventId])).rows[0]
+    if(existing){
+      if(existing.source_payload_hash!==payloadHash)throw new HostAgentEventError('EVENT_ID_CONFLICT','eventId was already used with different event data',409)
+      await db.query('COMMIT');logEvent('info','host_agent_event_replayed',{serverId:server.id,matchId:existing.match_id,eventId:event.eventId,sourceSequence:event.sequence});return res.json({ok:true,matchId:existing.match_id,eventId:event.eventId,idempotent:true})
+    }
+    if(!server.current_match_id)throw new HostAgentEventError('NO_CURRENT_MATCH','Server has no current assigned match',409)
+    const match=(await db.query('SELECT id,server_id,status,player1_id,player2_id FROM matches WHERE id=$1 FOR UPDATE',[server.current_match_id])).rows[0]
+    if(!match||match.server_id!==server.id)throw new HostAgentEventError('STALE_MATCH_ASSOCIATION','Current match is not authoritatively assigned to this server',409)
+    if(match.status==='completed')throw new HostAgentEventError('MATCH_ALREADY_COMPLETED','Completed matches cannot receive gameplay events',409)
+    if(match.status!=='in_progress')throw new HostAgentEventError('MATCH_NOT_IN_PROGRESS','Only an in-progress match can receive gameplay events',409)
+    const participants=[match.player1_id,match.player2_id]
+    if(event.actorUserId&&!participants.includes(event.actorUserId))throw new HostAgentEventError('EVENT_ACTOR_NOT_PARTICIPANT','Kill actor is not a match participant',403)
+    if(!participants.includes(event.targetUserId))throw new HostAgentEventError('EVENT_TARGET_NOT_PARTICIPANT','Kill target is not a match participant',403)
+    const sequenceConflict=(await db.query('SELECT source_event_id FROM match_events WHERE match_id=$1 AND source_server_id=$2 AND source_sequence=$3',[match.id,server.id,event.sequence])).rows[0]
+    if(sequenceConflict)throw new HostAgentEventError('EVENT_SEQUENCE_CONFLICT','sequence was already used by another event',409)
+    const databaseSequence=Number((await db.query('SELECT GREATEST(1000,COALESCE(MAX(sequence),0))+1 sequence FROM match_events WHERE match_id=$1',[match.id])).rows[0].sequence)
+    await db.query(`INSERT INTO match_events(match_id,sequence,event_type,actor_user_id,target_user_id,occurred_at,details,source_server_id,source_event_id,source_sequence,source_payload_hash)
+      VALUES($1,$2,'kill',$3,$4,$5,jsonb_strip_nulls(jsonb_build_object('weapon',$6::text,'source','server_agent','sourceSequence',$7::int)),$8,$9,$7,$10)`,[match.id,databaseSequence,event.actorUserId,event.targetUserId,event.occurredAt,event.weapon,event.sequence,server.id,event.eventId,payloadHash])
+    await db.query('COMMIT')
+    logEvent('info','host_agent_event_accepted',{serverId:server.id,matchId:match.id,eventId:event.eventId,eventType:event.type,sourceSequence:event.sequence})
+    return res.status(201).json({ok:true,matchId:match.id,eventId:event.eventId,idempotent:false})
+  }catch(error:any){await db.query('ROLLBACK');if(error instanceof HostAgentEventError){logEvent('warn','host_agent_event_rejected',{serverId:req.params.id,eventId:event.eventId,code:error.code,sourceSequence:event.sequence});return res.status(error.status).json({error:error.message,code:error.code})}return sendDatabaseError(res,error)}finally{db.release()}
 })
 
 app.get('/game-servers/status',async(req,res)=>{
@@ -584,7 +645,7 @@ app.get('/game-servers/status',async(req,res)=>{
   if(!isSupportedGameId(gameId))return res.status(400).json({error:'Invalid game ID',code:'INVALID_GAME_ID'})
   try{
     const servers=await pool.query(
-      `SELECT id,name,game_id,region,ip_address public_host,port,max_slots,status,current_players,current_map,last_heartbeat,
+      `SELECT id,name,game_id,region,public_host,public_port,max_slots,status,current_players,current_map,last_heartbeat,
               CASE WHEN jsonb_typeof(telemetry->'players')='array' THEN telemetry->'players' ELSE '[]'::jsonb END players
        FROM game_servers WHERE game_id=$1 ORDER BY region,name`,[gameId])
     return res.json({servers:servers.rows})
@@ -1565,7 +1626,7 @@ const getMatchmakingState=async(db:any,userId:string)=>{
     `SELECT m.*,mine.status AS viewer_acceptance,counts.accepted_count,counts.pending_count,
             opponent.id AS opponent_id,opponent.username AS opponent_username,${displayNameSql('opponent')} AS opponent_display_name,
             gs.id AS assigned_server_id,gs.name AS server_name,gs.region AS server_region,
-            gs.ip_address AS server_host,gs.port AS server_port
+            gs.public_host AS server_host,gs.public_port AS server_port
      FROM match_acceptances mine
      JOIN matches m ON m.id=mine.match_id
      JOIN users opponent ON opponent.id=CASE WHEN m.player1_id=$1 THEN m.player2_id ELSE m.player1_id END
@@ -1585,23 +1646,24 @@ const getMatchmakingState=async(db:any,userId:string)=>{
   const mapPool=(await db.query('SELECT maps FROM game_map_pools WHERE game_id=$1 AND game_mode=$2 AND is_active',[match.game_id,match.game_mode])).rows[0]?.maps||[]
   const remainingMaps=(match.maps||[]).filter((map:string)=>!bans.some((ban:any)=>ban.map_id===map))
   const state=match.server_id?'server_assigned':match.accepted_count<2?(match.accepted_count>0?'accepting':'found'):match.selected_map?'accepted':selections.length<2?'map_selecting':'map_banning'
+  const publicEndpoint=normalizePublicServerEndpoint(match.server_host,match.server_port)
   return{state,match,viewerAccepted:match.viewer_acceptance==='accepted',acceptedCount:match.accepted_count,totalPlayers:2,
     mapSelection:match.accepted_count===2?{requiredCount:5,availableMaps:mapPool,viewerMaps:ownSelection?.maps||[],viewerConfirmed:Boolean(ownSelection),opponentConfirmed:Boolean(opponentSelection),opponentSelectedCount:opponentSelection?.maps?.length||0,unavailableMaps:opponentSelection?.maps||[]}:null,
     mapBan:selections.length===2?{pool:match.maps||[],remainingMaps,bans,currentTurnUserId:match.map_ban_turn_user_id,isViewerTurn:String(match.map_ban_turn_user_id||'')===userId}:null,
-    server:match.server_id?{id:match.assigned_server_id,name:match.server_name,region:match.server_region,host:match.server_host,port:match.server_port}:null}
+    server:match.server_id&&publicEndpoint?{id:match.assigned_server_id,name:match.server_name,region:match.server_region,host:publicEndpoint.host,port:publicEndpoint.port}:null}
 }
 
 const assignMatchmakingServer=async(db:any,matchId:string)=>{
-  const match=(await db.query("SELECT id,game_id,server_id,status,matchmaking_region,selected_map FROM matches WHERE id=$1 FOR UPDATE",[matchId])).rows[0]
+  const match=(await db.query("SELECT id,game_id,game_mode,server_id,status,matchmaking_region,selected_map FROM matches WHERE id=$1 FOR UPDATE",[matchId])).rows[0]
   if(!match||match.status!=='pending'||match.server_id||!match.selected_map)return
   if(!isSupportedRegionId(match.matchmaking_region))throw new Error('Match has no supported matchmaking region.')
   const accepted=Number((await db.query("SELECT COUNT(*)::int count FROM match_acceptances WHERE match_id=$1 AND status='accepted'",[matchId])).rows[0].count)
   if(accepted!==2)return
   const server=(await db.query(
     `SELECT id FROM game_servers
-     WHERE game_id=$1 AND region=$2 AND status='online' AND current_match_id IS NULL
+     WHERE game_id=$1 AND game_mode=$2 AND region=$3 AND status='online' AND current_match_id IS NULL
      ORDER BY created_at
-     FOR UPDATE SKIP LOCKED LIMIT 1`,[match.game_id,match.matchmaking_region])).rows[0]
+     FOR UPDATE SKIP LOCKED LIMIT 1`,[match.game_id,match.game_mode,match.matchmaking_region])).rows[0]
   if(!server)throw new Error(noServerInSelectedRegionError)
   // Keep the match pending until RCON confirms that the selected map started.
   await db.query("UPDATE matches SET server_id=$1 WHERE id=$2",[server.id,matchId])
@@ -1859,7 +1921,7 @@ app.get('/match/:id/timeline',requireAuth,async(req:AuthRequest,res)=>{
     const events=await pool.query(
       `SELECT e.*,COALESCE(${displayNameSql('a')},'A player') actor_name,COALESCE(${displayNameSql('t')},'A player') target_name
        FROM match_events e LEFT JOIN users a ON a.id=e.actor_user_id LEFT JOIN users t ON t.id=e.target_user_id
-       WHERE e.match_id=$1 ORDER BY e.sequence`,[req.params.id])
+       WHERE e.match_id=$1 ORDER BY e.occurred_at,e.sequence`,[req.params.id])
     return res.json({events:events.rows,replay:match.demo_url?{url:match.demo_url,uploadedAt:match.demo_uploaded_at}:null})
   }catch(err:any){return sendDatabaseError(res,err)}
 })
@@ -1874,19 +1936,17 @@ app.post('/match/:id/result', requireAuth, async (req: AuthRequest, res) => {
     const match = matchResult.rows[0]
     if (!match) {
       await db.query('ROLLBACK')
-      return res.status(404).json({ error: 'Match not found' })
+      return res.status(404).json({ error: 'Match not found', code: 'MATCH_NOT_FOUND' })
     }
-    if (req.userId !== match.player1_id && req.userId !== match.player2_id) {
+    const rejection=playerResultRejection({isParticipant:req.userId===match.player1_id||req.userId===match.player2_id,matchStatus:match.status,enabled:developmentPlayerResultEnabled})
+    if(rejection){
       await db.query('ROLLBACK')
-      return res.status(403).json({ error: 'Only match participants may submit a result' })
-    }
-    if (match.status !== 'in_progress') {
-      await db.query('ROLLBACK')
-      return res.status(409).json({ error: 'Only an in-progress match can receive a result' })
+      logEvent('warn','player_match_result_rejected',{matchId,userId:req.userId,code:rejection.code,matchStatus:match.status})
+      return res.status(rejection.status).json({error:rejection.error,code:rejection.code})
     }
     if (winnerId !== match.player1_id && winnerId !== match.player2_id) {
       await db.query('ROLLBACK')
-      return res.status(400).json({ error: 'Winner must be a participant in this match' })
+      return res.status(400).json({ error: 'Winner must be a participant in this match', code: 'INVALID_MATCH_WINNER' })
     }
     const statKeys = ['score_p1', 'score_p2', 'p1_kills', 'p1_deaths', 'p2_kills', 'p2_deaths']
     const normalizedStats: Record<string, number> = {}
@@ -1894,7 +1954,7 @@ app.post('/match/:id/result', requireAuth, async (req: AuthRequest, res) => {
       const value = Number(stats?.[key] ?? 0)
       if (!Number.isInteger(value) || value < 0 || value > 100000) {
         await db.query('ROLLBACK')
-        return res.status(400).json({ error: `Invalid match statistic: ${key}` })
+        return res.status(400).json({ error: `Invalid match statistic: ${key}`, code: 'INVALID_MATCH_STATISTIC' })
       }
       normalizedStats[key] = value
     }
@@ -2000,7 +2060,8 @@ app.post('/match/:id/result', requireAuth, async (req: AuthRequest, res) => {
     )
 
     await db.query('COMMIT')
-    return res.json({ ok: true })
+    logEvent('warn','development_player_match_result_accepted',{matchId,userId:req.userId})
+    return res.json({ ok: true, source: 'player_development' })
   } catch (err: any) {
     await db.query('ROLLBACK')
     return sendInternalError(res, err)

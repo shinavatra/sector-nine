@@ -89,6 +89,12 @@
     "db:migrate:status": "node scripts/migrate-postgres.mjs --status",
     "test:steam-auth": "node scripts/test-steam-auth-flow.mjs",
     "test:display-name": "node scripts/test-display-name-flow.mjs",
+    "test:game-server-mode": "node scripts/test-game-server-mode-isolation.mjs",
+    "test:server-connect": "node scripts/test-server-connect-action.mjs",
+    "test:game-server-endpoints": "node scripts/test-game-server-endpoints.mjs",
+    "test:host-agent": "npm run build:server && node scripts/test-host-agent-protocol.mjs",
+    "test:competitive-result-security": "npm run build:server && node scripts/test-competitive-result-security.mjs",
+    "test:host-agent-events": "npm run build:server && node scripts/test-host-agent-events.mjs",
     "db:test": "node -e \"require('dotenv').config(); const {Pool}=require('pg'); const p=new Pool({connectionString:process.env.DATABASE_URL}); p.query('SELECT version()').then(r=>{console.log('✅ Connected:',r.rows[0].version.slice(0,50));p.end()}).catch(e=>{console.error('❌',e.message);p.end()})\""
   }
 }

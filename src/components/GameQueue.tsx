@@ -1,9 +1,11 @@
-import { CheckCircle2, Clock3, Gamepad2, Loader2, Map, MapPin, Server, UserCheck, Users } from "lucide-react";
+import { CheckCircle2, Clock3, Copy, ExternalLink, Gamepad2, Loader2, Map, MapPin, Server, UserCheck, Users } from "lucide-react";
 import type { ReactNode } from "react";
+import { toast } from "sonner";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { displayPlayerName } from "../utils/displayName";
+import { buildConnectCommand, buildSteamConnectUri, normalizePublicServerEndpoint } from "../shared/serverEndpoint";
 
 export type MatchmakingState = "idle" | "searching" | "found" | "accepting" | "map_selecting" | "map_banning" | "accepted" | "server_assigned";
 
@@ -29,7 +31,6 @@ interface GameQueueProps {
   onDecline: () => void;
   onSubmitMaps: () => void;
   onBanMap: (mapId: string) => void;
-  onLaunch: () => void;
   selectedGame: string;
   connectedRegion: string;
   selectedMaps: string[];
@@ -40,7 +41,7 @@ const labels: Record<MatchmakingState, string> = {
   map_selecting: "MAP SELECTION", map_banning: "MAP VETO", accepted: "MAP SELECTED", server_assigned: "SERVER ASSIGNED",
 };
 
-export function GameQueue({ snapshot, busy = false, disabled = false, onStart, onCancel, onAccept, onDecline, onSubmitMaps, onBanMap, onLaunch, selectedGame, connectedRegion, selectedMaps }: GameQueueProps) {
+export function GameQueue({ snapshot, busy = false, disabled = false, onStart, onCancel, onAccept, onDecline, onSubmitMaps, onBanMap, selectedGame, connectedRegion, selectedMaps }: GameQueueProps) {
   const state = snapshot.state || "idle";
   const active = state !== "idle";
   const game = snapshot.queue?.game_id || snapshot.match?.game_id || selectedGame;
@@ -48,6 +49,21 @@ export function GameQueue({ snapshot, busy = false, disabled = false, onStart, o
   const maps = snapshot.match?.selected_map ? [snapshot.match.selected_map] : snapshot.match?.maps?.length ? snapshot.match.maps : snapshot.queue?.selected_maps?.length ? snapshot.queue.selected_maps : selectedMaps;
   const selection = snapshot.mapSelection;
   const veto = snapshot.mapBan;
+  const endpoint=normalizePublicServerEndpoint(snapshot.server?.host,snapshot.server?.port);
+  const connectCommand=buildConnectCommand(snapshot.server?.host,snapshot.server?.port);
+  const steamConnectUri=buildSteamConnectUri(snapshot.match?.game_id,snapshot.server?.host,snapshot.server?.port);
+  const copyConnectCommand=async()=>{
+    if(!connectCommand)return;
+    try{
+      if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(connectCommand);
+      else{
+        const field=document.createElement('textarea');field.value=connectCommand;field.style.position='fixed';field.style.opacity='0';document.body.appendChild(field);field.select();
+        if(!document.execCommand('copy'))throw new Error('Copy command was rejected');
+        field.remove();
+      }
+      toast.success('Connect command copied',{description:connectCommand});
+    }catch{toast.error('Unable to copy automatically',{description:`Copy manually: ${connectCommand}`})}
+  };
 
   return (
     <Card className="w-full border-orange-900/20 bg-black/40">
@@ -59,7 +75,8 @@ export function GameQueue({ snapshot, busy = false, disabled = false, onStart, o
         {state === "map_selecting" && <State icon={<Map className="size-7"/>} title="SELECT 5 MAPS" detail={selection?.viewerConfirmed ? "Your five maps are locked. Waiting for your opponent." : `Choose five maps not already claimed by your opponent (${selection?.opponentSelectedCount || 0}/5).`}/>}
         {state === "map_banning" && <State icon={<Map className="size-7"/>} title="MAP VETO" detail={veto?.isViewerTurn ? "Your turn. Ban one map from the remaining pool." : "Opponent's turn. Waiting for their ban."}/>}
         {state === "accepted" && <State icon={<CheckCircle2 className="size-7"/>} title="FINAL MAP SELECTED" detail={`${snapshot.match?.selected_map?.toUpperCase() || "The final map"} remains. Waiting for an available server.`}/>}
-        {state === "server_assigned" && <State icon={<Server className="size-7"/>} title="SERVER ASSIGNED" detail={snapshot.server ? `${snapshot.server.name} - ${snapshot.server.region} - ${snapshot.server.host}:${snapshot.server.port}` : "The backend assigned the match server."}/>}
+        {state === "server_assigned" && (!snapshot.server||!endpoint) && <State icon={<Loader2 className="size-7 animate-spin"/>} title="WAITING FOR GAME SERVER" detail="Waiting for game server..."/>}
+        {state === "server_assigned" && snapshot.server && endpoint && <div className="rounded border border-green-800/40 bg-green-950/15 p-4 text-center"><Server className="mx-auto size-7 text-green-400"/><p className="mt-2 font-mono font-bold text-green-400">SERVER READY</p><p className="mt-2 font-mono text-sm text-orange-200">{snapshot.server.name}</p><p className="mt-1 font-mono text-xs text-gray-400">{snapshot.server.region}</p><p className="mt-3 break-all rounded border border-orange-900/30 bg-black/40 px-3 py-2 font-mono text-sm text-green-300">{endpoint.endpoint}</p><div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">{steamConnectUri&&<Button asChild className="w-full bg-green-800 text-green-100 hover:bg-green-700 sm:w-auto"><a href={steamConnectUri}><ExternalLink/>CONNECT TO SERVER</a></Button>}<Button type="button" variant="outline" onClick={()=>void copyConnectCommand()} className="w-full border-orange-800/50 text-orange-200 sm:w-auto"><Copy/>COPY CONNECT COMMAND</Button></div><p className="mt-3 text-[11px] font-mono text-gray-500">If Steam does not open, copy the command and paste it into the Half-Life console.</p></div>}
 
         {state === "map_banning" && veto && <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">{veto.remainingMaps.map(map => <Button key={map} type="button" variant="outline" disabled={busy || !veto.isViewerTurn} onClick={() => onBanMap(map)} className="h-auto min-h-10 whitespace-normal border-orange-800/50 px-2 py-2 font-mono text-xs text-orange-200 hover:bg-red-950 hover:text-red-200">{map.toUpperCase()}</Button>)}</div>}
 
@@ -79,7 +96,6 @@ export function GameQueue({ snapshot, busy = false, disabled = false, onStart, o
           {state === "accepting" && snapshot.viewerAccepted && <p className="font-mono text-sm text-green-300">YOUR ACCEPTANCE IS RECORDED</p>}
           {state === "map_selecting" && !selection?.viewerConfirmed && <Button onClick={onSubmitMaps} disabled={busy || selectedMaps.length !== (selection?.requiredCount || 5)} className="bg-green-800 text-green-100 hover:bg-green-700">{busy ? "CONFIRMING..." : "CONFIRM 5 MAPS"}</Button>}
           {state === "map_selecting" && selection?.viewerConfirmed && <p className="font-mono text-sm text-green-300">YOUR 5 MAPS ARE CONFIRMED</p>}
-          {state === "server_assigned" && <Button onClick={onLaunch} disabled={busy} className="bg-green-800 text-green-100 hover:bg-green-700">OPEN ACTIVE MATCH</Button>}
         </div>
         {active && <p className="text-center text-[11px] font-mono text-gray-600">State is synchronized from the backend and PostgreSQL.</p>}
       </CardContent>

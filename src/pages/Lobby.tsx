@@ -479,7 +479,7 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
                 </div>
 
                 <div className="flex flex-col items-center gap-4">
-                  <GameQueue snapshot={queue} busy={queueBusy} disabled={!isReadyToSearch} selectedGame={selectedGame.name} connectedRegion={SUPPORTED_REGIONS.find(region=>region.id===selectedServer)?.label||selectedServer} selectedMaps={selectedMaps} onStart={handleFindMatch} onCancel={stopSearching} onAccept={acceptMatch} onDecline={declineMatch} onSubmitMaps={submitMatchMaps} onBanMap={banMatchMap} onLaunch={()=>queue.match&&onStartMatch?.(queue.match.game_mode,queue.match.selected_map)}/>
+                  <GameQueue snapshot={queue} busy={queueBusy} disabled={!isReadyToSearch} selectedGame={selectedGame.name} connectedRegion={SUPPORTED_REGIONS.find(region=>region.id===selectedServer)?.label||selectedServer} selectedMaps={selectedMaps} onStart={handleFindMatch} onCancel={stopSearching} onAccept={acceptMatch} onDecline={declineMatch} onSubmitMaps={submitMatchMaps} onBanMap={banMatchMap}/>
                 </div>
 
                 {!isReadyToSearch && queue.state === "idle" && !isBanned && (

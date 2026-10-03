@@ -3,7 +3,7 @@ import type {Pool,PoolClient} from 'pg'
 import SourceRcon from 'rcon-srcds'
 
 type Db=Pool|PoolClient
-type ServerRow={id:string;game_id:string;ip_address:string;port:number;rcon_secret_encrypted:string;current_match_id?:string|null}
+type ServerRow={id:string;game_id:string;rcon_host:string;rcon_port:number;rcon_secret_encrypted:string;current_match_id?:string|null}
 
 const encryptionKey=()=>{
   const raw=process.env.RCON_ENCRYPTION_KEY||''
@@ -39,13 +39,13 @@ export const sendRconCommand=async(server:ServerRow,command:string)=>{
   const password=decryptRconSecret(server.rcon_secret_encrypted)
   if(['hl1','cs16'].includes(server.game_id)){
     const {rconCommand}=await importGoldSrc()
-    return rconCommand(server.ip_address,Number(server.port),password,command,{challengeTimeoutMs:3000,quietMs:500,commandTimeoutMs:5000})
+    return rconCommand(server.rcon_host,Number(server.rcon_port),password,command,{challengeTimeoutMs:3000,quietMs:500,commandTimeoutMs:5000})
   }
   if(server.game_id==='l4d2'){
-    const client=new SourceRcon({host:server.ip_address,port:Number(server.port),timeout:5000,encoding:'utf8'})
+    const client=new SourceRcon({host:server.rcon_host,port:Number(server.rcon_port),timeout:5000,encoding:'utf8'})
     try{await client.authenticate(password);return String(await client.execute(command)||'')}finally{await client.disconnect().catch(()=>{})}
   }
-  if(server.game_id==='cod4')return quakeCommand(server.ip_address,Number(server.port),password,command)
+  if(server.game_id==='cod4')return quakeCommand(server.rcon_host,Number(server.rcon_port),password,command)
   throw new Error('Unsupported RCON game protocol')
 }
 
@@ -58,7 +58,7 @@ export const parseServerStatus=(raw:string)=>{
   return{map,playerCount:declared?Number(declared[1]):players.length,players,raw:raw.slice(0,20000)}
 }
 
-const serverColumns='id,game_id,ip_address,port,rcon_secret_encrypted,current_match_id'
+const serverColumns='id,game_id,rcon_host,rcon_port,rcon_secret_encrypted,current_match_id'
 
 export const probeServer=async(db:Db,server:ServerRow)=>{
   try{
