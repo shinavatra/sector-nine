@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from 'react';
-import { authAPI, friendsAPI, getSessionToken, logFrontendAuthEvent, presenceAPI, userAPI } from '../utils/api';
+import { authAPI, friendsAPI, getSessionToken, logFrontendAuthEvent, presenceAPI, SESSION_IDENTITY_CHANGED_EVENT, userAPI } from '../utils/api';
 const defaultAvatar = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%230b0b0b"/%3E%3Ctext x="50" y="68" text-anchor="middle" font-size="62" fill="%23fb923c"%3E%CE%BB%3C/text%3E%3C/svg%3E';
 
 // =====================================================
@@ -156,6 +156,17 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const profileRequestRevision = useRef(0);
   const previousUserId = useRef<string | null>(null);
 
+  useEffect(() => {
+    const clearPreviousIdentity = () => {
+      profileRequestRevision.current += 1;
+      setUser(null);
+      setOnlineFriends([]);
+      logFrontendAuthEvent('frontend_user_state', { userId: null, role: null, isAdmin: false, reason: 'session_identity_changed' });
+    };
+    window.addEventListener(SESSION_IDENTITY_CHANGED_EVENT, clearPreviousIdentity);
+    return () => window.removeEventListener(SESSION_IDENTITY_CHANGED_EVENT, clearPreviousIdentity);
+  }, []);
+
   const refreshOnlineFriends = useCallback(async () => {
     const result = await friendsAPI.getOnline();
     const next = Array.isArray(result.friends) ? result.friends : [];
@@ -192,6 +203,10 @@ export function UserProvider({ children }: { children: ReactNode }) {
       previousUserId.current = nextUserId;
     }
   }, [user?.id]);
+
+  useEffect(() => {
+    logFrontendAuthEvent('frontend_user_state', { userId: user?.id || null, role: user?.role || null, isAdmin: user?.role === 'admin' });
+  }, [user?.id, user?.role]);
 
   const updateProfile = useCallback(async (updates: Partial<UserProfile>) => {
     const { profile } = await userAPI.updateProfile(updates);

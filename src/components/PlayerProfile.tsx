@@ -20,6 +20,7 @@ interface PlayerProfileProps {
     equippedFrame?: string | null;
     isOnline?: boolean;
     isPremium?: boolean;
+    isAdmin?: boolean;
   };
 }
 
@@ -43,11 +44,11 @@ export function PlayerProfile({ player }: PlayerProfileProps) {
             </FramedAvatar>
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-orange-400">{player.name}</h3>
-            <Badge variant="secondary" className="mt-1 bg-green-900/20 text-green-400 border-green-900/30 font-mono">
+            <div className="flex flex-wrap items-center justify-center gap-2"><h3 className="text-lg font-semibold text-orange-400">{player.name}</h3>{player.isAdmin&&<Badge className="border border-red-700/50 bg-red-950/50 font-mono text-red-200">ADMIN</Badge>}</div>
+            {!player.isAdmin&&<Badge variant="secondary" className="mt-1 bg-green-900/20 text-green-400 border-green-900/30 font-mono">
               <Trophy className="w-3 h-3 mr-1" />
               {player.rank}
-            </Badge>
+            </Badge>}
             <div className="mt-3 flex flex-wrap justify-center gap-1.5 text-[10px] font-mono">
               <span className={`rounded border px-2 py-1 ${player.isOnline ? "border-green-900/40 bg-green-950/20 text-green-400" : "border-gray-800 bg-gray-950/40 text-gray-500"}`}>
                 {player.isOnline ? "ONLINE" : "OFFLINE"}
@@ -60,13 +61,13 @@ export function PlayerProfile({ player }: PlayerProfileProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div>
+        {!player.isAdmin&&<div>
           <div className="flex justify-between items-center mb-2">
             <span className="text-sm text-green-400 font-mono">SECURITY LEVEL {player.level}</span>
             <span className="text-sm text-orange-400 font-mono">{player.experience}/{player.maxExperience} EXP</span>
           </div>
           <Progress value={(player.experience / player.maxExperience) * 100} className="h-2 bg-gray-800" />
-        </div>
+        </div>}
         
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div className="flex items-center space-x-1">

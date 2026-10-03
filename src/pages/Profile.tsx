@@ -22,6 +22,7 @@ import { achievementAPI } from "../utils/api";
 import { MatchHistory } from "../components/MatchHistory";
 import { FramedAvatar } from "../components/FramedAvatar";
 import { displayPlayerName } from "../utils/displayName";
+import { isAdminUser, showPlayerProgression } from "../utils/userRole";
 
 interface ProfileProps {
   onNavigate?: (page: string) => void;
@@ -92,6 +93,8 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
   }
 
   const name = displayPlayerName(user);
+  const isAdmin = isAdminUser(user);
+  const hasPlayerProgression = showPlayerProgression(user);
   const wins = Number(user.stats?.wins || 0);
   const losses = Number(user.stats?.losses || 0);
   const matches = Number(user.stats?.matchesPlayed || wins + losses);
@@ -154,7 +157,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 flex-wrap items-center gap-3">
                   <p className="truncate text-3xl font-semibold text-orange-300">{name}</p>
-                  {user.role === "admin" ? (
+                  {isAdmin ? (
                     <Badge className="border border-red-700/50 bg-red-950/50 font-mono text-red-200">ADMIN</Badge>
                   ) : vipActive ? (
                     <Badge className="border border-yellow-700/50 bg-yellow-950/40 font-mono text-yellow-200">
@@ -179,7 +182,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
               </p>
             )}
 
-            <div className="profile-xp">
+            {hasPlayerProgression && <div className="profile-xp">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2 font-mono text-sm">
                 <span className="text-green-300">LEVEL {level}</span>
                 <span className="text-orange-300">
@@ -188,7 +191,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
               </div>
               <Progress value={xpProgress} className="h-3 bg-gray-800" />
               <p className="mt-2 text-right font-mono text-xs text-gray-500">{xpProgress}% complete</p>
-            </div>
+            </div>}
           </CardContent>
         </Card>
 

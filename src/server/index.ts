@@ -314,7 +314,7 @@ const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) 
   if (!validUserId(payload.sub)) return res.status(401).json({ error: 'Invalid or expired token' })
   logEvent('info', 'auth_jwt_decoded', { userId: payload.sub, authVersion: Number(payload.av || 0) })
   try {
-    const account=(await pool.query('SELECT email,auth_version,deleted_at FROM users WHERE id=$1',[payload.sub])).rows[0]
+    const account=(await pool.query('SELECT email,role,auth_version,deleted_at,steam_id FROM users WHERE id=$1',[payload.sub])).rows[0]
     const rejectionReason = authSessionRejection(payload, account)
     logEvent('info', 'auth_session_lookup', {
       userId: payload.sub,
@@ -326,6 +326,12 @@ const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) 
       logEvent('warn', 'auth_session_rejected', { reason: rejectionReason, userId: payload.sub })
       return res.status(401).json({error:'Session is no longer active',code:'SESSION_REVOKED'})
     }
+    logEvent('info','authenticated_identity',{
+      userId:payload.sub,
+      role:account.role,
+      authProvider:account.email?'password':account.steam_id?'steam':'unknown',
+      hasSteamId:Boolean(account.steam_id),
+    })
     req.userId = payload.sub
     req.userEmail = account.email
     return next()
@@ -927,6 +933,7 @@ app.get('/user/profile', requireAuth, async (req: AuthRequest, res) => {
     const result = await pool.query(selectUserByIdSql, [req.userId])
     if (!result.rows[0]) return res.status(404).json({ error: 'Profile not found' })
     await pool.query(touchUserPresenceSql, [req.userId])
+    logEvent('info','profile_identity_returned',{userId:result.rows[0].id,role:result.rows[0].role})
     return res.json({ profile: toProfile(result.rows[0]) })
   } catch (err: any) {
     if (err?.code === '42703' && String(err.message).includes('notification_preferences')) {

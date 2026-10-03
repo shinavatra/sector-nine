@@ -9,6 +9,7 @@ import { NewsFeed } from "../components/NewsFeed";
 import { useState, useEffect } from "react";
 import heroImage from '../assets/sector-nine-hub-hero.jpg';
 import { displayPlayerName } from "../utils/displayName";
+import { isAdminUser } from "../utils/userRole";
 
 interface HubProps {
   onNavigate?: (page: string) => void;
@@ -35,6 +36,7 @@ export function Hub({ onNavigate }: HubProps) {
   const level = numberOrZero(user?.level);
   const experience = numberOrZero(user?.experience);
   const playerName = displayPlayerName(user, "Operative");
+  const isAdmin = isAdminUser(user);
   const levelStartXp = level * level * 100;
   const nextLevelXp = (level + 1) * (level + 1) * 100;
 
@@ -53,6 +55,7 @@ export function Hub({ onNavigate }: HubProps) {
     equippedFrame: user?.equippedFrame,
     isOnline: true,
     isPremium: user?.isPremium ?? false,
+    isAdmin,
   };
   
   return (

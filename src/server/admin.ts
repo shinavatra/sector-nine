@@ -6,6 +6,7 @@ import crypto from 'crypto'
 import { onlineUserPredicate } from './presence'
 import { encryptRconSecret, probeServer } from './rcon'
 import { isSupportedRegionId } from '../shared/regions'
+import { adminAuthorizationRejection } from './adminAuthorization'
 
 interface AdminRequest extends Request { adminId?: string }
 const int = (value: unknown, fallback: number, max = 100) => Math.min(max, Math.max(1, Number(value) || fallback))
@@ -36,9 +37,12 @@ export function createAdminRouter(pool: Pool, jwtSecret: string) {
     const header = req.headers.authorization
     if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized', code: 'AUTH_REQUIRED' })
     try {
-      const payload = jwt.verify(header.slice(7), jwtSecret) as { sub: string }
-      const result = await pool.query("SELECT id FROM users WHERE id=$1 AND role='admin' AND deleted_at IS NULL", [payload.sub])
-      if (!result.rows[0]) return res.status(403).json({ error: 'Administrator access required', code: 'ADMIN_REQUIRED' })
+      const payload = jwt.verify(header.slice(7), jwtSecret) as { sub: string; av?: number }
+      const account = (await pool.query('SELECT id,role,auth_version,deleted_at FROM users WHERE id=$1', [payload.sub])).rows[0]
+      const rejectionReason = adminAuthorizationRejection(payload, account)
+      console.info(JSON.stringify({timestamp:new Date().toISOString(),level:'info',event:'admin_authorization_check',userId:payload.sub,canonicalRole:account?.role||null,allowed:rejectionReason===null,reason:rejectionReason}))
+      if (rejectionReason === 'auth_version_mismatch' || rejectionReason === 'account_not_active') return res.status(401).json({ error: 'Session is no longer active', code: 'SESSION_REVOKED' })
+      if (rejectionReason) return res.status(403).json({ error: 'Administrator access required', code: 'ADMIN_REQUIRED' })
       req.adminId = payload.sub
       next()
     } catch (error: any) { return error?.code ? sendError(res,error) : res.status(401).json({ error: 'Invalid or expired token', code: 'AUTH_INVALID' }) }

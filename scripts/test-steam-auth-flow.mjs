@@ -6,6 +6,8 @@ const require = createRequire(import.meta.url)
 require('ts-node/register/transpile-only')
 const { resolveSteamLoginUser } = require('../src/server/steamAuthAccount.ts')
 const { authSessionRejection } = require('../src/server/authSession.ts')
+const { adminAuthorizationRejection } = require('../src/server/adminAuthorization.ts')
+const { isAdminUser, showPlayerProgression } = require('../src/utils/userRole.ts')
 
 const server = fs.readFileSync('src/server/index.ts', 'utf8')
 const api = fs.readFileSync('src/utils/api.tsx', 'utf8')
@@ -62,6 +64,34 @@ assert.equal(authSessionRejection({ sub: 'steam-user', av: 3 }, activeSteamAccou
 assert.equal(authSessionRejection({ sub: 'steam-user', av: 2 }, activeSteamAccount), 'auth_version_mismatch', 'revoked Steam JWT remains rejected')
 assert.equal(authSessionRejection({ sub: 'steam-user', av: 3 }, { ...activeSteamAccount, deleted_at: new Date() }), 'account_not_active', 'deactivated Steam account cannot receive an authenticated profile')
 assert.equal(authSessionRejection({ sub: 'steam-user', av: 3 }, null), 'account_not_found', 'missing Steam account cannot receive an authenticated profile')
+
+const steamOnlyUser = { id: 'steam-user', role: 'user', auth_version: 0, deleted_at: null }
+const activeAdmin = { id: 'admin-user', role: 'admin', auth_version: 2, deleted_at: null }
+assert.equal(adminAuthorizationRejection({ sub: steamOnlyUser.id, av: 0 }, steamOnlyUser), 'role_not_admin', 'Steam-only role=user cannot access admin APIs')
+assert.equal(adminAuthorizationRejection({ sub: activeAdmin.id, av: 2 }, activeAdmin), null, 'active canonical admin retains admin access')
+assert.equal(adminAuthorizationRejection({ sub: activeAdmin.id, av: 1 }, activeAdmin), 'auth_version_mismatch', 'revoked admin JWT cannot access admin APIs')
+assert.match(userContext, /SESSION_IDENTITY_CHANGED_EVENT[\s\S]+setUser\(null\)[\s\S]+setOnlineFriends\(\[\]\)/, 'account switching clears the previous identity-specific frontend state')
+assert.match(app, /currentPage === 'admin' && !isAdminUser\(user\)[\s\S]+navigate\('hub', true\)/, 'direct admin navigation redirects a non-admin user')
+assert.match(server, /profile_identity_returned'[\s\S]+userId:result\.rows\[0\]\.id/, '/user/profile logs the canonical identity returned for the JWT subject')
+assert.equal(isAdminUser({ role: 'user' }), false, 'canonical role=user never renders as admin')
+assert.equal(showPlayerProgression({ role: 'user' }), true, 'canonical role=user renders player progression')
+assert.equal(isAdminUser({ role: 'admin' }), true, 'canonical role=admin renders as admin')
+assert.equal(showPlayerProgression({ role: 'admin' }), false, 'canonical role=admin hides player progression')
+const adminThenUser = [{ role: 'admin' }, { role: 'user' }]
+assert.deepEqual(adminThenUser.map(isAdminUser), [true, false], 'admin to user switch removes admin presentation')
+assert.deepEqual(adminThenUser.map(showPlayerProgression), [false, true], 'admin to user switch restores player progression')
+const userThenAdmin = [...adminThenUser].reverse()
+assert.deepEqual(userThenAdmin.map(isAdminUser), [false, true], 'user to admin switch adds admin presentation')
+assert.deepEqual(userThenAdmin.map(showPlayerProgression), [true, false], 'user to admin switch removes player progression')
+
+const header = fs.readFileSync('src/components/Header.tsx', 'utf8')
+const profilePage = fs.readFileSync('src/pages/Profile.tsx', 'utf8')
+const hub = fs.readFileSync('src/pages/Hub.tsx', 'utf8')
+const playerProfile = fs.readFileSync('src/components/PlayerProfile.tsx', 'utf8')
+assert.match(header, /isAdmin[\s\S]+ADMIN[\s\S]+hasPlayerProgression[\s\S]+LEVEL[\s\S]+isAdmin[\s\S]+ADMINISTRATION/, 'header uses canonical role for admin badge, progression, and navigation')
+assert.match(profilePage, /isAdmin[\s\S]+ADMIN[\s\S]+hasPlayerProgression[\s\S]+profile-xp/, 'Personnel File uses canonical role for badge and progression')
+assert.match(hub, /isAdminUser\(user\)[\s\S]+isAdmin/, 'Hub passes canonical admin state into its identity card')
+assert.match(playerProfile, /player\.isAdmin&&<Badge[\s\S]+ADMIN[\s\S]+!player\.isAdmin&&<div>[\s\S]+SECURITY LEVEL/, 'Hub identity card shows admin badge or player progression, never both')
 
 const summary = { personaName: 'Gordon' }
 const makeHarness = (initialUsers = []) => {

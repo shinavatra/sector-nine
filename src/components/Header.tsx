@@ -7,6 +7,7 @@ import { CrowbarLogo } from "./CrowbarLogo";
 import { FramedAvatar } from "./FramedAvatar";
 import { useUser } from "../contexts/UserContext";
 import { displayPlayerName, playerInitials } from "../utils/displayName";
+import { isAdminUser, showPlayerProgression } from "../utils/userRole";
 
 interface HeaderProps {
   onNavigate?: (page: string) => void;
@@ -19,6 +20,8 @@ interface HeaderProps {
 export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = false, notificationUnreadCount = 0 }: HeaderProps) {
   const { user } = useUser();
   const playerName = displayPlayerName(user, "Player");
+  const isAdmin = isAdminUser(user);
+  const hasPlayerProgression = showPlayerProgression(user);
   
   const routeFor = (page: string) => ({ hub: '/hub', lobby: '/matchmaking', tournament: '/tournaments', stats: '/stats', store: '/store', notifications: '/notifications', profile: '/profile', achievements:'/achievements', configuration: '/configuration' }[page] || `/${page}`);
   const follow = (event: React.MouseEvent<HTMLAnchorElement>, page: string) => {
@@ -96,15 +99,19 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
                   <div className="flex flex-col space-y-1 leading-none">
                     <div className="flex items-center gap-2">
                       <p className="font-medium text-orange-400">{playerName}</p>
-                      {isPremium && (
+                      {isAdmin ? (
+                        <Badge className="border border-red-700/50 bg-red-950/50 px-1.5 py-0.5 text-xs font-bold text-red-200">
+                          ADMIN
+                        </Badge>
+                      ) : isPremium && (
                         <Badge className="bg-gradient-to-r from-yellow-400 to-orange-400 text-black text-xs font-bold px-1.5 py-0.5">
                           VIP
                         </Badge>
                       )}
                     </div>
-                    <p className="w-[200px] truncate text-sm text-green-400 font-mono">
+                    {hasPlayerProgression && <p className="w-[200px] truncate text-sm text-green-400 font-mono">
                       {isPremium ? 'VIP RESEARCHER' : `LEVEL ${user?.level || 0} RESEARCHER`}
-                    </p>
+                    </p>}
                   </div>
                 </div>
                 <DropdownMenuSeparator className="bg-orange-900/20" />
@@ -118,7 +125,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
                 >
                   <a href="/configuration" onClick={(event) => follow(event, 'configuration')}><Settings className="mr-2 h-4 w-4" /><span>CONFIGURATION</span></a>
                 </DropdownMenuItem>
-                {user?.role === 'admin' && <DropdownMenuItem asChild className="text-gray-300 hover:text-orange-400 hover:bg-orange-900/10"><a href="/admin" onClick={(event) => follow(event, 'admin')}><Shield className="mr-2 h-4 w-4"/><span>ADMINISTRATION</span></a></DropdownMenuItem>}
+                {isAdmin && <DropdownMenuItem asChild className="text-gray-300 hover:text-orange-400 hover:bg-orange-900/10"><a href="/admin" onClick={(event) => follow(event, 'admin')}><Shield className="mr-2 h-4 w-4"/><span>ADMINISTRATION</span></a></DropdownMenuItem>}
                 <DropdownMenuSeparator className="bg-orange-900/20" />
                 <DropdownMenuItem 
                   className="text-gray-300 hover:text-red-400 hover:bg-red-900/10"

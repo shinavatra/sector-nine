@@ -14,6 +14,7 @@ import { GlobalChat } from "./components/GlobalChat";
 import { Toaster } from "./components/ui/sonner";
 import { logFrontendAuthEvent, notificationsAPI, platformAPI, type PublicPlatformSettings } from "./utils/api";
 import { subscribeToNotificationChanges } from "./utils/notificationEvents";
+import { isAdminUser } from "./utils/userRole";
 
 const lazyPage = <T extends Record<string, unknown>>(loader: () => Promise<T>, name: keyof T) =>
   lazy(async () => ({ default: (await loader())[name] as ComponentType<any> }));
@@ -156,6 +157,13 @@ useEffect(() => {
     navigate('auth', true);
   }
 }, [isAuthenticated, isLoading, currentPage, navigate]);
+
+useEffect(() => {
+  if (!isLoading && isAuthenticated && currentPage === 'admin' && !isAdminUser(user)) {
+    logFrontendAuthEvent('admin_navigation_denied', { userId: user?.id || null, role: user?.role || null });
+    navigate('hub', true);
+  }
+}, [isAuthenticated, isLoading, currentPage, navigate, user?.id, user?.role]);
 
 const handleLogin = async (isNewUser: boolean = false) => {
   const isSteamCallback = currentPage === 'steam-callback';

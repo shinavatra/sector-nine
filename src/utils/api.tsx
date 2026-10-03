@@ -9,13 +9,15 @@ const configuredApiUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, '')
 const API_URL = configuredApiUrl || (import.meta.env.DEV ? 'http://localhost:3001' : '')
 
 let sessionToken: string | null = null
+export const SESSION_IDENTITY_CHANGED_EVENT = 'sector-nine-session-identity-changed'
 
 export const logFrontendAuthEvent = (event: string, details: Record<string, unknown> = {}) => {
   console.info(JSON.stringify({ event, ...details }))
 }
 
 export const setSessionToken = (token: string | null, metadata: { reason?: string; source?: string } = {}) => {
-  const previousPresent = Boolean(sessionToken || localStorage.getItem('session_token'))
+  const previousToken = sessionToken || localStorage.getItem('session_token')
+  const previousPresent = Boolean(previousToken)
   sessionToken = token
   if (token) {
     localStorage.setItem('session_token', token)
@@ -23,6 +25,9 @@ export const setSessionToken = (token: string | null, metadata: { reason?: strin
   } else {
     localStorage.removeItem('session_token')
     logFrontendAuthEvent('session_token_cleared', { previousPresent, nextPresent: false, ...metadata })
+  }
+  if (previousToken !== token) {
+    window.dispatchEvent(new CustomEvent(SESSION_IDENTITY_CHANGED_EVENT, { detail: { hasSessionToken: Boolean(token) } }))
   }
 }
 
