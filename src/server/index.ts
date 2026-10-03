@@ -15,6 +15,7 @@ import { onlineUserPredicate } from './presence'
 import { provisionMatchServer, startGameServerMonitor } from './rcon'
 import { SUPPORTED_REGIONS, isSupportedRegionId } from '../shared/regions'
 import { resolveSteamLoginUser } from './steamAuthAccount'
+import { authSessionRejection, AuthTokenPayload } from './authSession'
 
 dotenv.config()
 
@@ -304,16 +305,27 @@ const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) 
     return res.status(401).json({ error: 'Unauthorized' })
   }
   const token = header.split(' ')[1]
-  let payload: { sub: string; email?: string; av?: number }
+  let payload: AuthTokenPayload
   try {
     payload = jwt.verify(token, JWT_SECRET) as typeof payload
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' })
   }
   if (!validUserId(payload.sub)) return res.status(401).json({ error: 'Invalid or expired token' })
+  logEvent('info', 'auth_jwt_decoded', { userId: payload.sub, authVersion: Number(payload.av || 0) })
   try {
-    const account=(await pool.query('SELECT email,auth_version FROM users WHERE id=$1 AND deleted_at IS NULL',[payload.sub])).rows[0]
-    if(!account||Number(payload.av||0)!==Number(account.auth_version||0))return res.status(401).json({error:'Session is no longer active',code:'SESSION_REVOKED'})
+    const account=(await pool.query('SELECT email,auth_version,deleted_at FROM users WHERE id=$1',[payload.sub])).rows[0]
+    const rejectionReason = authSessionRejection(payload, account)
+    logEvent('info', 'auth_session_lookup', {
+      userId: payload.sub,
+      found: Boolean(account),
+      active: Boolean(account && !account.deleted_at),
+      authVersion: account ? Number(account.auth_version || 0) : null,
+    })
+    if(rejectionReason){
+      logEvent('warn', 'auth_session_rejected', { reason: rejectionReason, userId: payload.sub })
+      return res.status(401).json({error:'Session is no longer active',code:'SESSION_REVOKED'})
+    }
     req.userId = payload.sub
     req.userEmail = account.email
     return next()
@@ -326,7 +338,7 @@ const optionalAuth = async (req: AuthRequest, res: Response, next: NextFunction)
   const header = req.headers.authorization
   if (!header) return next()
   if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'Invalid authorization header' })
-  let payload: { sub: string; email?: string; av?: number }
+  let payload: AuthTokenPayload
   try {
     payload = jwt.verify(header.slice(7), JWT_SECRET) as typeof payload
   } catch {
@@ -334,8 +346,9 @@ const optionalAuth = async (req: AuthRequest, res: Response, next: NextFunction)
   }
   if(!validUserId(payload.sub))return res.status(401).json({error:'Invalid or expired token'})
   try{
-    const account=(await pool.query('SELECT email,auth_version FROM users WHERE id=$1 AND deleted_at IS NULL',[payload.sub])).rows[0]
-    if(!account||Number(payload.av||0)!==Number(account.auth_version||0))return res.status(401).json({error:'Session is no longer active',code:'SESSION_REVOKED'})
+    const account=(await pool.query('SELECT email,auth_version,deleted_at FROM users WHERE id=$1',[payload.sub])).rows[0]
+    const rejectionReason = authSessionRejection(payload, account)
+    if(rejectionReason)return res.status(401).json({error:'Session is no longer active',code:'SESSION_REVOKED'})
     req.userId=payload.sub
     req.userEmail=account.email
     return next()
@@ -3063,12 +3076,27 @@ const createSteamUser = async (steamId: string, summary: SteamProfileSummary) =>
 }
 
 const issueAuthSession = async (user: any, method: 'password' | 'steam', req: Request) => {
-  await pool.query(touchUserPresenceSql, [user.id])
+  const activeUser = (await pool.query('SELECT * FROM users WHERE id=$1', [user.id])).rows[0]
+  const rejectionReason = authSessionRejection(
+    { sub: user.id, av: Number(user.auth_version || 0) },
+    activeUser,
+  )
+  if (rejectionReason) {
+    logEvent('warn', 'auth_session_issuance_rejected', { reason: rejectionReason, userId: user.id, method })
+    throw new Error('ACCOUNT_NOT_ACTIVE')
+  }
+  await pool.query(touchUserPresenceSql, [activeUser.id])
   await pool.query(
     `INSERT INTO login_history(user_id,method,success,ip,user_agent) VALUES($1,$2,true,$3,$4)`,
-    [user.id, method, req.ip || null, req.get('user-agent') || null],
+    [activeUser.id, method, req.ip || null, req.get('user-agent') || null],
   ).catch(() => undefined)
-  return jwt.sign({ sub: user.id, email: user.email || undefined, av: Number(user.auth_version || 0) }, JWT_SECRET, { expiresIn: JWT_EXPIRES })
+  const authVersion = Number(activeUser.auth_version || 0)
+  const token = jwt.sign({ sub: activeUser.id, email: activeUser.email || undefined, av: authVersion }, JWT_SECRET, { expiresIn: JWT_EXPIRES })
+  logEvent('info', method === 'steam' ? 'steam_jwt_issued' : 'auth_jwt_issued', {
+    userId: activeUser.id,
+    authVersion,
+  })
+  return token
 }
 
 const getOptionalUserId = async (req: Request): Promise<string | null> => {
@@ -3244,6 +3272,9 @@ app.post('/steam/auth', async (req, res) => {
     logEvent('error','steam_auth_failed',{requestId:res.locals.requestId,errorCode:err?.code||err?.message||'UNKNOWN'})
     if (err.message === 'INVALID_SESSION') {
       return res.status(401).json({ error: 'Invalid or expired token', code: 'INVALID_SESSION' })
+    }
+    if (err.message === 'ACCOUNT_NOT_ACTIVE') {
+      return res.status(403).json({ error: 'This Sector Nine account is deactivated', code: 'ACCOUNT_NOT_ACTIVE' })
     }
     if (err.message === 'MAINTENANCE_MODE') {
       return res.status(503).json({ error: 'Platform registration is unavailable during maintenance', code: 'MAINTENANCE_MODE' })

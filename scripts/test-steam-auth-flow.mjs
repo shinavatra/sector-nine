@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 require('ts-node/register/transpile-only')
 const { resolveSteamLoginUser } = require('../src/server/steamAuthAccount.ts')
+const { authSessionRejection } = require('../src/server/authSession.ts')
 
 const server = fs.readFileSync('src/server/index.ts', 'utf8')
 const api = fs.readFileSync('src/utils/api.tsx', 'utf8')
@@ -50,6 +51,17 @@ assert.match(setup, /initiateSteamLogin\('link'\)/, 'Steam setup starts link int
 assert.match(verification, /initiateSteamLogin\('link'\)/, 'Steam verification starts link intent')
 assert.doesNotMatch(callbackPage, /This Steam account is not linked\. Register or sign in with email\/password, then connect Steam\./, 'login callback no longer shows link-only failure')
 assert.match(server, /bcrypt\.compare\(password, user\.password_hash\)/, 'email/password signin path remains present')
+assert.match(server, /const activeUser = \(await pool\.query\('SELECT \* FROM users WHERE id=\$1'/, 'Steam JWT issuance reloads the canonical account state')
+assert.match(server, /auth_session_issuance_rejected/, 'inactive accounts are rejected before a success JWT is issued')
+assert.match(server, /auth_jwt_decoded/, 'authenticated requests log safe decoded claim identifiers')
+assert.match(server, /auth_session_lookup/, 'authenticated requests log safe account lookup state')
+assert.match(server, /auth_session_rejected/, 'authenticated requests log the exact rejection reason')
+
+const activeSteamAccount = { auth_version: 3, deleted_at: null }
+assert.equal(authSessionRejection({ sub: 'steam-user', av: 3 }, activeSteamAccount), null, 'new Steam JWT is accepted for its active account')
+assert.equal(authSessionRejection({ sub: 'steam-user', av: 2 }, activeSteamAccount), 'auth_version_mismatch', 'revoked Steam JWT remains rejected')
+assert.equal(authSessionRejection({ sub: 'steam-user', av: 3 }, { ...activeSteamAccount, deleted_at: new Date() }), 'account_not_active', 'deactivated Steam account cannot receive an authenticated profile')
+assert.equal(authSessionRejection({ sub: 'steam-user', av: 3 }, null), 'account_not_found', 'missing Steam account cannot receive an authenticated profile')
 
 const summary = { personaName: 'Gordon' }
 const makeHarness = (initialUsers = []) => {
