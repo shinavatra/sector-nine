@@ -20,6 +20,7 @@ import { normalizePublicServerEndpoint } from '../shared/serverEndpoint'
 import { HostAgentProtocolError, parseHostAgentReport } from './hostAgentProtocol'
 import { isDevelopmentPlayerResultEnabled, playerResultRejection } from './competitiveResultSecurity'
 import { HostAgentEventError, parseHostAgentEvent } from './hostAgentEventProtocol'
+import { hl1EngineMapName, trustedHl1Rules } from './hl1MatchContract'
 
 dotenv.config()
 
@@ -600,6 +601,35 @@ app.post('/game-server/:id/heartbeat',async(req,res)=>{
     logEvent('info','host_agent_report_accepted',{serverId:server.id,matchId:match?.id||null,reportType:report.type,playerCount:report.playerCount,reportId:report.type==='match_completed'?report.reportId:undefined})
     return res.json({ok:true,matchId:match?.id||null,idempotent:false})
   }catch(err:any){await db.query('ROLLBACK');if(err instanceof HostAgentProtocolError){logEvent('warn','host_agent_report_rejected',{serverId:req.params.id,reportType:report.type,code:err.code});return res.status(err.status).json({error:err.message,code:err.code})}return sendDatabaseError(res,err)}finally{db.release()}
+})
+
+app.get('/game-server/:id/assignment',async(req,res)=>{
+  const authorization=String(req.headers.authorization||''),token=authorization.startsWith('Bearer ')?authorization.slice(7):''
+  if(!token)return res.status(401).json({error:'Server agent token required',code:'INVALID_SERVER_TOKEN'})
+  const tokenHash=crypto.createHash('sha256').update(token).digest('hex')
+  try{
+    const result=await pool.query(
+      `SELECT s.id server_id,s.region,s.current_match_id,s.server_token_hash,
+              m.id match_id,m.game_id,m.game_mode,m.selected_map,m.status,
+              m.player1_id,m.player2_id,p1.steam_id player1_steam_id,p2.steam_id player2_steam_id
+       FROM game_servers s
+       LEFT JOIN matches m ON m.id=s.current_match_id AND m.server_id=s.id
+       LEFT JOIN users p1 ON p1.id=m.player1_id
+       LEFT JOIN users p2 ON p2.id=m.player2_id
+       WHERE s.id=$1`,[req.params.id])
+    const row=result.rows[0]
+    if(!row||!row.server_token_hash)return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})
+    const expected=Buffer.from(row.server_token_hash,'hex'),actual=Buffer.from(tokenHash,'hex')
+    if(expected.length!==actual.length||!crypto.timingSafeEqual(expected,actual))return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})
+    if(!row.match_id)return res.status(204).end()
+    if(row.game_id!=='hl1')return res.status(409).json({error:'Assigned game is not supported by the HL1 telemetry runtime',code:'UNSUPPORTED_ASSIGNED_GAME'})
+    const rules=trustedHl1Rules(row.game_mode)
+    if(!rules)return res.status(409).json({error:'Assigned HL1 mode has no trusted rules',code:'UNSUPPORTED_ASSIGNED_MODE'})
+    if(!row.selected_map||!row.player1_steam_id||!row.player2_steam_id)return res.status(409).json({error:'Assigned match is missing map or Steam identity data',code:'INCOMPLETE_MATCH_ASSIGNMENT'})
+    const hldsMap=hl1EngineMapName(row.selected_map)
+    if(!hldsMap)return res.status(409).json({error:'Assigned map has no trusted GoldSrc mapping',code:'UNSUPPORTED_ASSIGNED_MAP'})
+    return res.json({assignment:{matchId:row.match_id,gameId:row.game_id,gameMode:row.game_mode,region:row.region,selectedMap:row.selected_map,hldsMap,fragLimit:rules.fragLimit,timeLimitSeconds:rules.timeLimitSeconds,disconnectPolicy:rules.disconnectPolicy,player1:{userId:row.player1_id,steamId:row.player1_steam_id},player2:{userId:row.player2_id,steamId:row.player2_steam_id}}})
+  }catch(err:any){return sendDatabaseError(res,err)}
 })
 
 app.post('/game-server/:id/events',async(req,res)=>{

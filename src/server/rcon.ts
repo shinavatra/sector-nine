@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import type {Pool,PoolClient} from 'pg'
 import SourceRcon from 'rcon-srcds'
+import { hl1EngineMapName } from './hl1MatchContract'
 
 type Db=Pool|PoolClient
 type ServerRow={id:string;game_id:string;rcon_host:string;rcon_port:number;rcon_secret_encrypted:string;current_match_id?:string|null}
@@ -77,10 +78,13 @@ export const provisionMatchServer=async(db:Db,matchId:string)=>{
     `SELECT s.${serverColumns.split(',').join(',s.')},m.selected_map,m.game_mode,m.status match_status
      FROM matches m JOIN game_servers s ON s.id=m.server_id WHERE m.id=$1`,[matchId])).rows[0]
   if(!row||!row.rcon_secret_encrypted||!row.selected_map||row.match_status!=='pending')return false
-  if(!/^[a-zA-Z0-9_]+$/.test(row.selected_map))throw new Error('Selected map contains unsupported characters')
-  try{await sendRconCommand(row,`changelevel ${row.selected_map}`)}catch(error:any){await db.query("UPDATE game_servers SET status='offline',last_error=$1,updated_at=NOW() WHERE id=$2",[String(error?.message||error).slice(0,1000),row.id]);return false}
-  await db.query("UPDATE matches SET status='in_progress',started_at=NOW(),result_source='game_server' WHERE id=$1 AND status='pending'",[matchId])
-  await db.query("INSERT INTO match_events(match_id,sequence,event_type,occurred_at,details) VALUES($1,1,'match_started',NOW(),jsonb_build_object('map',$2,'gameMode',$3,'source','rcon')) ON CONFLICT(match_id,sequence) DO UPDATE SET occurred_at=EXCLUDED.occurred_at,details=EXCLUDED.details",[matchId,row.selected_map,row.game_mode])
+  const engineMap=row.game_id==='hl1'?hl1EngineMapName(row.selected_map):row.selected_map
+  if(!engineMap)throw new Error('Selected map has no trusted engine mapping')
+  if(!/^[a-zA-Z0-9_]+$/.test(engineMap))throw new Error('Selected map contains unsupported characters')
+  try{await sendRconCommand(row,`changelevel ${engineMap}`)}catch(error:any){await db.query("UPDATE game_servers SET status='offline',last_error=$1,updated_at=NOW() WHERE id=$2",[String(error?.message||error).slice(0,1000),row.id]);return false}
+  // Successful changelevel means the server is provisioned, not that competitive play started.
+  // The trusted agent's match_running report marks the real start after both SteamIDs authenticate.
+  await db.query("UPDATE matches SET result_source='game_server' WHERE id=$1 AND status='pending'",[matchId])
   return true
 }
 

@@ -95,6 +95,7 @@
     "test:host-agent": "npm run build:server && node scripts/test-host-agent-protocol.mjs",
     "test:competitive-result-security": "npm run build:server && node scripts/test-competitive-result-security.mjs",
     "test:host-agent-events": "npm run build:server && node scripts/test-host-agent-events.mjs",
+    "test:hl1-assignment": "npm run build:server && node scripts/test-hl1-assignment-contract.mjs",
     "db:test": "node -e \"require('dotenv').config(); const {Pool}=require('pg'); const p=new Pool({connectionString:process.env.DATABASE_URL}); p.query('SELECT version()').then(r=>{console.log('✅ Connected:',r.rows[0].version.slice(0,50));p.end()}).catch(e=>{console.error('❌',e.message);p.end()})\""
   }
 }
