@@ -199,6 +199,20 @@ body.admin-panel-open [data-slot="sheet-content"] {
   background: #0d0d0f;
 }
 
+/* The checked-in utility bundle does not include the Sheet slide-in classes.
+   Keep the Hosts drawer explicitly on-screen and above its overlay. */
+body.admin-panel-open .admin-host-details-drawer {
+  position: fixed !important;
+  inset: 0 0 0 auto !important;
+  width: min(36rem, 100vw) !important;
+  height: 100dvh !important;
+  z-index: 110 !important;
+  translate: none !important;
+  transform: none !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
 .admin-user-details-dialog {
   background: #0b0b0d !important;
   border: 1px solid var(--theme-border-strong, rgba(249, 115, 22, 0.65)) !important;
