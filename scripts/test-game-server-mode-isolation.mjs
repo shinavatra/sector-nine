@@ -9,7 +9,7 @@ const migration=fs.readFileSync('src/server/041_game_server_mode_isolation.sql',
 
 const assignment=server.slice(server.indexOf('const assignMatchmakingServer='),server.indexOf('const pairQueuedPlayer='))
 assert.match(assignment,/SELECT id,game_id,game_mode,server_id,status,matchmaking_region,selected_map FROM matches/)
-assert.match(assignment,/WHERE game_id=\$1 AND game_mode=\$2 AND region=\$3 AND status='online' AND current_match_id IS NULL/)
+assert.match(assignment,/WHERE s\.game_id=\$1 AND s\.game_mode=\$2 AND s\.region=\$3 AND s\.status='online' AND s\.current_match_id IS NULL/)
 assert.match(assignment,/FOR UPDATE SKIP LOCKED LIMIT 1/)
 assert.match(assignment,/\[match\.game_id,match\.game_mode,match\.matchmaking_region\]/)
 

@@ -21,6 +21,7 @@ import { HostAgentProtocolError, parseHostAgentReport } from './hostAgentProtoco
 import { isDevelopmentPlayerResultEnabled, playerResultRejection } from './competitiveResultSecurity'
 import { HostAgentEventError, parseHostAgentEvent } from './hostAgentEventProtocol'
 import { hl1EngineMapName, trustedHl1Rules } from './hl1MatchContract'
+import { hashSecret,issueHostCredential,normalizePairingCode,timingSafeHashMatches,validCapabilities } from './hostAgentAuth'
 
 dotenv.config()
 
@@ -287,6 +288,8 @@ const limiter = (windowMs: number, limit: number) => rateLimit({
 app.use('/auth', limiter(15 * 60 * 1000, 20))
 app.use('/steam', limiter(5 * 60 * 1000, 40))
 app.use('/game-server', limiter(60 * 1000, 180))
+app.use('/host-agent/pair', limiter(60 * 1000, 10))
+app.use('/host-agent', limiter(60 * 1000, 180))
 app.use('/admin', limiter(60 * 1000, 180))
 app.use('/matchmaking', limiter(60 * 1000, 120))
 app.use('/news', limiter(60 * 1000, 120))
@@ -556,6 +559,40 @@ const finalizeServerReportedMatch=async(db:any,matchId:string,winnerId:string,re
   return match
 }
 
+const authenticateHost=async(req:Request)=>{
+  const authorization=String(req.headers.authorization||''),credential=authorization.startsWith('Bearer ')?authorization.slice(7):''
+  if(!credential)return null
+  const credentialHash=hashSecret(credential)
+  const host=(await pool.query('SELECT id,name,region,enabled,credential_hash,credential_revoked_at FROM hosts WHERE credential_hash=$1',[credentialHash])).rows[0]
+  if(!host||!host.enabled||host.credential_revoked_at||!timingSafeHashMatches(credential,host.credential_hash))return null
+  return host
+}
+const serverAgentCredentialValid=(server:any,plain:string)=>Boolean(server&&((server.server_token_hash&&timingSafeHashMatches(plain,server.server_token_hash))||(server.host_credential_hash&&server.host_enabled&&!server.host_credential_revoked_at&&timingSafeHashMatches(plain,server.host_credential_hash))))
+
+app.post('/host-agent/pair',async(req,res)=>{
+  const code=normalizePairingCode(req.body?.pairingCode),agentVersion=typeof req.body?.agentVersion==='string'?req.body.agentVersion.trim().slice(0,100):null
+  if(!/^SN-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(code))return res.status(400).json({error:'Pairing code is invalid or expired',code:'PAIRING_INVALID'})
+  const db=await pool.connect()
+  try{await db.query('BEGIN');const codeHash=hashSecret(code);const host=(await db.query('SELECT * FROM hosts WHERE pairing_code_hash=$1 FOR UPDATE',[codeHash])).rows[0];if(!host||!timingSafeHashMatches(code,host.pairing_code_hash))throw Object.assign(new Error('Pairing code is invalid or expired'),{status:400,code:'PAIRING_INVALID'});if(!host.enabled)throw Object.assign(new Error('Host is disabled'),{status:403,code:'HOST_DISABLED'});if(host.pairing_used_at)throw Object.assign(new Error('Pairing code was already used'),{status:409,code:'PAIRING_USED'});if(!host.pairing_expires_at||new Date(host.pairing_expires_at)<=new Date())throw Object.assign(new Error('Pairing code is invalid or expired'),{status:410,code:'PAIRING_EXPIRED'});const issued=issueHostCredential();await db.query("UPDATE hosts SET credential_hash=$1,credential_revoked_at=NULL,pairing_used_at=NOW(),pairing_code_hash=NULL,status='online',agent_version=$2,last_seen_at=NOW(),updated_at=NOW() WHERE id=$3",[issued.hash,agentVersion,host.id]);await db.query("INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details,ip) VALUES(NULL,'host.paired','host',$1,$2,$3)",[host.id,JSON.stringify({agentVersion}),req.ip||null]);await db.query('COMMIT');logEvent('info','host_agent_paired',{hostId:host.id,agentVersion});return res.json({host:{id:host.id,name:host.name,region:host.region},credential:issued.credential})}catch(error:any){await db.query('ROLLBACK');return res.status(error.status||500).json({error:error.status?error.message:'Host pairing failed',code:error.code||'HOST_PAIRING_FAILED'})}finally{db.release()}
+})
+
+app.post('/host-agent/heartbeat',async(req,res)=>{
+  const host=await authenticateHost(req);if(!host)return res.status(401).json({error:'Invalid or revoked host credential',code:'HOST_AUTH_INVALID'})
+  const {agentVersion,capabilities,profiles}=req.body||{}
+  if(typeof agentVersion!=='string'||agentVersion.length<1||agentVersion.length>100||!validCapabilities(capabilities)||!Array.isArray(profiles)||profiles.length>64)return res.status(400).json({error:'Invalid host heartbeat',code:'INVALID_HOST_HEARTBEAT'})
+  const profileIds=new Set<string>(),ports=new Set<number>(),safeProfiles:any[]=[]
+  for(const raw of profiles){const profile={id:String(raw?.id||''),name:String(raw?.name||''),gameId:String(raw?.gameId||''),gameMode:String(raw?.gameMode||''),localPort:Number(raw?.localPort),telemetryPort:Number(raw?.telemetryPort),state:String(raw?.state||'ready'),currentMatchId:raw?.currentMatchId==null?null:String(raw.currentMatchId)};if(!/^[a-zA-Z0-9_-]{1,64}$/.test(profile.id)||!profile.name||!capabilities[profile.gameId]?.includes(profile.gameMode)||!Number.isInteger(profile.localPort)||profile.localPort<1024||profile.localPort>65535||!Number.isInteger(profile.telemetryPort)||profile.telemetryPort<1||profile.telemetryPort>65535||!['ready','running','offline','failed'].includes(profile.state)||(profile.currentMatchId&&!/^[0-9a-f-]{36}$/i.test(profile.currentMatchId))||profileIds.has(profile.id)||ports.has(profile.localPort)||ports.has(profile.telemetryPort))return res.status(400).json({error:'Invalid or conflicting host profile',code:'INVALID_HOST_PROFILE'});profileIds.add(profile.id);ports.add(profile.localPort);ports.add(profile.telemetryPort);safeProfiles.push(profile)}
+  const configured=await pool.query('SELECT game_id,modes FROM game_matchmaking_config WHERE game_id=ANY($1::text[])',[Object.keys(capabilities)]),catalog=new Map(configured.rows.map(row=>[row.game_id,row.modes]));if(Object.entries(capabilities).some(([game,modes])=>!modes.every(mode=>(catalog.get(game)||[]).includes(mode))))return res.status(400).json({error:'Host reported an unsupported capability',code:'INVALID_CAPABILITY'})
+  const db=await pool.connect();try{await db.query('BEGIN');await db.query("UPDATE hosts SET status='online',agent_version=$1,last_seen_at=NOW(),capabilities=$2,profiles=$3,updated_at=NOW() WHERE id=$4",[agentVersion,JSON.stringify(capabilities),JSON.stringify(safeProfiles),host.id]);await db.query(`UPDATE game_servers server SET status=CASE WHEN server.current_match_id IS NOT NULL THEN 'in_use' WHEN profile->>'state'='running' THEN 'online' ELSE 'offline' END,last_heartbeat=NOW(),updated_at=NOW() FROM jsonb_array_elements($1::jsonb) profile WHERE server.host_id=$2 AND server.host_profile_id=profile->>'id' AND server.status<>'maintenance'`,[JSON.stringify(safeProfiles),host.id]);await db.query('COMMIT');return res.json({ok:true,hostId:host.id})}catch(error){await db.query('ROLLBACK');return sendDatabaseError(res,error)}finally{db.release()}
+})
+
+app.get('/host-agent/assignments',async(req,res)=>{
+  const host=await authenticateHost(req);if(!host)return res.status(401).json({error:'Invalid or revoked host credential',code:'HOST_AUTH_INVALID'})
+  const rows=(await pool.query(`SELECT s.id server_id,s.host_profile_id,s.region,s.current_match_id,m.id match_id,m.game_id,m.game_mode,m.selected_map,m.player1_id,m.player2_id,p1.steam_id player1_steam_id,p2.steam_id player2_steam_id FROM game_servers s LEFT JOIN matches m ON m.id=s.current_match_id AND m.server_id=s.id LEFT JOIN users p1 ON p1.id=m.player1_id LEFT JOIN users p2 ON p2.id=m.player2_id WHERE s.host_id=$1 ORDER BY s.created_at`,[host.id])).rows,assignments:any[]=[]
+  for(const row of rows){if(!row.match_id){assignments.push({serverId:row.server_id,profileId:row.host_profile_id,assignment:null});continue}const rules=trustedHl1Rules(row.game_mode),hldsMap=hl1EngineMapName(row.selected_map);if(row.game_id!=='hl1'||!rules||!hldsMap||!row.player1_steam_id||!row.player2_steam_id)continue;assignments.push({serverId:row.server_id,profileId:row.host_profile_id,assignment:{matchId:row.match_id,gameId:row.game_id,gameMode:row.game_mode,region:row.region,selectedMap:row.selected_map,hldsMap,fragLimit:rules.fragLimit,timeLimitSeconds:rules.timeLimitSeconds,disconnectPolicy:rules.disconnectPolicy,player1:{userId:row.player1_id,steamId:row.player1_steam_id},player2:{userId:row.player2_id,steamId:row.player2_steam_id}}})}
+  return res.json({host:{id:host.id,name:host.name,region:host.region},assignments})
+})
+
 app.post('/game-server/:id/heartbeat',async(req,res)=>{
   const authorization=String(req.headers.authorization||''),token=authorization.startsWith('Bearer ')?authorization.slice(7):''
   if(!token)return res.status(401).json({error:'Server agent token required'})
@@ -565,10 +602,8 @@ app.post('/game-server/:id/heartbeat',async(req,res)=>{
   const db=await pool.connect()
   try{
     await db.query('BEGIN')
-    const server=(await db.query('SELECT id,current_match_id,server_token_hash FROM game_servers WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0]
-    if(!server||!server.server_token_hash){await db.query('ROLLBACK');logEvent('warn','host_agent_auth_rejected',{serverId:req.params.id,reason:server?'token_not_configured':'unknown_server'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
-    const expected=Buffer.from(server.server_token_hash,'hex'),actual=Buffer.from(tokenHash,'hex')
-    if(expected.length!==actual.length||!crypto.timingSafeEqual(expected,actual)){await db.query('ROLLBACK');logEvent('warn','host_agent_auth_rejected',{serverId:req.params.id,reason:'token_mismatch'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
+    const server=(await db.query('SELECT s.id,s.current_match_id,s.server_token_hash,h.credential_hash host_credential_hash,h.enabled host_enabled,h.credential_revoked_at host_credential_revoked_at FROM game_servers s LEFT JOIN hosts h ON h.id=s.host_id WHERE s.id=$1 FOR UPDATE OF s',[req.params.id])).rows[0]
+    if(!serverAgentCredentialValid(server,token)){await db.query('ROLLBACK');logEvent('warn','host_agent_auth_rejected',{serverId:req.params.id,reason:server?'credential_mismatch':'unknown_server'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
     const payloadHash=crypto.createHash('sha256').update(JSON.stringify(report)).digest('hex')
     if(report.type==='match_completed'){
       const receipt=(await db.query('SELECT match_id,payload_hash FROM game_server_agent_reports WHERE server_id=$1 AND report_id=$2',[server.id,report.reportId])).rows[0]
@@ -606,21 +641,21 @@ app.post('/game-server/:id/heartbeat',async(req,res)=>{
 app.get('/game-server/:id/assignment',async(req,res)=>{
   const authorization=String(req.headers.authorization||''),token=authorization.startsWith('Bearer ')?authorization.slice(7):''
   if(!token)return res.status(401).json({error:'Server agent token required',code:'INVALID_SERVER_TOKEN'})
-  const tokenHash=crypto.createHash('sha256').update(token).digest('hex')
   try{
     const result=await pool.query(
       `SELECT s.id server_id,s.region,s.current_match_id,s.server_token_hash,
+              h.credential_hash host_credential_hash,h.enabled host_enabled,
+              h.credential_revoked_at host_credential_revoked_at,
               m.id match_id,m.game_id,m.game_mode,m.selected_map,m.status,
               m.player1_id,m.player2_id,p1.steam_id player1_steam_id,p2.steam_id player2_steam_id
        FROM game_servers s
+       LEFT JOIN hosts h ON h.id=s.host_id
        LEFT JOIN matches m ON m.id=s.current_match_id AND m.server_id=s.id
        LEFT JOIN users p1 ON p1.id=m.player1_id
        LEFT JOIN users p2 ON p2.id=m.player2_id
        WHERE s.id=$1`,[req.params.id])
     const row=result.rows[0]
-    if(!row||!row.server_token_hash)return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})
-    const expected=Buffer.from(row.server_token_hash,'hex'),actual=Buffer.from(tokenHash,'hex')
-    if(expected.length!==actual.length||!crypto.timingSafeEqual(expected,actual))return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})
+    if(!serverAgentCredentialValid(row,token))return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})
     if(!row.match_id)return res.status(204).end()
     if(row.game_id!=='hl1')return res.status(409).json({error:'Assigned game is not supported by the HL1 telemetry runtime',code:'UNSUPPORTED_ASSIGNED_GAME'})
     const rules=trustedHl1Rules(row.game_mode)
@@ -637,15 +672,12 @@ app.post('/game-server/:id/events',async(req,res)=>{
   if(!token)return res.status(401).json({error:'Server agent token required',code:'INVALID_SERVER_TOKEN'})
   let event
   try{event=parseHostAgentEvent(req.body)}catch(error){const failure=error as HostAgentEventError;logEvent('warn','host_agent_event_rejected',{serverId:req.params.id,code:failure.code});return res.status(failure.status).json({error:failure.message,code:failure.code})}
-  const tokenHash=crypto.createHash('sha256').update(token).digest('hex')
   const payloadHash=crypto.createHash('sha256').update(JSON.stringify(event)).digest('hex')
   const db=await pool.connect()
   try{
     await db.query('BEGIN')
-    const server=(await db.query('SELECT id,current_match_id,server_token_hash FROM game_servers WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0]
-    if(!server||!server.server_token_hash){await db.query('ROLLBACK');logEvent('warn','host_agent_event_auth_rejected',{serverId:req.params.id,reason:server?'token_not_configured':'unknown_server'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
-    const expected=Buffer.from(server.server_token_hash,'hex'),actual=Buffer.from(tokenHash,'hex')
-    if(expected.length!==actual.length||!crypto.timingSafeEqual(expected,actual)){await db.query('ROLLBACK');logEvent('warn','host_agent_event_auth_rejected',{serverId:req.params.id,reason:'token_mismatch'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
+    const server=(await db.query('SELECT s.id,s.current_match_id,s.server_token_hash,h.credential_hash host_credential_hash,h.enabled host_enabled,h.credential_revoked_at host_credential_revoked_at FROM game_servers s LEFT JOIN hosts h ON h.id=s.host_id WHERE s.id=$1 FOR UPDATE OF s',[req.params.id])).rows[0]
+    if(!serverAgentCredentialValid(server,token)){await db.query('ROLLBACK');logEvent('warn','host_agent_event_auth_rejected',{serverId:req.params.id,reason:server?'credential_mismatch':'unknown_server'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
     const existing=(await db.query('SELECT match_id,source_payload_hash FROM match_events WHERE source_server_id=$1 AND source_event_id=$2',[server.id,event.eventId])).rows[0]
     if(existing){
       if(existing.source_payload_hash!==payloadHash)throw new HostAgentEventError('EVENT_ID_CONFLICT','eventId was already used with different event data',409)
@@ -1690,9 +1722,22 @@ const assignMatchmakingServer=async(db:any,matchId:string)=>{
   const accepted=Number((await db.query("SELECT COUNT(*)::int count FROM match_acceptances WHERE match_id=$1 AND status='accepted'",[matchId])).rows[0].count)
   if(accepted!==2)return
   const server=(await db.query(
-    `SELECT id FROM game_servers
-     WHERE game_id=$1 AND game_mode=$2 AND region=$3 AND status='online' AND current_match_id IS NULL
-     ORDER BY created_at
+    `SELECT s.id FROM game_servers s
+     LEFT JOIN hosts h ON h.id=s.host_id
+     WHERE s.game_id=$1 AND s.game_mode=$2 AND s.region=$3 AND s.status='online' AND s.current_match_id IS NULL
+       AND (s.host_id IS NULL OR (
+         h.enabled=TRUE AND h.status='online' AND h.credential_hash IS NOT NULL AND h.credential_revoked_at IS NULL
+         AND h.capabilities ? s.game_id
+         AND h.capabilities->s.game_id ? s.game_mode
+         AND EXISTS (
+           SELECT 1 FROM jsonb_array_elements(h.profiles) profile
+           WHERE profile->>'id'=s.host_profile_id
+             AND profile->>'gameId'=s.game_id
+             AND profile->>'gameMode'=s.game_mode
+             AND COALESCE(profile->>'state','ready') IN ('ready','idle','running')
+         )
+       ))
+     ORDER BY s.created_at
      FOR UPDATE SKIP LOCKED LIMIT 1`,[match.game_id,match.game_mode,match.matchmaking_region])).rows[0]
   if(!server)throw new Error(noServerInSelectedRegionError)
   // Keep the match pending until RCON confirms that the selected map started.

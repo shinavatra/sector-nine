@@ -22,13 +22,15 @@ export function AdminTopbar({
   onSearch: (v: string) => void;
   onMenu: () => void;
   onRefresh: () => void;
-  onCreate: (type: 'user' | 'server' | 'tournament') => void;
+  onCreate: (type: 'user' | 'host' | 'server' | 'tournament') => void;
   loading: boolean;
 }) {
   const meta = sectionMeta[section];
   const createType =
     section === 'users'
       ? 'user'
+      : section === 'hosts'
+        ? 'host'
       : section === 'servers'
         ? 'server'
         : section === 'tournaments'

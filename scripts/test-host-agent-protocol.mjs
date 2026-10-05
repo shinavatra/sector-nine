@@ -19,7 +19,8 @@ fails({type:'player_snapshot',playerCount:1,players:[{name:'x',steamId:'bad'}],m
 fails({type:'match_completed',reportId:'11111111-1111-4111-8111-111111111111',winnerId:'22222222-2222-4222-8222-222222222222',playerCount:0,players:[],stats:{...validStats,p1_kills:-1}},'INVALID_FIELD')
 fails({type:'heartbeat',playerCount:0,players:[],map:null,matchId:'33333333-3333-4333-8333-333333333333'},'UNSUPPORTED_FIELD')
 
-assert.match(route,/timingSafeEqual\(expected,actual\)/,'bad tokens use constant-time verification')
+assert.match(route,/serverAgentCredentialValid\(server,token\)/,'server or linked-host credentials use the centralized constant-time verifier')
+assert.match(source,/timingSafeHashMatches\(plain,server\.server_token_hash\)/,'legacy server credentials remain supported')
 assert.match(route,/INVALID_WINNER/,'wrong winner is rejected')
 assert.match(route,/NO_CURRENT_MATCH/,'reports requiring a match reject no current match')
 assert.match(route,/STALE_MATCH_ASSOCIATION/,'stale server-to-match relationships are rejected')

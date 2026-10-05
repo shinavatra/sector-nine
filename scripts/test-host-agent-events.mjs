@@ -14,7 +14,7 @@ fails({...valid,sequence:-1},'INVALID_EVENT_SEQUENCE')
 
 const source=fs.readFileSync(new URL('../src/server/index.ts',import.meta.url),'utf8')
 const route=source.slice(source.indexOf("app.post('/game-server/:id/events'"),source.indexOf("app.get('/game-servers/status'"))
-assert.match(route,/timingSafeEqual\(expected,actual\)/,'events use the existing server-token authentication')
+assert.match(route,/serverAgentCredentialValid\(server,token\)/,'events use centralized server or linked-host authentication')
 assert.match(route,/if\(!server\.current_match_id\).*NO_CURRENT_MATCH/,'no current match is rejected')
 assert.match(route,/match\.server_id!==server\.id.*STALE_MATCH_ASSOCIATION/,'wrong server association is rejected')
 assert.match(route,/match\.status===['"]completed['"].*MATCH_ALREADY_COMPLETED/,'completed matches are rejected')

@@ -1,10 +1,11 @@
-export type AdminSection = 'dashboard'|'news'|'users'|'servers'|'matchmaking'|'matches'|'tournaments'|'reports'|'support'|'bans'|'store'|'vip'|'badges'|'frames'|'logs'|'system'
+export type AdminSection = 'dashboard'|'news'|'users'|'hosts'|'servers'|'matchmaking'|'matches'|'tournaments'|'reports'|'support'|'bans'|'store'|'vip'|'badges'|'frames'|'logs'|'system'
 export type AdminRow = Record<string, any>
 
 export const sectionMeta: Record<AdminSection, { title: string; description: string }> = {
   dashboard:{title:'Dashboard',description:'Live platform operations and service overview'},
   news:{title:'News',description:'Create, publish, pin, and organize platform updates'},
   users:{title:'Users',description:'Manage accounts, progression, Steam status, and access'},
+  hosts:{title:'Hosts',description:'Pair and monitor physical Host Agent machines'},
   servers:{title:'Game Servers',description:'Monitor regions, capacity, and server availability'},
   matchmaking:{title:'Matchmaking',description:'Inspect and manage the live player queue'},
   matches:{title:'Matches',description:'Review active and historical competitive sessions'},

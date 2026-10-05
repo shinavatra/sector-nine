@@ -6,7 +6,7 @@ const contract=fs.readFileSync(new URL('../src/server/hl1MatchContract.ts',impor
 const rcon=fs.readFileSync(new URL('../src/server/rcon.ts',import.meta.url),'utf8')
 const route=server.slice(server.indexOf("app.get('/game-server/:id/assignment'"),server.indexOf("app.post('/game-server/:id/events'"))
 assert.match(route,/server_token_hash/)
-assert.match(route,/timingSafeEqual/)
+assert.match(route,/serverAgentCredentialValid\(row,token\)/)
 assert.match(route,/p1\.steam_id player1_steam_id/)
 assert.match(route,/p2\.steam_id player2_steam_id/)
 assert.match(route,/const hldsMap=hl1EngineMapName\(row\.selected_map\)/)

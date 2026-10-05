@@ -4,7 +4,7 @@ import type { AdminSection } from './adminTypes'
 
 const groups = [
   {label:'Overview',items:[['dashboard','Dashboard',Gauge],['news','News',Newspaper]]},
-  {label:'Management',items:[['users','Users',Users],['servers','Servers',Server],['matchmaking','Matchmaking',Activity],['matches','Matches',Swords],['tournaments','Tournaments',Trophy]]},
+  {label:'Management',items:[['users','Users',Users],['hosts','Hosts',Database],['servers','Servers',Server],['matchmaking','Matchmaking',Activity],['matches','Matches',Swords],['tournaments','Tournaments',Trophy]]},
   {label:'Moderation',items:[['reports','Reports',Shield],['support','Support',Headphones],['bans','Bans',Ban]]},
   {label:'Customization',items:[['store','Store',Store],['vip','VIP',BadgeCheck],['badges','Badges',Shield],['frames','Frames',Shield]]},
   {label:'System',items:[['logs','Logs',Database],['system','Settings',Settings]]},
