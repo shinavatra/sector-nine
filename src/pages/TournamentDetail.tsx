@@ -30,7 +30,7 @@ export function TournamentDetail({tournamentId,onNavigate,isPremium}:Props){
   if(loading)return <div className="grid min-h-[55vh] place-items-center"><Loader2 className="size-8 animate-spin text-orange-400"/></div>;
   if(error||!tournament)return <div className="container mx-auto px-4 py-8"><Button variant="ghost" onClick={()=>onNavigate('tournament')}><ArrowLeft className="mr-2 size-4"/>TOURNAMENTS</Button><Card className="mt-6 border-red-900/40 bg-red-950/30"><CardContent className="p-10 text-center font-mono text-red-300">{error||'Tournament not found'}</CardContent></Card></div>;
 
-  return <div className="container mx-auto max-w-6xl px-4 py-8">
+  return <div className="page-container container mx-auto max-w-6xl px-4 py-8">
     <Button variant="ghost" onClick={()=>onNavigate('tournament')}><ArrowLeft className="mr-2 size-4"/>TOURNAMENTS</Button>
     <header className="mt-5 border-b border-orange-900/25 pb-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><div className="mb-3 flex flex-wrap gap-2"><Badge>{String(tournament.game_id).toUpperCase()}</Badge><Badge variant="outline">{tournament.status}</Badge>{tournament.requires_vip&&<Badge className="bg-yellow-900/30 text-yellow-300">VIP</Badge>}</div><h1 className="font-mono text-3xl font-bold text-orange-400">{tournament.name}</h1><p className="mt-3 max-w-3xl text-gray-400">{tournament.description||'Competitive Sector Nine tournament.'}</p></div><TournamentCountdown tournament={tournament}/></div></header>
     <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_20rem]">

@@ -30,7 +30,7 @@ export function Stats({ onNavigate }: StatsProps) {
   const activityChart=Array.from(ratingHistory.reduce((days:Map<string,number>,entry)=>{const day=new Date(entry.created_at).toLocaleDateString();days.set(day,(days.get(day)||0)+1);return days},new Map<string,number>())).map(([date,matches])=>({date,matches}));
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="page-container container mx-auto px-4 py-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-orange-400 font-mono">RESEARCH STATISTICS</h1>
         <p className="text-gray-400 font-mono mt-1">Comprehensive analysis of experimental performance</p>
@@ -160,7 +160,7 @@ export function Stats({ onNavigate }: StatsProps) {
               <CardTitle className="text-orange-400 font-mono">GAME STATISTICS</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-12">
+              <div className="text-center py-8">
                 <Target className="w-16 h-16 text-orange-400 mx-auto mb-4 opacity-50" />
                 <p className="text-gray-400 font-mono">NO GAME DATA AVAILABLE</p>
                 <p className="text-gray-500 font-mono text-sm mt-2">Play matches to see your game statistics</p>
@@ -175,7 +175,7 @@ export function Stats({ onNavigate }: StatsProps) {
               <CardTitle className="text-orange-400 font-mono">WEAPON STATISTICS</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-12">
+              <div className="text-center py-8">
                 <Zap className="w-16 h-16 text-purple-400 mx-auto mb-4 opacity-50" />
                 <p className="text-gray-400 font-mono">NO WEAPON DATA AVAILABLE</p>
                 <p className="text-gray-500 font-mono text-sm mt-2">Use weapons in matches to see statistics</p>
@@ -190,7 +190,7 @@ export function Stats({ onNavigate }: StatsProps) {
               <CardTitle className="text-orange-400 font-mono">MAP PERFORMANCE</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-12">
+              <div className="text-center py-8">
                 <Award className="w-16 h-16 text-blue-400 mx-auto mb-4 opacity-50" />
                 <p className="text-gray-400 font-mono">NO MAP DATA AVAILABLE</p>
                 <p className="text-gray-500 font-mono text-sm mt-2">Play on different maps to see your performance</p>

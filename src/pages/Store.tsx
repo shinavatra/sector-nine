@@ -76,7 +76,7 @@ export function Store({ onNavigate, isPremium = false }: StoreProps) {
   const userPoints=Number(user?.points||0)
   const vipActive=Boolean(isPremium||user?.isPremium)
 
-  return <div className="container mx-auto px-4 py-8">
+  return <div className="page-container container mx-auto px-4 py-8">
     <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
       <div><h1 className="font-mono text-3xl font-bold text-orange-400">EQUIPMENT ARMORY</h1><p className="mt-1 font-mono text-gray-400">VIP access and profile frames</p></div>
       <Card className="border-yellow-900/30 bg-gradient-to-r from-yellow-900/20 to-orange-900/20"><CardContent className="p-4 text-center"><p className="font-mono text-xs text-gray-400">AVAILABLE POINTS</p><p className="font-mono text-3xl font-bold text-yellow-400">{userPoints.toLocaleString()}</p></CardContent></Card>

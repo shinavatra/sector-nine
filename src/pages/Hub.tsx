@@ -84,7 +84,7 @@ export function Hub({ onNavigate }: HubProps) {
       </div>
 
       {/* Main Content */}
-      <div className="container mx-auto px-4 py-8">
+      <div className="page-container page-container-wide container mx-auto px-4 py-8">
         <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12 lg:gap-8">
           {/* Left Sidebar */}
           <div className="lg:col-span-3 space-y-6">

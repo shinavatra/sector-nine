@@ -64,6 +64,12 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   const [notifySocial, setNotifySocial] = useState(true);
 
   useEffect(() => {
+    if (!saveNotice) return;
+    const timeout = window.setTimeout(() => setSaveNotice(""), 4500);
+    return () => window.clearTimeout(timeout);
+  }, [saveNotice]);
+
+  useEffect(() => {
     if (user) {
       setDisplayName(steamDisplayNameAuthoritative ? displayPlayerName(user) : user.localDisplayName || user.displayName || user.username || "");
       setBio(user.bio || "");
@@ -235,7 +241,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="page-container page-container-form container mx-auto px-4 py-8">
       <div className="mb-8">
         <Button 
           variant="outline" 
@@ -252,7 +258,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
         <p className="text-gray-400 font-mono mt-2">Configure your tactical systems and preferences</p>
       </div>
 
-      <Tabs defaultValue="settings" className="space-y-6">
+      <Tabs defaultValue="settings" onValueChange={() => setSaveNotice("")} className="space-y-6">
         <TabsList className="grid w-full grid-cols-3 bg-black/40 border border-orange-900/20">
           <TabsTrigger value="settings" className="font-mono data-[state=active]:bg-orange-900/20 data-[state=active]:text-orange-400">
             <User className="w-4 h-4 mr-2" />

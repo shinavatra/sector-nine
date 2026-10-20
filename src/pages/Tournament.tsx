@@ -51,7 +51,7 @@ export function Tournament({ onNavigate }: TournamentProps) {
   },[]);
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="page-container container mx-auto px-4 py-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-orange-400 font-mono">TOURNAMENT CENTER</h1>
         <p className="mt-1 text-gray-400 font-mono">Half-Life 1 competitive events</p>

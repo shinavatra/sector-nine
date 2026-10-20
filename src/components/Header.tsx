@@ -1,8 +1,10 @@
+import * as React from "react";
 import { Button } from "./ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "./ui/dropdown-menu";
-import { Bell, Settings, LogOut, User, Shield } from "lucide-react";
+import { Bell, Settings, LogOut, User, Shield, Menu } from "lucide-react";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "./ui/sheet";
 import { CrowbarLogo } from "./CrowbarLogo";
 import { FramedAvatar } from "./FramedAvatar";
 import { useUser } from "../contexts/UserContext";
@@ -19,6 +21,7 @@ interface HeaderProps {
 
 export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = false, notificationUnreadCount = 0 }: HeaderProps) {
   const { user } = useUser();
+  const [mobileOpen, setMobileOpen] = React.useState(false);
   const playerName = displayPlayerName(user, "Player");
   const isAdmin = isAdminUser(user);
   const hasPlayerProgression = showPlayerProgression(user);
@@ -27,35 +30,54 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
   const follow = (event: React.MouseEvent<HTMLAnchorElement>, page: string) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
+    setMobileOpen(false);
     onNavigate?.(page);
   };
+  React.useEffect(() => setMobileOpen(false), [currentPage]);
+  const navItems = [
+    { id: 'hub', label: 'HUB' }, { id: 'lobby', label: 'MATCHMAKING' },
+    { id: 'tournament', label: 'TOURNAMENTS' }, { id: 'stats', label: 'STATS' },
+    { id: 'store', label: 'STORE' }, { id: 'profile', label: 'PROFILE' },
+    { id: 'configuration', label: 'CONFIGURATION' }, { id: 'notifications', label: 'NOTIFICATIONS' },
+  ];
+  const isActive = (page: string) => currentPage === page || (page === 'tournament' && currentPage.startsWith('tournaments/'));
   
   return (
-    <header className="border-b border-orange-900/20 bg-black/80 backdrop-blur supports-[backdrop-filter]:bg-black/60">
-      <div className="container mx-auto px-4 py-3">
+    <header className="app-header sticky top-0 z-40 border-b border-orange-900/20 bg-black/90 backdrop-blur supports-[backdrop-filter]:bg-black/75">
+      <div className="container mx-auto px-4">
         <div className="main-header-grid items-center">
-          <div className="flex items-center space-x-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="shrink-0 text-orange-300 lg:hidden" aria-label="Open main navigation" aria-expanded={mobileOpen}><Menu className="size-5" /></Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="mobile-nav-drawer w-[min(88vw,22rem)] border-orange-900/40 bg-[#09090b] p-0 text-gray-200">
+                <SheetHeader className="border-b border-orange-900/25 px-5 py-5 text-left">
+                  <SheetTitle className="flex items-center gap-3 font-mono text-orange-300"><CrowbarLogo className="size-8" />SECTOR NINE</SheetTitle>
+                  <SheetDescription className="font-mono text-xs text-gray-400">TACTICAL NAVIGATION</SheetDescription>
+                </SheetHeader>
+                <nav aria-label="Mobile main navigation" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
+                  {navItems.map(page => <a key={page.id} href={routeFor(page.id)} aria-current={isActive(page.id) ? 'page' : undefined} onClick={event => follow(event, page.id)} className={`rounded-md border px-4 py-3 font-mono text-sm transition-colors ${isActive(page.id) ? 'border-orange-700/50 bg-orange-900/25 text-orange-300' : 'border-transparent text-gray-300 hover:border-orange-900/30 hover:bg-orange-950/20 hover:text-orange-300'}`}>{page.label}</a>)}
+                  {isAdmin && <a href="/admin" onClick={event => follow(event, 'admin')} className="mt-2 flex items-center gap-2 rounded-md border border-red-900/35 bg-red-950/15 px-4 py-3 font-mono text-sm text-red-200"><Shield className="size-4" />ADMIN PANEL</a>}
+                </nav>
+              </SheetContent>
+            </Sheet>
             <div className="flex items-center space-x-3">
-              <a href="/hub" aria-label="Sector Nine hub" onClick={(event) => follow(event, 'hub')} className="flex items-center space-x-3 hover:opacity-80 transition-opacity">
+              <a href="/hub" aria-label="Sector Nine hub" onClick={(event) => follow(event, 'hub')} className="flex min-w-0 items-center gap-2 hover:opacity-80 transition-opacity">
                 <CrowbarLogo className="w-8 h-8 text-orange-400" />
+                <span className="hidden truncate font-mono text-sm font-bold tracking-wider text-orange-300 sm:block">SECTOR NINE</span>
               </a>
             </div>
 
           </div>
 
-          <nav className="hidden items-center justify-center space-x-6 md:flex">
-            {[
-              { id: 'hub', label: 'HUB' },
-              { id: 'lobby', label: 'MATCHMAKING' },
-              { id: 'tournament', label: 'TOURNAMENT' },
-              { id: 'stats', label: 'STATS' }, 
-              { id: 'store', label: 'STORE' }
-            ].map((page) => (
+          <nav className="hidden items-center justify-center gap-2 xl:gap-4 lg:flex">
+            {navItems.slice(0, 5).map((page) => (
               <a
                 key={page.id}
                 href={routeFor(page.id)}
                 className={`rounded-md px-3 py-2 text-sm font-mono ${
-                  currentPage === page.id 
+                  isActive(page.id)
                     ? 'text-orange-400 bg-orange-900/20' 
                     : 'text-gray-300 hover:text-orange-400 hover:bg-orange-900/10'
                 }`}

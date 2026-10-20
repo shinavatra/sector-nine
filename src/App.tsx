@@ -368,7 +368,7 @@ const handleLogin = async (isNewUser: boolean = false) => {
       <Toaster />
 
       {isAuthenticated && !authFlowPages.includes(currentPage) && currentPage !== 'admin' && (
-        <footer className="border-t border-orange-900/20 bg-black/60 mt-16 relative z-10">
+        <footer className="relative z-10 mt-12 border-t border-orange-900/20 bg-black/60">
           <div className="container mx-auto px-4 py-8">
             <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4">
               <div>

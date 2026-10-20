@@ -239,8 +239,8 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
     matchmakingEnabled;
 
   return (
-    <div className="min-h-screen pt-20 pb-8">
-      <div className="container mx-auto px-4">
+    <div className="min-h-[calc(100dvh-4rem)] py-8">
+      <div className="page-container page-container-reading container mx-auto px-4">
         <div className="text-center mb-8">
           <h1 className="mb-4 text-orange-400 font-mono tracking-wider">
             MATCHMAKING PROTOCOL

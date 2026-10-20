@@ -111,6 +111,7 @@ export function Admin({onNavigate,onPlatformSettingsSaved}:{onNavigate:(page:str
     return()=>window.removeEventListener('popstate',handlePopState)
   },[])
   useEffect(()=>{if(!sidebarOpen)return;const close=(event:KeyboardEvent)=>{if(event.key==='Escape')setSidebarOpen(false)};window.addEventListener('keydown',close);return()=>window.removeEventListener('keydown',close)},[sidebarOpen])
+  useEffect(()=>{if(!sidebarOpen)return;const previous=document.body.style.overflow;document.body.style.overflow='hidden';return()=>{document.body.style.overflow=previous}},[sidebarOpen])
   useEffect(()=>{document.body.classList.add('admin-panel-open');return()=>document.body.classList.remove('admin-panel-open')},[])
   useEffect(()=>{if(!selected||!['hosts','servers','matches'].includes(section))return;let stopped=false,inFlight=false;const path=`/${section}/${encodeURIComponent(String(selected.id))}`;const timer=window.setInterval(async()=>{if(stopped||inFlight||document.hidden)return;inFlight=true;try{const value=await adminAPI.get(path);if(!stopped){setDetail(value);setDetailError(null)}}catch(error:any){if(!stopped)setDetailError(error instanceof AdminApiError?error:new AdminApiError(error?.message||'Unable to refresh live details',0,'CLIENT_ERROR'))}finally{inFlight=false}},section==='matches'?4000:5000);return()=>{stopped=true;window.clearInterval(timer)}},[section,selected?.id])
 

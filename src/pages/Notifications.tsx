@@ -182,7 +182,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
   const displayedNotifications=useMemo(()=>notificationView==='unread'?notifications.filter(notification=>notification.unread):notifications,[notificationView,notifications])
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="page-container page-container-form container mx-auto px-4 py-8">
       <div className="mb-8">
         <div className="flex items-center justify-between">
           <div>
