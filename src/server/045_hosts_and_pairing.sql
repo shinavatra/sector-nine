@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE TABLE IF NOT EXISTS hosts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL CHECK (BTRIM(name)<>''),
@@ -29,5 +27,3 @@ CREATE UNIQUE INDEX IF NOT EXISTS hosts_credential_hash_unique ON hosts(credenti
 CREATE INDEX IF NOT EXISTS idx_game_servers_host_profile ON game_servers(host_id,host_profile_id);
 CREATE UNIQUE INDEX IF NOT EXISTS game_servers_host_profile_unique
   ON game_servers(host_id,host_profile_id) WHERE host_id IS NOT NULL AND host_profile_id IS NOT NULL;
-
-COMMIT;

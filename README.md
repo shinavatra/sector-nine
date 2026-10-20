@@ -195,6 +195,11 @@ PostgreSQL readiness check.
 | `NODE_ENV` | Backend | Production | Must be `production` in production. Activates production JWT-secret validation. |
 | `DATABASE_URL` | Backend | Yes | PostgreSQL connection string used by `pg`. |
 | `JWT_SECRET` | Backend | Yes | JWT signing secret. Production requires a unique value of at least 32 characters. |
+| `AUTH_COOKIE_SAME_SITE` | Backend | Production | Refresh-cookie policy must be explicit in production: use `lax` for same-site origins or `none` for truly cross-site HTTPS origins. |
+| `AUTH_COOKIE_SECURE` | Backend | Local override only | Production always uses Secure refresh cookies. Set `true` for local HTTPS. |
+| `AUTH_COOKIE_PATH` | Backend | Production proxy | Use `/api/auth` when browser auth is routed through the frontend `/api` proxy. |
+| `PUBLIC_APP_URL` | Backend | Production | Canonical frontend HTTPS origin used for callbacks and email links. |
+| `BACKEND_ORIGIN` | Frontend runtime | Production | Fixed backend API origin used only by the frontend proxy. |
 | `PORT` | Backend | Railway supplies it | Express listening port. Defaults to `3001` locally. |
 | `STEAM_API_KEY` | Backend | For Steam | Steam Web API key used for profile, ownership, and ban checks. |
 | `VITE_API_URL` | Frontend build | Yes | Public browser-accessible API origin, without a trailing slash. |
@@ -437,9 +442,18 @@ Backend variables:
 ```dotenv
 NODE_ENV=production
 DATABASE_URL=${{Postgres.DATABASE_URL}}
-JWT_SECRET=<at-least-32-random-characters>
+JWT_SECRET=<existing-production-secret-at-least-32-characters>
 STEAM_API_KEY=<steam-web-api-key>
+APP_ORIGIN=https://sector-nine-production.up.railway.app
+PUBLIC_APP_URL=https://sector-nine-production.up.railway.app
+AUTH_COOKIE_SAME_SITE=lax
+AUTH_COOKIE_SECURE=true
+AUTH_COOKIE_PATH=/api/auth
+SERVE_FRONTEND=false
 ```
+
+`AUTH_COOKIE_PATH=/api/auth` is required because the browser reaches authentication through
+the frontend `/api` proxy. The backend remains directly reachable for Host Agent traffic.
 
 Railway supplies `PORT`; do not hardcode a production port.
 
@@ -453,9 +467,9 @@ https://<backend-domain>/health
 
 Apply migrations before serving production traffic.
 
-The repository does not currently provide a complete automated migration runner. Use a
-controlled release task or an administrator machine with `psql`, the correct Railway
-connection URL, and the ordered migration command from [Installation](#installation).
+Run `npm run db:migrate` as a controlled release task using the correct Railway
+`DATABASE_URL`. Migration `046_secure_auth_sessions.sql` must be applied before the
+new backend starts accepting authentication requests.
 
 For external `psql`, use the Railway public database URL/TCP proxy. For commands running
 inside the Railway project, use the private `DATABASE_URL` reference.
@@ -472,36 +486,32 @@ Frontend build command:
 npm ci && npm run build
 ```
 
-Frontend build variable:
+Frontend variables:
 
 ```dotenv
-VITE_API_URL=https://<backend-domain>
+NODE_ENV=production
+VITE_API_URL=/api
+BACKEND_ORIGIN=https://sector-nine-api-production.up.railway.app
 ```
 
-`VITE_API_URL` must be available during the build. Changing it requires a new frontend
-deployment.
+Frontend start command:
 
-The repository does not currently include Caddy, Nginx, or another production static
-server. Before using Railway for the frontend, add a static-server configuration that:
+```text
+npm run start:frontend
+```
 
-- serves the `build` directory;
-- listens on Railway's `PORT`;
-- falls back to `index.html` for client-side routes;
-- enables compression;
-- applies suitable cache headers.
-
-Railway's
-[SPA routing guide](https://docs.railway.com/guides/spa-routing-configuration) documents
-Caddy and Nginx patterns. Its examples commonly use `dist`; this project must use `build`.
-
-Alternatively, deploy `build/` to a static-hosting provider with SPA fallback support.
+The fixed-target frontend server in `scripts/serve-frontend.mjs` serves `build/`, provides
+SPA fallback, and proxies only `/api/*` to `BACKEND_ORIGIN`. It strips the `/api` prefix,
+preserves status, body, Authorization, Cookie, and Set-Cookie headers, and cannot select an
+upstream host from request input. Host Agents continue to use the public backend domain.
+Changing `VITE_API_URL` still requires a frontend rebuild.
 
 ### 5. Configure the production origin
 
 - Generate the frontend domain.
 - Ensure Steam uses the frontend HTTPS origin.
 - Set the backend's allowed CORS origins when restricted CORS configuration is added.
-- Rebuild the frontend if the backend domain changes.
+- Update frontend `BACKEND_ORIGIN` if the backend domain changes; rebuild only if `VITE_API_URL` changes.
 - Confirm no browser request points to `localhost`.
 
 ### 6. Deployment verification
@@ -513,7 +523,7 @@ Verify:
 - PostgreSQL connects;
 - all migrations are present;
 - frontend routes fall back to `index.html`;
-- `VITE_API_URL` points to the public backend;
+- `VITE_API_URL=/api` sends browser API traffic through the same-origin frontend proxy;
 - signup/signin work;
 - Steam callback works;
 - administration routes require a live administrator;

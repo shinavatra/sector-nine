@@ -18,7 +18,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
 import { useUser } from "../contexts/UserContext";
-import { achievementAPI } from "../utils/api";
+import { achievementAPI, userAPI } from "../utils/api";
 import { MatchHistory } from "../components/MatchHistory";
 import { FramedAvatar } from "../components/FramedAvatar";
 import { displayPlayerName } from "../utils/displayName";
@@ -51,6 +51,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
   const [catalog, setCatalog] = useState<CatalogBadge[]>([]);
   const [achievementsLoading, setAchievementsLoading] = useState(true);
   const [achievementsError, setAchievementsError] = useState("");
+  const [customization, setCustomization] = useState<any>(null);
 
   useEffect(() => {
     let active = true;
@@ -73,6 +74,13 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active=true;
+    if(!user?.id){setCustomization(null);return()=>{active=false};}
+    userAPI.getProfileCustomization().then((result:any)=>{if(active)setCustomization(result)}).catch(()=>{if(active)setCustomization(null)});
+    return()=>{active=false};
+  },[user?.id,user?.equippedFrame]);
 
   const ownedBadgeIds = useMemo(() => new Set(user?.ownedBadges || []), [user?.ownedBadges]);
   const earnedAchievements = useMemo(
@@ -117,6 +125,8 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
   const socialLinks = Object.entries(user.socialLinks).filter(
     (entry): entry is [string, string] => Boolean(entry[1]),
   );
+  const activeRank=customization?.ranks?.find((rank:any)=>rank.id===customization.activeRankId);
+  const activeBadge=customization?.ownedSpecialBadges?.find((badge:any)=>badge.badge_id===customization.activeSpecialBadgeId);
 
   return (
     <main className="profile-page container mx-auto w-full max-w-7xl px-4 py-8">
@@ -173,6 +183,11 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
                     icon={<span className={`h-2 w-2 rounded-full ${onlineVisible ? "bg-green-400" : "bg-gray-500"}`} />}
                   />
                 </div>
+                {activeRank&&<img src={activeRank.asset_url} alt={activeRank.name} className="mt-4 h-auto w-full max-w-[350px]" />}
+                {activeBadge&&<div className="mt-3 max-w-[344px]">
+                  <img src={activeBadge.asset_url} alt={activeBadge.name} className="h-auto w-full" />
+                  {activeBadge.custom_title&&<p className="mt-1 truncate text-center font-mono text-sm text-green-300">{activeBadge.custom_title}</p>}
+                </div>}
               </div>
             </div>
 
@@ -192,6 +207,16 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
               <Progress value={xpProgress} className="h-3 bg-gray-800" />
               <p className="mt-2 text-right font-mono text-xs text-gray-500">{xpProgress}% complete</p>
             </div>}
+
+            <section className="rounded-lg border border-orange-900/20 bg-black/30 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-mono text-sm font-bold text-orange-400">COMPETITIVE MEDALS</h2>
+                <span className="font-mono text-xs text-gray-400">Current level: {customization?.currentCompetitive?.level??'Not configured'}</span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(customization?.earnedMedals||[]).length?(customization.earnedMedals as any[]).map((medal:any)=><img key={`${medal.game_id}-${medal.medal_id}`} src={medal.asset_url} alt={medal.name} title={`${medal.name} · ${medal.game_id}`} className="h-16 w-14 object-contain" />):<p className="text-sm text-gray-500">No competitive medals earned.</p>}
+              </div>
+            </section>
           </CardContent>
         </Card>
 

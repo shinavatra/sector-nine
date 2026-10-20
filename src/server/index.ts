@@ -21,7 +21,9 @@ import { HostAgentProtocolError, parseHostAgentReport } from './hostAgentProtoco
 import { isDevelopmentPlayerResultEnabled, playerResultRejection } from './competitiveResultSecurity'
 import { HostAgentEventError, parseHostAgentEvent } from './hostAgentEventProtocol'
 import { hl1EngineMapName, trustedHl1Rules } from './hl1MatchContract'
-import { hashSecret,issueHostCredential,normalizePairingCode,timingSafeHashMatches,validCapabilities } from './hostAgentAuth'
+import { hashSecret,HostPairingError,issueHostCredential,normalizePairingCode,timingSafeHashMatches,validCapabilities,validatePairableHost } from './hostAgentAuth'
+import { TrustedMatchResultError, validateTrustedMatchCompletion, validateTrustedMatchContext } from './trustedMatchResult'
+import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_DAYS, RefreshSessionError, issueSession, revokeSessionByToken, revokeUserSessions, rotateSession } from './secureSessions'
 
 dotenv.config()
 
@@ -53,7 +55,15 @@ if (process.env.NODE_ENV === 'production' &&
   throw new Error('JWT_SECRET must be a unique secret of at least 32 characters in production')
 }
 const JWT_SECRET = configuredJwtSecret || developmentJwtSecret
-const JWT_EXPIRES = '7d'
+const REFRESH_COOKIE_NAME='sn_refresh'
+const refreshCookiePath=String(process.env.AUTH_COOKIE_PATH||'/auth').trim()
+if(!refreshCookiePath.startsWith('/')||refreshCookiePath.includes(';')||refreshCookiePath.includes('\\'))throw new Error('AUTH_COOKIE_PATH must be an absolute cookie path')
+const configuredRefreshCookieSameSite=process.env.AUTH_COOKIE_SAME_SITE
+if(process.env.NODE_ENV==='production'&&!configuredRefreshCookieSameSite)throw new Error('AUTH_COOKIE_SAME_SITE must be explicitly configured in production')
+const refreshCookieSameSite=String(configuredRefreshCookieSameSite||'lax').toLowerCase()
+if(!['lax','strict','none'].includes(refreshCookieSameSite))throw new Error('AUTH_COOKIE_SAME_SITE must be lax, strict, or none')
+const refreshCookieSecure=process.env.NODE_ENV==='production'||process.env.AUTH_COOKIE_SECURE==='true'
+if(refreshCookieSameSite==='none'&&!refreshCookieSecure)throw new Error('SameSite=None refresh cookies require Secure')
 const passwordResetEnabled=process.env.PASSWORD_RESET_ENABLED==='true'
 const publicAppUrl=String(process.env.PUBLIC_APP_URL||process.env.APP_ORIGIN||'').split(',')[0].trim().replace(/\/$/,'')
 const smtpPort=Number(process.env.SMTP_PORT||587)
@@ -235,6 +245,7 @@ const corsOptions: CorsOptions = {
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Authorization', 'Content-Type'],
+  credentials: true,
   maxAge: 86400,
 }
 app.options(/.*/, cors(corsOptions))
@@ -247,6 +258,18 @@ app.use((error: Error, _req: Request, res: Response, next: NextFunction) => {
   next(error)
 })
 app.use(express.json({ limit: '2mb' }))
+const requestCookies=(req:Request)=>Object.fromEntries(String(req.headers.cookie||'').split(';').map(value=>value.trim()).filter(Boolean).map(value=>{const index=value.indexOf('=');return index<0?[value,'']:[value.slice(0,index),decodeURIComponent(value.slice(index+1))]}))
+const refreshCookie=(token:string,maxAgeSeconds:number)=>`${REFRESH_COOKIE_NAME}=${encodeURIComponent(token)}; Path=${refreshCookiePath}; HttpOnly; ${refreshCookieSecure?'Secure; ':''}SameSite=${refreshCookieSameSite[0]!.toUpperCase()+refreshCookieSameSite.slice(1)}; Max-Age=${maxAgeSeconds}`
+const setRefreshCookie=(res:Response,token:string)=>res.setHeader('Set-Cookie',refreshCookie(token,REFRESH_TOKEN_TTL_DAYS*24*60*60))
+const clearRefreshCookie=(res:Response)=>res.setHeader('Set-Cookie',refreshCookie('',0))
+const refreshTokenFrom=(req:Request)=>requestCookies(req)[REFRESH_COOKIE_NAME]||null
+const sessionMetadata=(req:Request)=>({ip:req.ip||null,userAgent:req.get('user-agent')||null})
+const rejectInvalidSessionOrigin=(req:Request,res:Response)=>{
+  const origin=req.get('origin')
+  if(process.env.NODE_ENV==='production'&&!origin){res.status(403).json({error:'Origin is required',code:'SESSION_ORIGIN_REQUIRED'});return true}
+  if(origin&&!allowedOrigins.has(normalizeOrigin(origin))){res.status(403).json({error:'Origin is not allowed',code:'SESSION_ORIGIN_DENIED'});return true}
+  return false
+}
 app.use((req: Request, res: Response, next: NextFunction) => {
   const suppliedRequestId = req.get('x-request-id')
   const requestId = suppliedRequestId && /^[a-zA-Z0-9._:-]{1,128}$/.test(suppliedRequestId)
@@ -307,6 +330,7 @@ app.use('/support', limiter(60 * 60 * 1000, 20))
 interface AuthRequest extends Request {
   userId?: string
   userEmail?: string
+  authSessionId?: string
 }
 
 const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -324,8 +348,10 @@ const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) 
   if (!validUserId(payload.sub)) return res.status(401).json({ error: 'Invalid or expired token' })
   logEvent('info', 'auth_jwt_decoded', { userId: payload.sub, authVersion: Number(payload.av || 0) })
   try {
-    const account=(await pool.query('SELECT email,role,auth_version,deleted_at,steam_id FROM users WHERE id=$1',[payload.sub])).rows[0]
-    const rejectionReason = authSessionRejection(payload, account)
+    const account=(await pool.query(`SELECT u.email,u.role,u.auth_version,u.deleted_at,u.steam_id,
+      s.id session_id FROM users u LEFT JOIN auth_sessions s ON s.id=$2 AND s.user_id=u.id AND s.revoked_at IS NULL AND s.expires_at>NOW()
+      WHERE u.id=$1`,[payload.sub,payload.sid||null])).rows[0]
+    const rejectionReason = authSessionRejection(payload, account) || (!payload.sid||!account?.session_id?'session_not_active':null)
     logEvent('info', 'auth_session_lookup', {
       userId: payload.sub,
       found: Boolean(account),
@@ -344,6 +370,7 @@ const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) 
     })
     req.userId = payload.sub
     req.userEmail = account.email
+    req.authSessionId = payload.sid
     return next()
   } catch(error:any) {
     return sendDatabaseError(res,error)
@@ -362,8 +389,9 @@ const optionalAuth = async (req: AuthRequest, res: Response, next: NextFunction)
   }
   if(!validUserId(payload.sub))return res.status(401).json({error:'Invalid or expired token'})
   try{
-    const account=(await pool.query('SELECT email,auth_version,deleted_at FROM users WHERE id=$1',[payload.sub])).rows[0]
-    const rejectionReason = authSessionRejection(payload, account)
+    const account=(await pool.query(`SELECT u.email,u.auth_version,u.deleted_at,s.id session_id FROM users u
+      LEFT JOIN auth_sessions s ON s.id=$2 AND s.user_id=u.id AND s.revoked_at IS NULL AND s.expires_at>NOW() WHERE u.id=$1`,[payload.sub,payload.sid||null])).rows[0]
+    const rejectionReason = authSessionRejection(payload, account) || (!payload.sid||!account?.session_id?'session_not_active':null)
     if(rejectionReason)return res.status(401).json({error:'Session is no longer active',code:'SESSION_REVOKED'})
     req.userId=payload.sub
     req.userEmail=account.email
@@ -529,7 +557,7 @@ const finalizeServerReportedMatch=async(db:any,matchId:string,winnerId:string,re
   if(match.status!=='in_progress')throw new Error('Only an in-progress match can be completed')
   if(![match.player1_id,match.player2_id].includes(winnerId))throw new Error('Winner must be a match participant')
   const values:Record<string,number>={}
-  for(const key of ['score_p1','score_p2','p1_kills','p1_deaths','p2_kills','p2_deaths']){const value=Number(reported?.[key]??0);if(!Number.isInteger(value)||value<0||value>100000)throw new Error(`Invalid match statistic: ${key}`);values[key]=value}
+  for(const key of ['score_p1','score_p2','p1_kills','p1_deaths','p2_kills','p2_deaths']){const value=Number(reported?.[key]??0),minimum=key==='score_p1'||key==='score_p2'?-100000:0;if(!Number.isInteger(value)||value<minimum||value>100000)throw new Error(`Invalid match statistic: ${key}`);values[key]=value}
   const settings=await getPlatformSettings(),p1Won=winnerId===match.player1_id,p1Delta=p1Won?25:-20,p2Delta=p1Won?-20:25
   const rankState=async(playerId:string)=>{const row=(await db.query(`SELECT COALESCE(own.rating,1000)::int rating,(COUNT(other.user_id)+1)::int rank FROM (SELECT $1::uuid user_id,$2::text game_id) target LEFT JOIN user_game_stats own ON own.user_id=target.user_id AND own.game_id=target.game_id LEFT JOIN user_game_stats other ON other.game_id=target.game_id AND other.rating>COALESCE(own.rating,1000) GROUP BY own.rating`,[playerId,match.game_id])).rows[0];return{rating:Number(row.rating),rank:Number(row.rank)}}
   const [p1Before,p2Before]=await Promise.all([rankState(match.player1_id),rankState(match.player2_id)])
@@ -553,6 +581,13 @@ const finalizeServerReportedMatch=async(db:any,matchId:string,winnerId:string,re
   await updatePlayer(match.player1_id,p1Won,values.p1_kills,values.p1_deaths);await updatePlayer(match.player2_id,!p1Won,values.p2_kills,values.p2_deaths)
   const [p1After,p2After]=await Promise.all([rankState(match.player1_id),rankState(match.player2_id)])
   await db.query(`INSERT INTO rating_history(user_id,game_id,match_id,rating_before,rating_after,rating_delta,rank_before,rank_after) VALUES($1,$2,$3,$4,$5,$6,$7,$8),($9,$2,$3,$10,$11,$12,$13,$14)`,[match.player1_id,match.game_id,matchId,p1Before.rating,p1After.rating,p1Delta,p1Before.rank,p1After.rank,match.player2_id,p2Before.rating,p2After.rating,p2Delta,p2Before.rank,p2After.rank])
+  // Medal history is append-only. Nothing is awarded until an administrator
+  // explicitly configures and enables authoritative rating thresholds.
+  await db.query(`INSERT INTO user_competitive_medals(user_id,game_id,medal_id,rating_at_award,source_match_id)
+    SELECT candidate.user_id,$2,medal.id,candidate.rating,$3
+    FROM (VALUES($1::uuid,$4::int),($5::uuid,$6::int)) candidate(user_id,rating)
+    JOIN competitive_medal_definitions medal ON medal.auto_award_enabled=TRUE AND medal.rating_threshold IS NOT NULL AND candidate.rating>=medal.rating_threshold
+    ON CONFLICT(user_id,game_id,medal_id) DO NOTHING`,[match.player1_id,match.game_id,matchId,p1After.rating,match.player2_id,p2After.rating])
   await db.query(`INSERT INTO match_events(match_id,sequence,event_type,occurred_at,details) VALUES($1,1,'match_started',COALESCE($2,NOW()),jsonb_build_object('map',$3::text,'source','server_agent')) ON CONFLICT(match_id,sequence) DO NOTHING`,[matchId,match.started_at,match.selected_map])
   await db.query(`INSERT INTO match_events(match_id,sequence,event_type,actor_user_id,occurred_at,details) VALUES($1,2,'match_completed',$2::uuid,NOW(),jsonb_build_object('winnerId',$2::uuid,'scoreP1',$3::int,'scoreP2',$4::int,'source','server_agent')) ON CONFLICT(match_id,sequence) DO UPDATE SET actor_user_id=EXCLUDED.actor_user_id,occurred_at=EXCLUDED.occurred_at,details=EXCLUDED.details`,[matchId,winnerId,values.score_p1,values.score_p2])
   await db.query("UPDATE game_servers SET current_match_id=NULL,status='online',updated_at=NOW() WHERE current_match_id=$1",[matchId])
@@ -573,7 +608,7 @@ app.post('/host-agent/pair',async(req,res)=>{
   const code=normalizePairingCode(req.body?.pairingCode),agentVersion=typeof req.body?.agentVersion==='string'?req.body.agentVersion.trim().slice(0,100):null
   if(!/^SN-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(code))return res.status(400).json({error:'Pairing code is invalid or expired',code:'PAIRING_INVALID'})
   const db=await pool.connect()
-  try{await db.query('BEGIN');const codeHash=hashSecret(code);const host=(await db.query('SELECT * FROM hosts WHERE pairing_code_hash=$1 FOR UPDATE',[codeHash])).rows[0];if(!host||!timingSafeHashMatches(code,host.pairing_code_hash))throw Object.assign(new Error('Pairing code is invalid or expired'),{status:400,code:'PAIRING_INVALID'});if(!host.enabled)throw Object.assign(new Error('Host is disabled'),{status:403,code:'HOST_DISABLED'});if(host.pairing_used_at)throw Object.assign(new Error('Pairing code was already used'),{status:409,code:'PAIRING_USED'});if(!host.pairing_expires_at||new Date(host.pairing_expires_at)<=new Date())throw Object.assign(new Error('Pairing code is invalid or expired'),{status:410,code:'PAIRING_EXPIRED'});const issued=issueHostCredential();await db.query("UPDATE hosts SET credential_hash=$1,credential_revoked_at=NULL,pairing_used_at=NOW(),pairing_code_hash=NULL,status='online',agent_version=$2,last_seen_at=NOW(),updated_at=NOW() WHERE id=$3",[issued.hash,agentVersion,host.id]);await db.query("INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details,ip) VALUES(NULL,'host.paired','host',$1,$2,$3)",[host.id,JSON.stringify({agentVersion}),req.ip||null]);await db.query('COMMIT');logEvent('info','host_agent_paired',{hostId:host.id,agentVersion});return res.json({host:{id:host.id,name:host.name,region:host.region},credential:issued.credential})}catch(error:any){await db.query('ROLLBACK');return res.status(error.status||500).json({error:error.status?error.message:'Host pairing failed',code:error.code||'HOST_PAIRING_FAILED'})}finally{db.release()}
+  try{await db.query('BEGIN');const codeHash=hashSecret(code);const host=(await db.query('SELECT * FROM hosts WHERE pairing_code_hash=$1 FOR UPDATE',[codeHash])).rows[0];if(!host||!timingSafeHashMatches(code,host.pairing_code_hash))throw Object.assign(new Error('Pairing code is invalid or expired'),{status:400,code:'PAIRING_INVALID'});validatePairableHost(host);const issued=issueHostCredential();await db.query("UPDATE hosts SET credential_hash=$1,credential_revoked_at=NULL,pairing_used_at=NOW(),status='online',agent_version=$2,last_seen_at=NOW(),updated_at=NOW() WHERE id=$3",[issued.hash,agentVersion,host.id]);await db.query("INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details,ip) VALUES(NULL,'host.paired','host',$1,$2,$3)",[host.id,JSON.stringify({agentVersion}),req.ip||null]);await db.query('COMMIT');logEvent('info','host_agent_paired',{hostId:host.id,agentVersion});return res.json({host:{id:host.id,name:host.name,region:host.region},credential:issued.credential})}catch(error:any){await db.query('ROLLBACK');const pairingError=error instanceof HostPairingError;return res.status(pairingError?error.status:error.status||500).json({error:pairingError||error.status?error.message:'Host pairing failed',code:pairingError?error.code:error.code||'HOST_PAIRING_FAILED'})}finally{db.release()}
 })
 
 app.post('/host-agent/heartbeat',async(req,res)=>{
@@ -583,12 +618,33 @@ app.post('/host-agent/heartbeat',async(req,res)=>{
   const profileIds=new Set<string>(),ports=new Set<number>(),safeProfiles:any[]=[]
   for(const raw of profiles){const profile={id:String(raw?.id||''),name:String(raw?.name||''),gameId:String(raw?.gameId||''),gameMode:String(raw?.gameMode||''),localPort:Number(raw?.localPort),telemetryPort:Number(raw?.telemetryPort),state:String(raw?.state||'ready'),currentMatchId:raw?.currentMatchId==null?null:String(raw.currentMatchId)};if(!/^[a-zA-Z0-9_-]{1,64}$/.test(profile.id)||!profile.name||!capabilities[profile.gameId]?.includes(profile.gameMode)||!Number.isInteger(profile.localPort)||profile.localPort<1024||profile.localPort>65535||!Number.isInteger(profile.telemetryPort)||profile.telemetryPort<1||profile.telemetryPort>65535||!['ready','running','offline','failed'].includes(profile.state)||(profile.currentMatchId&&!/^[0-9a-f-]{36}$/i.test(profile.currentMatchId))||profileIds.has(profile.id)||ports.has(profile.localPort)||ports.has(profile.telemetryPort))return res.status(400).json({error:'Invalid or conflicting host profile',code:'INVALID_HOST_PROFILE'});profileIds.add(profile.id);ports.add(profile.localPort);ports.add(profile.telemetryPort);safeProfiles.push(profile)}
   const configured=await pool.query('SELECT game_id,modes FROM game_matchmaking_config WHERE game_id=ANY($1::text[])',[Object.keys(capabilities)]),catalog=new Map(configured.rows.map(row=>[row.game_id,row.modes]));if(Object.entries(capabilities).some(([game,modes])=>!modes.every(mode=>(catalog.get(game)||[]).includes(mode))))return res.status(400).json({error:'Host reported an unsupported capability',code:'INVALID_CAPABILITY'})
-  const db=await pool.connect();try{await db.query('BEGIN');await db.query("UPDATE hosts SET status='online',agent_version=$1,last_seen_at=NOW(),capabilities=$2,profiles=$3,updated_at=NOW() WHERE id=$4",[agentVersion,JSON.stringify(capabilities),JSON.stringify(safeProfiles),host.id]);await db.query(`UPDATE game_servers server SET status=CASE WHEN server.current_match_id IS NOT NULL THEN 'in_use' WHEN profile->>'state'='running' THEN 'online' ELSE 'offline' END,last_heartbeat=NOW(),updated_at=NOW() FROM jsonb_array_elements($1::jsonb) profile WHERE server.host_id=$2 AND server.host_profile_id=profile->>'id' AND server.status<>'maintenance'`,[JSON.stringify(safeProfiles),host.id]);await db.query('COMMIT');return res.json({ok:true,hostId:host.id})}catch(error){await db.query('ROLLBACK');return sendDatabaseError(res,error)}finally{db.release()}
+  const db=await pool.connect();try{
+    await db.query('BEGIN')
+    await db.query("UPDATE hosts SET status='online',agent_version=$1,last_seen_at=NOW(),capabilities=$2,profiles=$3,updated_at=NOW() WHERE id=$4",[agentVersion,JSON.stringify(capabilities),JSON.stringify(safeProfiles),host.id])
+    for(const profile of safeProfiles){
+      await db.query(`INSERT INTO host_server_profiles(host_id,profile_id,name,game_id,game_mode,local_port,telemetry_port,reported_state,reported_match_id,lifecycle_status,last_seen_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $8='failed' THEN 'server_error' WHEN $8='offline' THEN 'offline' WHEN $8='running' THEN 'starting' ELSE 'idle' END,NOW())
+        ON CONFLICT(host_id,profile_id) DO UPDATE SET
+          name=EXCLUDED.name,game_id=EXCLUDED.game_id,game_mode=EXCLUDED.game_mode,local_port=EXCLUDED.local_port,telemetry_port=EXCLUDED.telemetry_port,
+          reported_state=EXCLUDED.reported_state,reported_match_id=EXCLUDED.reported_match_id,last_seen_at=NOW(),removed_at=NULL,updated_at=NOW(),
+          approval_status=CASE WHEN (host_server_profiles.game_id,host_server_profiles.game_mode,host_server_profiles.local_port,host_server_profiles.telemetry_port)
+            IS DISTINCT FROM (EXCLUDED.game_id,EXCLUDED.game_mode,EXCLUDED.local_port,EXCLUDED.telemetry_port) THEN 'pending_approval' ELSE host_server_profiles.approval_status END,
+          matchmaking_enabled=CASE WHEN (host_server_profiles.game_id,host_server_profiles.game_mode,host_server_profiles.local_port,host_server_profiles.telemetry_port)
+            IS DISTINCT FROM (EXCLUDED.game_id,EXCLUDED.game_mode,EXCLUDED.local_port,EXCLUDED.telemetry_port) THEN FALSE ELSE host_server_profiles.matchmaking_enabled END,
+          lifecycle_status=CASE WHEN EXCLUDED.reported_state='failed' THEN 'server_error' WHEN EXCLUDED.reported_state='offline' THEN 'offline' WHEN EXCLUDED.reported_state='running' AND host_server_profiles.lifecycle_status='match_running' THEN 'match_running' WHEN EXCLUDED.reported_state='running' THEN 'starting' WHEN host_server_profiles.lifecycle_status='match_finished' THEN 'match_finished' ELSE 'idle' END`,
+        [host.id,profile.id,profile.name,profile.gameId,profile.gameMode,profile.localPort,profile.telemetryPort,profile.state,profile.currentMatchId])
+    }
+    await db.query(`UPDATE host_server_profiles SET removed_at=NOW(),approval_status='pending_approval',matchmaking_enabled=FALSE,lifecycle_status='offline',updated_at=NOW()
+      WHERE host_id=$1 AND removed_at IS NULL AND NOT(profile_id=ANY($2::text[]))`,[host.id,safeProfiles.map(profile=>profile.id)])
+    await db.query(`UPDATE game_servers server SET status=CASE WHEN server.current_match_id IS NOT NULL THEN 'in_use' WHEN profile.reported_state='ready' AND profile.approval_status='approved' AND profile.matchmaking_enabled THEN 'online' ELSE 'offline' END,last_heartbeat=NOW(),updated_at=NOW()
+      FROM host_server_profiles profile WHERE profile.host_id=$1 AND server.host_id=profile.host_id AND server.host_profile_id=profile.profile_id AND server.status<>'maintenance'`,[host.id])
+    await db.query('COMMIT');return res.json({ok:true,hostId:host.id})
+  }catch(error){await db.query('ROLLBACK');return sendDatabaseError(res,error)}finally{db.release()}
 })
 
 app.get('/host-agent/assignments',async(req,res)=>{
   const host=await authenticateHost(req);if(!host)return res.status(401).json({error:'Invalid or revoked host credential',code:'HOST_AUTH_INVALID'})
-  const rows=(await pool.query(`SELECT s.id server_id,s.host_profile_id,s.region,s.current_match_id,m.id match_id,m.game_id,m.game_mode,m.selected_map,m.player1_id,m.player2_id,p1.steam_id player1_steam_id,p2.steam_id player2_steam_id FROM game_servers s LEFT JOIN matches m ON m.id=s.current_match_id AND m.server_id=s.id LEFT JOIN users p1 ON p1.id=m.player1_id LEFT JOIN users p2 ON p2.id=m.player2_id WHERE s.host_id=$1 ORDER BY s.created_at`,[host.id])).rows,assignments:any[]=[]
+  const rows=(await pool.query(`SELECT s.id server_id,s.host_profile_id,s.region,s.current_match_id,m.id match_id,m.game_id,m.game_mode,m.selected_map,m.player1_id,m.player2_id,p1.steam_id player1_steam_id,p2.steam_id player2_steam_id FROM game_servers s JOIN host_server_profiles hp ON hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id AND hp.game_server_id=s.id LEFT JOIN matches m ON m.id=s.current_match_id AND m.server_id=s.id LEFT JOIN users p1 ON p1.id=m.player1_id LEFT JOIN users p2 ON p2.id=m.player2_id WHERE s.host_id=$1 AND hp.approval_status='approved' AND hp.matchmaking_enabled AND hp.removed_at IS NULL ORDER BY s.created_at`,[host.id])).rows,assignments:any[]=[]
   for(const row of rows){if(!row.match_id){assignments.push({serverId:row.server_id,profileId:row.host_profile_id,assignment:null});continue}const rules=trustedHl1Rules(row.game_mode),hldsMap=hl1EngineMapName(row.selected_map);if(row.game_id!=='hl1'||!rules||!hldsMap||!row.player1_steam_id||!row.player2_steam_id)continue;assignments.push({serverId:row.server_id,profileId:row.host_profile_id,assignment:{matchId:row.match_id,gameId:row.game_id,gameMode:row.game_mode,region:row.region,selectedMap:row.selected_map,hldsMap,fragLimit:rules.fragLimit,timeLimitSeconds:rules.timeLimitSeconds,disconnectPolicy:rules.disconnectPolicy,player1:{userId:row.player1_id,steamId:row.player1_steam_id},player2:{userId:row.player2_id,steamId:row.player2_steam_id}}})}
   return res.json({host:{id:host.id,name:host.name,region:host.region},assignments})
 })
@@ -615,7 +671,10 @@ app.post('/game-server/:id/heartbeat',async(req,res)=>{
     if(['match_running','match_completed'].includes(report.type)&&!server.current_match_id)throw new HostAgentProtocolError('NO_CURRENT_MATCH','Server has no current match',409)
     let match:any=null
     if(server.current_match_id){
-      match=(await db.query('SELECT id,server_id,status,player1_id,player2_id FROM matches WHERE id=$1 FOR UPDATE',[server.current_match_id])).rows[0]
+      match=(await db.query(`SELECT m.id,m.server_id,m.status,m.game_id,m.game_mode,m.selected_map,m.player1_id,m.player2_id,
+        p1.steam_id player1_steam_id,p2.steam_id player2_steam_id
+        FROM matches m JOIN users p1 ON p1.id=m.player1_id JOIN users p2 ON p2.id=m.player2_id
+        WHERE m.id=$1 FOR UPDATE OF m`,[server.current_match_id])).rows[0]
       if(!match||match.server_id!==server.id)throw new HostAgentProtocolError('STALE_MATCH_ASSOCIATION','Server current match is not authoritatively assigned to this server',409)
     }
     if(report.type==='match_running'&&!['pending','in_progress'].includes(match.status))throw new HostAgentProtocolError('UNSUPPORTED_MATCH_TRANSITION',`Cannot report running from ${match.status}`,409)
@@ -623,19 +682,22 @@ app.post('/game-server/:id/heartbeat',async(req,res)=>{
     await db.query("UPDATE game_servers SET current_players=$1,current_map=$2,last_heartbeat=NOW(),last_error=NULL,telemetry=$3,status=CASE WHEN current_match_id IS NULL THEN 'online' ELSE 'in_use' END,updated_at=NOW() WHERE id=$4",[report.playerCount,report.map,JSON.stringify({players:report.players,source:'agent',observedAt:report.observedAt}),server.id])
     if(report.type!=='heartbeat')await db.query('INSERT INTO game_server_player_snapshots(server_id,player_count,map_name,players,observed_at) VALUES($1,$2,$3,$4,COALESCE($5::timestamptz,NOW()))',[server.id,report.playerCount,report.map,JSON.stringify(report.players),report.observedAt])
     if(report.type==='match_running'){
+      validateTrustedMatchContext(match,report)
       await db.query("UPDATE matches SET status='in_progress',started_at=COALESCE(started_at,$2::timestamptz,NOW()),result_source='game_server' WHERE id=$1",[match.id,report.observedAt])
+      await db.query("UPDATE host_server_profiles SET lifecycle_status='match_running',reported_match_id=$1,updated_at=NOW() WHERE game_server_id=$2",[match.id,server.id])
       await db.query("INSERT INTO match_events(match_id,sequence,event_type,occurred_at,details) VALUES($1,1,'match_started',COALESCE($2::timestamptz,NOW()),jsonb_build_object('map',$3::text,'source','server_agent')) ON CONFLICT(match_id,sequence) DO NOTHING",[match.id,report.observedAt,report.map])
     }
     if((report.type==='match_running'||report.type==='match_completed')&&report.demoUrl)await db.query('UPDATE matches SET demo_url=$1,demo_uploaded_at=NOW() WHERE id=$2',[report.demoUrl,match.id])
     if(report.type==='match_completed'){
-      if(![match.player1_id,match.player2_id].includes(report.winnerId))throw new HostAgentProtocolError('INVALID_WINNER','Winner must be a current match participant',400)
-      await finalizeServerReportedMatch(db,match.id,report.winnerId,report.stats)
+      const validated=validateTrustedMatchCompletion(match,report)
+      await finalizeServerReportedMatch(db,match.id,validated.winnerId,validated.stats)
+      await db.query("UPDATE host_server_profiles SET lifecycle_status='match_finished',reported_match_id=NULL,updated_at=NOW() WHERE game_server_id=$1",[server.id])
       await db.query('INSERT INTO game_server_agent_reports(server_id,report_id,report_type,match_id,payload_hash) VALUES($1,$2,$3,$4,$5)',[server.id,report.reportId,report.type,match.id,payloadHash])
     }
     await db.query('COMMIT')
     logEvent('info','host_agent_report_accepted',{serverId:server.id,matchId:match?.id||null,reportType:report.type,playerCount:report.playerCount,reportId:report.type==='match_completed'?report.reportId:undefined})
     return res.json({ok:true,matchId:match?.id||null,idempotent:false})
-  }catch(err:any){await db.query('ROLLBACK');if(err instanceof HostAgentProtocolError){logEvent('warn','host_agent_report_rejected',{serverId:req.params.id,reportType:report.type,code:err.code});return res.status(err.status).json({error:err.message,code:err.code})}return sendDatabaseError(res,err)}finally{db.release()}
+  }catch(err:any){await db.query('ROLLBACK');if(err instanceof HostAgentProtocolError||err instanceof TrustedMatchResultError){logEvent('warn','host_agent_report_rejected',{serverId:req.params.id,reportType:report.type,code:err.code});return res.status(err.status).json({error:err.message,code:err.code})}return sendDatabaseError(res,err)}finally{db.release()}
 })
 
 app.get('/game-server/:id/assignment',async(req,res)=>{
@@ -930,8 +992,9 @@ app.post('/auth/signup', async (req, res) => {
       [email, username, password_hash,settings.points_defaults.startingBalance]
     )
     const user = result.rows[0]
-    const token = jwt.sign({ sub: user.id, email: user.email, av: Number(user.auth_version||0) }, JWT_SECRET, { expiresIn: JWT_EXPIRES })
-    return res.status(201).json({ user: toProfile(user), session: { access_token: token } })
+    const session=await issueSession(pool,user,JWT_SECRET,sessionMetadata(req))
+    setRefreshCookie(res,session.refreshToken)
+    return res.status(201).json({ user: toProfile(user), session: { access_token: session.accessToken,expires_in:ACCESS_TOKEN_TTL_SECONDS,session_id:session.sessionId } })
   } catch (err: any) {
     return sendInternalError(res, err, 'signup_failed')
   }
@@ -955,11 +1018,58 @@ app.post('/auth/signin', async (req, res) => {
       `INSERT INTO login_history(user_id,method,success,ip,user_agent) VALUES($1,'password',true,$2,$3)`,
       [user.id, req.ip || null, req.get('user-agent') || null]
     ).catch(() => undefined)
-    const token = jwt.sign({ sub: user.id, email: user.email, av: Number(user.auth_version||0) }, JWT_SECRET, { expiresIn: JWT_EXPIRES })
-    return res.json({ user: toProfile(user), session: { access_token: token }, profile: toProfile(user) })
+    const session=await issueSession(pool,user,JWT_SECRET,sessionMetadata(req))
+    setRefreshCookie(res,session.refreshToken)
+    return res.json({ user: toProfile(user), session: { access_token: session.accessToken,expires_in:ACCESS_TOKEN_TTL_SECONDS,session_id:session.sessionId }, profile: toProfile(user) })
   } catch (err: any) {
     return sendInternalError(res, err, 'signin_failed')
   }
+})
+
+app.post('/auth/refresh',async(req,res)=>{
+  if(rejectInvalidSessionOrigin(req,res))return
+  const token=refreshTokenFrom(req)
+  if(!token){clearRefreshCookie(res);return res.status(401).json({error:'Refresh session is required',code:'REFRESH_REQUIRED'})}
+  try{
+    const session=await rotateSession(pool,token,JWT_SECRET,sessionMetadata(req))
+    setRefreshCookie(res,session.refreshToken)
+    return res.json({session:{access_token:session.accessToken,expires_in:ACCESS_TOKEN_TTL_SECONDS,session_id:session.sessionId}})
+  }catch(error){
+    clearRefreshCookie(res)
+    if(error instanceof RefreshSessionError)return res.status(401).json({error:'Refresh session is no longer active',code:error.code})
+    return sendDatabaseError(res,error)
+  }
+})
+
+app.post('/auth/logout',async(req,res)=>{
+  if(rejectInvalidSessionOrigin(req,res))return
+  const token=refreshTokenFrom(req)
+  try{
+    if(token)await revokeSessionByToken(pool,token)
+    const authorization=req.get('authorization')
+    if(authorization?.startsWith('Bearer ')){
+      try{const payload=jwt.verify(authorization.slice(7),JWT_SECRET) as AuthTokenPayload;if(payload.sid&&validUserId(payload.sub))await pool.query('UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW()) WHERE id=$1 AND user_id=$2',[payload.sid,payload.sub])}catch{}
+    }
+    clearRefreshCookie(res);return res.status(204).end()
+  }catch(error){return sendDatabaseError(res,error)}
+})
+
+app.get('/auth/sessions',requireAuth,async(req:AuthRequest,res)=>{
+  try{
+    const rows=(await pool.query(`SELECT id,created_at,last_used_at,expires_at,ip,user_agent FROM auth_sessions
+      WHERE user_id=$1 AND revoked_at IS NULL AND expires_at>NOW() ORDER BY created_at DESC`,[req.userId])).rows
+    return res.json({sessions:rows.map(row=>({...row,current:row.id===(req as any).authSessionId}))})
+  }catch(error){return sendDatabaseError(res,error)}
+})
+
+app.delete('/auth/sessions/:sessionId',requireAuth,async(req:AuthRequest,res)=>{
+  if(!validUserId(req.params.sessionId))return res.status(400).json({error:'Invalid session ID',code:'INVALID_SESSION_ID'})
+  try{
+    const result=await pool.query('UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW()) WHERE id=$1 AND user_id=$2 RETURNING id',[req.params.sessionId,req.userId])
+    if(!result.rows[0])return res.status(404).json({error:'Session not found',code:'SESSION_NOT_FOUND'})
+    if(req.authSessionId===req.params.sessionId)clearRefreshCookie(res)
+    return res.status(204).end()
+  }catch(error){return sendDatabaseError(res,error)}
 })
 
 // POST /auth/reset-password
@@ -1016,6 +1126,7 @@ app.post('/auth/update-password', async (req, res) => {
       'UPDATE users SET password_hash=$1, auth_version=auth_version+1, reset_token=NULL,reset_token_hash=NULL,reset_token_expires=NULL WHERE id=$2',
       [hash, result.rows[0].id]
     )
+    await revokeUserSessions(pool,result.rows[0].id)
     return res.json({ message: 'Password updated successfully' })
   } catch (err: any) {
     return sendInternalError(res, err)
@@ -1040,6 +1151,7 @@ app.post('/auth/change-password', requireAuth, async (req: AuthRequest, res) => 
     }
     const passwordHash = await bcrypt.hash(newPassword, 12)
     await pool.query('UPDATE users SET password_hash=$1,auth_version=auth_version+1,updated_at=NOW() WHERE id=$2', [passwordHash, req.userId])
+    await revokeUserSessions(pool,req.userId!)
     return res.json({ message: 'Password changed successfully' })
   } catch (err: any) {
     return sendInternalError(res, err, 'change_password_failed')
@@ -1454,6 +1566,37 @@ app.get('/frames', async (_req, res) => {
   }
 })
 
+app.get('/profile/customization', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const [userResult,frames,ranks,badges,medals,ownedMedals,ownedSpecialBadges,gameStats]=await Promise.all([
+      pool.query('SELECT equipped_frame,owned_frames,active_profile_rank_id,active_special_badge_id,preferred_game_id FROM users WHERE id=$1',[req.userId]),
+      pool.query("SELECT id,name,description,rarity,metadata FROM frames WHERE is_active=true AND metadata->>'catalogType'='future_fl_shop' ORDER BY id"),
+      pool.query('SELECT id,name,asset_url,min_rating,max_rating,auto_assign_enabled FROM profile_rank_definitions ORDER BY created_at,id'),
+      pool.query('SELECT id,name,asset_url,allows_custom_title FROM profile_special_badges ORDER BY created_at,id'),
+      pool.query('SELECT id,level,name,asset_url,rating_threshold,auto_award_enabled FROM competitive_medal_definitions ORDER BY level'),
+      pool.query(`SELECT earned.medal_id,earned.game_id,earned.earned_at,earned.rating_at_award,definition.level,definition.name,definition.asset_url
+        FROM user_competitive_medals earned JOIN competitive_medal_definitions definition ON definition.id=earned.medal_id
+        WHERE earned.user_id=$1 ORDER BY definition.level`,[req.userId]),
+      pool.query(`SELECT assigned.badge_id,assigned.custom_title,assigned.assigned_at,definition.name,definition.asset_url
+        FROM user_special_badges assigned JOIN profile_special_badges definition ON definition.id=assigned.badge_id
+        WHERE assigned.user_id=$1 ORDER BY assigned.assigned_at`,[req.userId]),
+      pool.query('SELECT game_id,rating FROM user_game_stats WHERE user_id=$1',[req.userId]),
+    ])
+    const user=userResult.rows[0]
+    if(!user)return res.status(404).json({error:'User not found'})
+    const selectedGame=user.preferred_game_id||'hl1'
+    const selectedRating=gameStats.rows.find(row=>row.game_id===selectedGame)?.rating??null
+    const eligibleMedals=selectedRating==null?[]:medals.rows.filter(m=>m.auto_award_enabled&&m.rating_threshold!=null&&selectedRating>=m.rating_threshold)
+    const currentMedal=eligibleMedals.length?eligibleMedals[eligibleMedals.length-1]:null
+    return res.json({
+      frames:frames.rows.map(frame=>({...frame,owned:(user.owned_frames||[]).includes(frame.id),active:user.equipped_frame===frame.id})),
+      ranks:ranks.rows,activeRankId:user.active_profile_rank_id,
+      specialBadges:badges.rows,ownedSpecialBadges:ownedSpecialBadges.rows,activeSpecialBadgeId:user.active_special_badge_id,
+      medals:medals.rows,earnedMedals:ownedMedals.rows,currentCompetitive:{gameId:selectedGame,rating:selectedRating,level:currentMedal?.level??null,medalId:currentMedal?.id??null},
+    })
+  } catch (err:any) { return sendDatabaseError(res,err) }
+})
+
 app.post('/user/badge/purchase', requireAuth, (_req, res) =>
   res.status(410).json({
     error:'Badges are achievements and cannot be purchased',
@@ -1467,8 +1610,9 @@ app.post('/user/frame/purchase', requireAuth, async (req: AuthRequest, res) => {
     const { frameId } = req.body
     if(typeof frameId!=='string'||!frameId)return res.status(400).json({error:'Invalid frame purchase'})
     await db.query('BEGIN')
-    const frame=(await db.query('SELECT id,name,price_points,vip_only,is_active FROM frames WHERE id=$1 FOR SHARE',[frameId])).rows[0]
+    const frame=(await db.query('SELECT id,name,price_points,vip_only,is_active,metadata FROM frames WHERE id=$1 FOR SHARE',[frameId])).rows[0]
     if(!frame||!frame.is_active){await db.query('ROLLBACK');return res.status(404).json({error:'Frame is unavailable'})}
+    if(frame.metadata?.purchasable===false){await db.query('ROLLBACK');return res.status(403).json({error:'This frame is not available for purchase',code:'FRAME_NOT_PURCHASABLE'})}
     const result = await db.query(
       `UPDATE users u SET points=u.points-f.price_points,owned_frames=array_append(COALESCE(u.owned_frames,'{}'::text[]),f.id)
        FROM frames f WHERE u.id=$1 AND f.id=$2 AND f.is_active=true AND (NOT f.vip_only OR u.is_premium=true)
@@ -1505,6 +1649,8 @@ app.post('/user/badge/equip', requireAuth, async (req: AuthRequest, res) => {
 app.post('/user/frame/equip', requireAuth, async (req: AuthRequest, res) => {
   try {
     const { frameId } = req.body
+    if(frameId===null){const result=await pool.query('UPDATE users SET equipped_frame=NULL WHERE id=$1 RETURNING *',[req.userId]);return res.json({profile:toProfile(result.rows[0])})}
+    if(typeof frameId!=='string'||frameId.length>100)return res.status(400).json({error:'Invalid frame'})
     const userResult = await pool.query('SELECT owned_frames FROM users WHERE id=$1', [req.userId])
     const user = userResult.rows[0]
     if (!user?.owned_frames?.includes(frameId)) return res.status(400).json({ error: 'Frame not owned' })
@@ -1724,9 +1870,13 @@ const assignMatchmakingServer=async(db:any,matchId:string)=>{
   const server=(await db.query(
     `SELECT s.id FROM game_servers s
      LEFT JOIN hosts h ON h.id=s.host_id
+     LEFT JOIN host_server_profiles hp ON hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id AND hp.game_server_id=s.id
      WHERE s.game_id=$1 AND s.game_mode=$2 AND s.region=$3 AND s.status='online' AND s.current_match_id IS NULL
        AND (s.host_id IS NULL OR (
          h.enabled=TRUE AND h.status='online' AND h.credential_hash IS NOT NULL AND h.credential_revoked_at IS NULL
+         AND h.last_seen_at>NOW()-INTERVAL '30 seconds'
+         AND hp.approval_status='approved' AND hp.matchmaking_enabled=TRUE AND hp.removed_at IS NULL
+         AND hp.last_seen_at>NOW()-INTERVAL '30 seconds' AND hp.reported_state='ready'
          AND h.capabilities ? s.game_id
          AND h.capabilities->s.game_id ? s.game_mode
          AND EXISTS (
@@ -1738,11 +1888,12 @@ const assignMatchmakingServer=async(db:any,matchId:string)=>{
          )
        ))
      ORDER BY s.created_at
-     FOR UPDATE SKIP LOCKED LIMIT 1`,[match.game_id,match.game_mode,match.matchmaking_region])).rows[0]
+     FOR UPDATE OF s SKIP LOCKED LIMIT 1`,[match.game_id,match.game_mode,match.matchmaking_region])).rows[0]
   if(!server)throw new Error(noServerInSelectedRegionError)
   // Keep the match pending until RCON confirms that the selected map started.
   await db.query("UPDATE matches SET server_id=$1 WHERE id=$2",[server.id,matchId])
   await db.query("UPDATE game_servers SET current_match_id=$1,status='in_use',updated_at=NOW() WHERE id=$2",[matchId,server.id])
+  await db.query("UPDATE host_server_profiles SET lifecycle_status='reserved',reported_match_id=$1,updated_at=NOW() WHERE game_server_id=$2",[matchId,server.id])
 }
 
 const pairQueuedPlayer=async(db:any,userId:string)=>{
@@ -3234,12 +3385,12 @@ const issueAuthSession = async (user: any, method: 'password' | 'steam', req: Re
     [activeUser.id, method, req.ip || null, req.get('user-agent') || null],
   ).catch(() => undefined)
   const authVersion = Number(activeUser.auth_version || 0)
-  const token = jwt.sign({ sub: activeUser.id, email: activeUser.email || undefined, av: authVersion }, JWT_SECRET, { expiresIn: JWT_EXPIRES })
+  const session=await issueSession(pool,activeUser,JWT_SECRET,sessionMetadata(req))
   logEvent('info', method === 'steam' ? 'steam_jwt_issued' : 'auth_jwt_issued', {
     userId: activeUser.id,
     authVersion,
   })
-  return token
+  return session
 }
 
 const getOptionalUserId = async (req: Request): Promise<string | null> => {
@@ -3248,10 +3399,11 @@ const getOptionalUserId = async (req: Request): Promise<string | null> => {
   if (!header.startsWith('Bearer ')) throw new Error('INVALID_SESSION')
 
   try {
-    const payload = jwt.verify(header.slice('Bearer '.length), JWT_SECRET) as { sub: string; av?:number }
+    const payload = jwt.verify(header.slice('Bearer '.length), JWT_SECRET) as { sub: string; av?:number; sid?:string }
     if(!validUserId(payload.sub))throw new Error('INVALID_SESSION')
-    const account=(await pool.query('SELECT auth_version FROM users WHERE id=$1 AND deleted_at IS NULL',[payload.sub])).rows[0]
-    if(!account||Number(payload.av||0)!==Number(account.auth_version||0))throw new Error('INVALID_SESSION')
+    const account=(await pool.query(`SELECT u.auth_version,s.id session_id FROM users u LEFT JOIN auth_sessions s
+      ON s.id=$2 AND s.user_id=u.id AND s.revoked_at IS NULL AND s.expires_at>NOW() WHERE u.id=$1 AND u.deleted_at IS NULL`,[payload.sub,payload.sid||null])).rows[0]
+    if(!account||!payload.sid||!account.session_id||Number(payload.av||0)!==Number(account.auth_version||0))throw new Error('INVALID_SESSION')
     return payload.sub
   } catch {
     throw new Error('INVALID_SESSION')
@@ -3399,14 +3551,15 @@ app.post('/steam/auth', async (req, res) => {
       logEvent('info',event,{requestId:res.locals.requestId,userId:user.id})
     }
 
-    const token = await issueAuthSession(user, 'steam', req)
+    const session = await issueAuthSession(user, 'steam', req)
+    setRefreshCookie(res,session.refreshToken)
     const profile = toProfile(user)
     logEvent('info','steam_auth_succeeded',{requestId:res.locals.requestId,intent,userId:user.id,createdAccount})
 
     return res.status(createdAccount ? 201 : 200).json({
       user: profile,
       profile,
-      session: { access_token: token },
+      session: { access_token: session.accessToken,expires_in:ACCESS_TOKEN_TTL_SECONDS,session_id:session.sessionId },
       steam: toSteamStatus(user),
       authIntent: intent,
       createdAccount,

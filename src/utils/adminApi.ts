@@ -1,3 +1,5 @@
+import {apiFetch,ApiError} from './api'
+
 const configuredApiUrl = (import.meta as any).env?.VITE_API_URL?.replace(/\/$/, '')
 const API_URL = configuredApiUrl || ((import.meta as any).env?.DEV ? 'http://localhost:3001' : '')
 
@@ -11,19 +13,10 @@ export class AdminApiError extends Error {
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!API_URL) throw new AdminApiError('VITE_API_URL is not configured', 500, 'API_URL_NOT_CONFIGURED')
 
-  const token = localStorage.getItem('session_token')
-  const response = await fetch(`${API_URL}/admin${path}`, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers },
-  })
-  const body = await response.json().catch(() => ({}))
-  if (!response.ok) throw new AdminApiError(
-    body.error || `Admin request failed (${response.status})`,
-    response.status,
-    body.code || `HTTP_${response.status}`,
-    body.details,
-  )
-  return body
+  try{return await apiFetch(`/admin${path}`,options) as T}catch(error){
+    if(error instanceof ApiError)throw new AdminApiError(error.message,error.status,error.code||`HTTP_${error.status}`)
+    throw error
+  }
 }
 
 export const adminAPI = {

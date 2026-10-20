@@ -1,7 +1,19 @@
 import crypto from 'crypto'
 
-export const PAIRING_TTL_MINUTES=20
+export const PAIRING_TTL_MINUTES=10
 const pairingAlphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+export class HostPairingError extends Error{
+  public constructor(public readonly code:string,public readonly status:number,message:string){super(message);this.name='HostPairingError'}
+}
+
+export type PairableHost={enabled:boolean;pairing_used_at:Date|string|null;pairing_expires_at:Date|string|null}
+
+export function validatePairableHost(host:PairableHost,now=new Date()){
+  if(!host.enabled)throw new HostPairingError('HOST_DISABLED',403,'Host is disabled')
+  if(host.pairing_used_at)throw new HostPairingError('PAIRING_USED',409,'Pairing code was already used')
+  if(!host.pairing_expires_at||new Date(host.pairing_expires_at)<=now)throw new HostPairingError('PAIRING_EXPIRED',410,'Pairing code is invalid or expired')
+}
 
 export function createPairingCode(){
   let value=''

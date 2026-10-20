@@ -15,8 +15,8 @@ const exact=(value:Record<string,unknown>,allowed:string[])=>{
   const unexpected=Object.keys(value).filter(key=>!allowed.includes(key))
   if(unexpected.length)throw new HostAgentProtocolError('UNSUPPORTED_FIELD',`Unsupported field: ${unexpected[0]}`)
 }
-const integer=(value:unknown,name:string,max=100000)=>{
-  if(typeof value!=='number'||!Number.isInteger(value)||value<0||value>max)throw new HostAgentProtocolError('INVALID_FIELD',`${name} must be an integer between 0 and ${max}`)
+const integer=(value:unknown,name:string,max=100000,min=0)=>{
+  if(typeof value!=='number'||!Number.isInteger(value)||value<min||value>max)throw new HostAgentProtocolError('INVALID_FIELD',`${name} must be an integer between ${min} and ${max}`)
   return value
 }
 const optionalText=(value:unknown,name:string,max:number,required=false)=>{
@@ -60,7 +60,7 @@ const stats=(value:unknown):HostAgentStats=>{
   if(!object(value))throw new HostAgentProtocolError('INVALID_STATS','stats must be an object')
   const keys=['score_p1','score_p2','p1_kills','p1_deaths','p2_kills','p2_deaths']
   exact(value,keys)
-  return Object.fromEntries(keys.map(key=>[key,integer(value[key],`stats.${key}`)])) as HostAgentStats
+  return Object.fromEntries(keys.map(key=>[key,integer(value[key],`stats.${key}`,100000,key==='score_p1'||key==='score_p2'?-100000:0)])) as HostAgentStats
 }
 
 export const parseHostAgentReport=(input:unknown):HostAgentReport=>{

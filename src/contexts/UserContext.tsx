@@ -221,7 +221,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     void presenceAPI.offline().catch(() => undefined);
-    authAPI.signout({ reason: 'explicit_logout', source: 'UserContext.logout' });
+    void authAPI.signout({ reason: 'explicit_logout', source: 'UserContext.logout' });
     logFrontendAuthEvent('user_cleared', { reason: 'explicit_logout', source: 'UserContext.logout' });
     setUser(null);
     setOnlineFriends([]);
@@ -246,7 +246,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const initUser = async () => {
       try {
-        const token = localStorage.getItem('session_token');
+        const token = await authAPI.refreshSession();
         if (token) {
           try {
             await refreshProfile();
@@ -254,7 +254,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
             // A Steam callback can replace an expired token while this initial
             // request is in flight. Never clear a newer session because the
             // request made with the older token failed.
-            if (getSessionToken() === token) authAPI.signout({ reason: 'initial_profile_request_failed', source: 'UserContext.initUser' });
+            if (getSessionToken() === token) void authAPI.signout({ reason: 'initial_profile_request_failed', source: 'UserContext.initUser' });
           }
         }
       } catch (error) {

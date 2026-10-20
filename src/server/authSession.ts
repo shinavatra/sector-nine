@@ -2,6 +2,7 @@ export type AuthTokenPayload = {
   sub: string
   email?: string
   av?: number
+  sid?: string
 }
 
 export type AuthAccountState = {
@@ -9,7 +10,7 @@ export type AuthAccountState = {
   deleted_at?: Date | string | null
 } | null | undefined
 
-export type AuthSessionRejection = 'account_not_found' | 'account_not_active' | 'auth_version_mismatch'
+export type AuthSessionRejection = 'account_not_found' | 'account_not_active' | 'auth_version_mismatch' | 'session_not_active'
 
 export const authSessionRejection = (
   payload: AuthTokenPayload,

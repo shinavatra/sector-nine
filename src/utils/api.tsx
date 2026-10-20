@@ -4,40 +4,69 @@
 // =====================================================
 
 import type { SupportedRegionId } from '../shared/regions'
+import { browserRefreshLock, CrossTabRefreshCoordinator, type RefreshResult } from './refreshCoordinator'
 
 const configuredApiUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, '')
-const API_URL = configuredApiUrl || (import.meta.env.DEV ? 'http://localhost:3001' : '')
+const API_URL = configuredApiUrl || (import.meta.env.DEV ? 'http://localhost:3001' : '/api')
 
 let sessionToken: string | null = null
 export const SESSION_IDENTITY_CHANGED_EVENT = 'sector-nine-session-identity-changed'
+// Remove tokens created by pre-refresh-session builds. Access tokens now live only in memory.
+localStorage.removeItem('session_token')
 
 export const logFrontendAuthEvent = (event: string, details: Record<string, unknown> = {}) => {
   console.info(JSON.stringify({ event, ...details }))
 }
 
-export const setSessionToken = (token: string | null, metadata: { reason?: string; source?: string } = {}) => {
-  const previousToken = sessionToken || localStorage.getItem('session_token')
+const refreshChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('sector-nine-auth-session')
+const refreshListeners = new Set<(result: RefreshResult) => void>()
+refreshChannel?.addEventListener('message', event => {
+  const result = event.data as Partial<RefreshResult>
+  if ((typeof result.token === 'string' || result.token === null) && typeof result.completedAt === 'number') {
+    for (const listener of refreshListeners) listener(result as RefreshResult)
+  }
+})
+
+export const setSessionToken = (token: string | null, metadata: { reason?: string; source?: string } = {}, broadcast = true) => {
+  const previousToken = sessionToken
   const previousPresent = Boolean(previousToken)
   sessionToken = token
   if (token) {
-    localStorage.setItem('session_token', token)
     logFrontendAuthEvent('session_token_changed', { previousPresent, nextPresent: true, ...metadata })
   } else {
-    localStorage.removeItem('session_token')
     logFrontendAuthEvent('session_token_cleared', { previousPresent, nextPresent: false, ...metadata })
   }
-  if (previousToken !== token) {
+  if (previousPresent !== Boolean(token)) {
     window.dispatchEvent(new CustomEvent(SESSION_IDENTITY_CHANGED_EVENT, { detail: { hasSessionToken: Boolean(token) } }))
   }
+  if (broadcast) refreshChannel?.postMessage({ token, completedAt: Date.now() } satisfies RefreshResult)
 }
 
-export const getSessionToken = (): string | null => {
-  if (sessionToken) return sessionToken
-  sessionToken = localStorage.getItem('session_token')
-  return sessionToken
+export const getSessionToken = (): string | null => sessionToken
+
+const refreshAccessToken = async (): Promise<string | null> => {
+  return refreshCoordinator.refresh()
 }
 
-const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
+const performRefreshRequest = async (): Promise<string | null> => {
+    if(!API_URL)throw new ApiError('VITE_API_URL is not configured',500,'API_URL_NOT_CONFIGURED')
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 15_000)
+    const response=await fetch(`${API_URL}/auth/refresh`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},signal:controller.signal}).finally(()=>window.clearTimeout(timeout))
+    if(!response.ok)return null
+    const data=await response.json()
+    return typeof data?.session?.access_token==='string'?data.session.access_token:null
+}
+
+const refreshCoordinator = new CrossTabRefreshCoordinator({
+  lock: browserRefreshLock('sector-nine-refresh-rotation'),
+  performRefresh: performRefreshRequest,
+  publish: result => refreshChannel?.postMessage(result),
+  subscribe: listener => { refreshListeners.add(listener); return () => refreshListeners.delete(listener) },
+  acceptResult: token => setSessionToken(token, { reason: token ? 'refresh_rotated' : 'refresh_failed', source: 'auth.refresh.coordinator' }, false),
+})
+
+export const apiFetch = async (endpoint: string, options: RequestInit = {}, allowRefresh = true):Promise<any> => {
   if (!API_URL) throw new ApiError('VITE_API_URL is not configured', 500, 'API_URL_NOT_CONFIGURED')
 
   const headers = new Headers(options.headers)
@@ -45,13 +74,19 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
   if (token) headers.set('Authorization', `Bearer ${token}`)
   headers.set('Content-Type', 'application/json')
 
-  const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers })
+  const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers, credentials:'include' })
+
+  const refreshExcluded=['/auth/refresh','/auth/signin','/auth/signup','/auth/logout','/auth/reset-password','/auth/update-password']
+  if(response.status===401&&allowRefresh&&!refreshExcluded.includes(endpoint)){
+    const refreshed=await refreshAccessToken()
+    if(refreshed)return apiFetch(endpoint,options,false)
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Request failed' }))
     throw new ApiError(error.error || `HTTP ${response.status}`, response.status, error.code)
   }
-  return response.json()
+  return response.status===204?null:response.json()
 }
 
 export class ApiError extends Error {
@@ -109,7 +144,15 @@ export const authAPI = {
   changePassword: async (currentPassword: string, newPassword: string) =>
     apiFetch('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
 
-  signout: (metadata: { reason?: string; source?: string } = {}) => setSessionToken(null, metadata),
+  refreshSession: refreshAccessToken,
+
+  getSessions: async () => apiFetch('/auth/sessions'),
+
+  revokeSession: async (sessionId:string) => apiFetch(`/auth/sessions/${encodeURIComponent(sessionId)}`,{method:'DELETE'}),
+
+  signout: async (metadata: { reason?: string; source?: string } = {}) => {
+    try{if(API_URL)await fetch(`${API_URL}/auth/logout`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json',...(sessionToken?{Authorization:`Bearer ${sessionToken}`}:{})}})}finally{setSessionToken(null,metadata)}
+  },
 }
 
 // =====================================================
@@ -141,8 +184,11 @@ export const userAPI = {
   equipBadge: async (badgeId: string) =>
     apiFetch('/user/badge/equip', { method: 'POST', body: JSON.stringify({ badgeId }) }),
 
-  equipFrame: async (frameId: string) =>
+  equipFrame: async (frameId: string | null) =>
     apiFetch('/user/frame/equip', { method: 'POST', body: JSON.stringify({ frameId }) }),
+
+  getProfileCustomization: async () =>
+    apiFetch('/profile/customization'),
 
   // Links Steam ID — server also fetches avatar + HL1 ownership automatically
 }

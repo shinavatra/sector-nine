@@ -24,6 +24,7 @@ type ProfileFrame = {
   id: string;
   name: string;
   style?: string | null;
+  metadata?: { assetUrl?: string; thumbnailUrl?: string; purchasable?: boolean };
 };
 
 interface ConfigurationProps {
@@ -101,8 +102,8 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
     return () => { active = false; };
   }, []);
 
-  const handleEquipFrame = async (frameId: string) => {
-    setEquippingFrame(frameId);
+  const handleEquipFrame = async (frameId: string | null) => {
+    setEquippingFrame(frameId || 'none');
     try {
       const response: any = await userAPI.equipFrame(frameId);
       if (response?.profile) adoptProfile(response.profile);
@@ -503,24 +504,26 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
                 <div className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="size-4 animate-spin" />Loading owned frames...</div>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {profileFrames.filter(frame => user?.ownedFrames.includes(frame.id)).map(frame => {
+                  {profileFrames.filter(frame => frame.id.startsWith('retro_frame_')).map(frame => {
                     const selected = user?.equippedFrame === frame.id;
+                    const owned = Boolean(user?.ownedFrames.includes(frame.id));
                     return (
                       <button
                         key={frame.id}
                         type="button"
-                        disabled={selected || equippingFrame !== null}
+                        disabled={!owned || selected || equippingFrame !== null}
                         onClick={() => handleEquipFrame(frame.id)}
-                        className={`min-w-0 rounded border p-3 text-left font-mono transition-colors ${selected ? 'border-orange-500 bg-orange-900/20 text-orange-300' : 'border-orange-900/20 bg-black/20 text-gray-400 hover:border-orange-700'}`}
+                        className={`min-w-0 rounded border p-3 text-left font-mono transition-colors ${selected ? 'border-orange-500 bg-orange-900/20 text-orange-300' : owned ? 'border-orange-900/20 bg-black/20 text-gray-400 hover:border-orange-700' : 'cursor-not-allowed border-gray-900 bg-black/30 text-gray-600'}`}
                       >
-                        <span className={`mb-2 block size-8 rounded-full bg-black/60 ${frame.id !== 'fr_basic' ? frame.style || 'ring-2 ring-orange-400' : ''}`} />
+                        {frame.metadata?.thumbnailUrl?<img src={frame.metadata.thumbnailUrl} alt="" className="mb-2 size-16 object-contain" />:<span className={`mb-2 block size-8 rounded-full bg-black/60 ${frame.id !== 'fr_basic' ? frame.style || 'ring-2 ring-orange-400' : ''}`} />}
                         <span className="block truncate text-sm font-bold">{frame.name}</span>
-                        <span className="mt-1 block text-xs">{selected ? 'EQUIPPED' : equippingFrame === frame.id ? 'EQUIPPING...' : 'EQUIP'}</span>
+                        <span className="mt-1 block text-xs">{selected ? 'EQUIPPED' : !owned ? 'LOCKED' : equippingFrame === frame.id ? 'EQUIPPING...' : 'PREVIEW / EQUIP'}</span>
                       </button>
                     );
                   })}
                 </div>
               )}
+              {user?.equippedFrame&&<Button variant="outline" disabled={equippingFrame!==null} onClick={()=>handleEquipFrame(null)} className="border-red-900/40 font-mono text-red-300">REMOVE ACTIVE FRAME</Button>}
               {!framesLoading && profileFrames.every(frame => !user?.ownedFrames.includes(frame.id)) && (
                 <p className="text-sm text-gray-500">No available owned frames.</p>
               )}

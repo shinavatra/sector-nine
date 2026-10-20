@@ -12,7 +12,7 @@ import { Auth } from "./pages/Auth";
 
 import { GlobalChat } from "./components/GlobalChat";
 import { Toaster } from "./components/ui/sonner";
-import { logFrontendAuthEvent, notificationsAPI, platformAPI, type PublicPlatformSettings } from "./utils/api";
+import { getSessionToken, logFrontendAuthEvent, notificationsAPI, platformAPI, type PublicPlatformSettings } from "./utils/api";
 import { subscribeToNotificationChanges } from "./utils/notificationEvents";
 import { isAdminUser } from "./utils/userRole";
 
@@ -151,7 +151,7 @@ useEffect(() => {
       source: 'App.unauthenticated_redirect_effect',
       pathname: window.location.pathname,
       currentPage,
-      hasSessionToken: Boolean(localStorage.getItem('session_token')),
+      hasSessionToken: Boolean(getSessionToken()),
       hasUser: Boolean(user),
     });
     navigate('auth', true);
