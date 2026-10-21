@@ -5268,6 +5268,7 @@ body {
 /* Sector Nine semantic theme contract. Default values mirror the existing interface. */
 :root,
 :root[data-theme="default"] {
+  --theme-primary-rgb: 251, 146, 60;
   --theme-primary: #fb923c;
   --theme-primary-hover: #f97316;
   --theme-secondary: #4ade80;
@@ -5289,6 +5290,7 @@ body {
 }
 
 :root[data-theme="hl1"] {
+  --theme-primary-rgb: 255, 154, 22;
   --primary: #ff9a16;
   --accent-foreground: #ff8a00;
   --ring: #ff9a16;
@@ -5301,8 +5303,8 @@ body {
   --theme-primary-hover: #ffb14a;
   --theme-secondary: #93a63d;
   --theme-background: #0a0a0a;
-  --theme-panel: rgba(0, 0, 0, 0.4);
-  --theme-panel-elevated: #111111;
+  --theme-panel: rgba(13, 11, 7, 0.7);
+  --theme-panel-elevated: #15120d;
   --theme-border: rgba(255, 154, 22, 0.48);
   --theme-border-strong: rgba(255, 154, 22, 0.78);
   --theme-accent-soft: rgba(255, 154, 22, 0.2);
@@ -5321,6 +5323,7 @@ body {
 }
 
 :root[data-theme="cs16"] {
+  --theme-primary-rgb: 214, 187, 120;
   --primary: #d6bb78;
   --accent-foreground: #d6bb78;
   --ring: #d6bb78;
@@ -5334,8 +5337,8 @@ body {
   --theme-primary-hover: #ead19a;
   --theme-secondary: #77824d;
   --theme-background: #0a0a0a;
-  --theme-panel: rgba(0, 0, 0, 0.4);
-  --theme-panel-elevated: #111111;
+  --theme-panel: rgba(15, 15, 10, 0.7);
+  --theme-panel-elevated: #17170f;
   --theme-border: rgba(214, 187, 120, 0.5);
   --theme-border-strong: rgba(214, 187, 120, 0.78);
   --theme-accent-soft: rgba(214, 187, 120, 0.2);
@@ -5354,6 +5357,7 @@ body {
 }
 
 :root[data-theme="l4d2"] {
+  --theme-primary-rgb: 134, 168, 95;
   --primary: #86a85f;
   --accent-foreground: #d9d7c3;
   --ring: #86a85f;
@@ -5366,9 +5370,9 @@ body {
   --theme-primary: #86a85f;
   --theme-primary-hover: #9cbd73;
   --theme-secondary: #d9d7c3;
-  --theme-background: #0a0a0a;
-  --theme-panel: rgba(0, 0, 0, 0.4);
-  --theme-panel-elevated: #111111;
+  --theme-background: #090a08;
+  --theme-panel: rgba(12, 16, 11, 0.72);
+  --theme-panel-elevated: #121510;
   --theme-border: rgba(134, 168, 95, 0.48);
   --theme-border-strong: rgba(134, 168, 95, 0.78);
   --theme-accent-soft: rgba(134, 168, 95, 0.2);
@@ -5387,6 +5391,7 @@ body {
 }
 
 :root[data-theme="cod4"] {
+  --theme-primary-rgb: 133, 160, 107;
   --primary: #85a06b;
   --accent-foreground: #85a06b;
   --ring: #85a06b;
@@ -5399,9 +5404,9 @@ body {
   --theme-primary: #85a06b;
   --theme-primary-hover: #9bb97d;
   --theme-secondary: #d39745;
-  --theme-background: #0a0a0a;
-  --theme-panel: rgba(0, 0, 0, 0.4);
-  --theme-panel-elevated: #111111;
+  --theme-background: #0a0b0b;
+  --theme-panel: rgba(15, 17, 17, 0.72);
+  --theme-panel-elevated: #151718;
   --theme-border: rgba(133, 160, 107, 0.5);
   --theme-border-strong: rgba(133, 160, 107, 0.78);
   --theme-accent-soft: rgba(133, 160, 107, 0.2);
@@ -5506,7 +5511,6 @@ body {
 :root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [data-slot="dialog-content"][class*="border-orange-"],
 :root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [data-slot="sheet-content"][class*="border-orange-"] {
   border-color: var(--theme-border) !important;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--theme-primary) 10%, transparent);
 }
 
 :root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) input:focus,
@@ -5532,7 +5536,6 @@ body {
   background-color: #111113 !important;
   border-color: var(--theme-border-strong) !important;
   color: var(--theme-primary) !important;
-  box-shadow: inset 0 -2px 0 var(--theme-primary);
 }
 
 :root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) button[class*="bg-orange-"]:hover,
@@ -5553,7 +5556,7 @@ body {
 
 :root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [data-slot="progress"] {
   background-color: rgba(0, 0, 0, 0.35) !important;
-  border: 1px solid var(--theme-border);
+  box-shadow: inset 0 0 0 1px var(--theme-border);
 }
 
 :root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) [data-slot="progress-indicator"] {
@@ -5929,4 +5932,93 @@ p, li, dd { line-height: 1.55; }
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Header visibility is explicit because the checked-in utility bundle may not contain new responsive classes. */
+.primary-desktop-nav { display: none; }
+.mobile-nav-trigger { display: inline-flex; }
+.header-left { justify-self: start; }
+.header-actions { justify-self: end; }
+
+@media (min-width: 64rem) {
+  .main-header-grid {
+    grid-template-columns: minmax(12rem, 1fr) auto minmax(12rem, 1fr);
+    gap: 1rem;
+  }
+  .primary-desktop-nav { display: flex; }
+  .mobile-nav-trigger { display: none; }
+}
+
+.atmospheric-background { opacity: 0.82; contain: strict; }
+.atmospheric-grid {
+  opacity: 0.025;
+  background-image:
+    linear-gradient(rgba(var(--theme-primary-rgb), 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--theme-primary-rgb), 0.08) 1px, transparent 1px),
+    radial-gradient(circle at 50% 20%, rgba(var(--theme-primary-rgb), 0.08), transparent 58%);
+  background-size: 56px 56px, 56px 56px, 100% 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atmospheric-background canvas { opacity: 0.45; }
+}
+
+/* Theme identity changes color and surface treatment only; geometry is invariant. */
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"]) body {
+  background-color: var(--theme-background);
+}
+
+:root:is([data-theme="hl1"], [data-theme="cs16"], [data-theme="l4d2"], [data-theme="cod4"])
+  [data-slot="card"][class*="bg-black"] {
+  background-color: var(--theme-panel) !important;
+}
+
+:root[data-theme="l4d2"] .atmospheric-grid {
+  background-image:
+    radial-gradient(circle at 85% 15%, rgba(169, 71, 62, 0.08), transparent 30%),
+    linear-gradient(rgba(134, 168, 95, 0.035) 1px, transparent 1px);
+  background-size: 100% 100%, 64px 64px;
+}
+
+:root[data-theme="cod4"] .atmospheric-grid {
+  background-image:
+    linear-gradient(135deg, rgba(154, 163, 163, 0.035) 1px, transparent 1px),
+    radial-gradient(circle at 15% 20%, rgba(211, 151, 69, 0.055), transparent 34%);
+  background-size: 72px 72px, 100% 100%;
+}
+
+/* Configuration accordion spacing and stable focus geometry. */
+.page-container-form details > summary {
+  min-height: 4.5rem;
+  padding: 1rem 1.25rem;
+  line-height: 1.4;
+  border-radius: calc(var(--radius) - 1px);
+}
+
+.page-container-form details > summary > span { display: grid; gap: 0.375rem; }
+.page-container-form details > summary > span > span { margin-top: 0; line-height: 1.4; }
+.page-container-form details > summary:focus-visible {
+  outline: 2px solid var(--theme-primary);
+  outline-offset: -3px;
+}
+
+/* Legacy tournament views use the same centered rhythm as current pages. */
+.legacy-tournament-page {
+  width: min(100%, 76rem);
+  margin-inline: auto;
+}
+
+.tournament-rules-page { width: min(100%, 68rem); }
+.legacy-tournament-page [data-slot="tabs-content"] { min-width: 0; }
+.legacy-tournament-page [data-slot="tabs-content"] > * { max-width: 100%; }
+.legacy-tournament-page [data-slot="tabs-content"] .overflow-x-auto {
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.legacy-tournament-page [data-slot="tabs-content"] .py-12 { padding-block: 2rem; }
+
+@media (max-width: 640px) {
+  .legacy-tournament-page { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+  .legacy-tournament-page [data-slot="tabs-list"] { gap: 0.25rem; }
 }

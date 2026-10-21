@@ -46,10 +46,10 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
     <header className="app-header sticky top-0 z-40 border-b border-orange-900/20 bg-black/90 backdrop-blur supports-[backdrop-filter]:bg-black/75">
       <div className="container mx-auto px-4">
         <div className="main-header-grid items-center">
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="header-left flex min-w-0 items-center gap-2">
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="shrink-0 text-orange-300 lg:hidden" aria-label="Open main navigation" aria-expanded={mobileOpen}><Menu className="size-5" /></Button>
+                <Button variant="ghost" size="icon" className="mobile-nav-trigger shrink-0 text-orange-300" aria-label="Open main navigation" aria-expanded={mobileOpen}><Menu className="size-5" /></Button>
               </SheetTrigger>
               <SheetContent side="left" className="mobile-nav-drawer w-[min(88vw,22rem)] border-orange-900/40 bg-[#09090b] p-0 text-gray-200">
                 <SheetHeader className="border-b border-orange-900/25 px-5 py-5 text-left">
@@ -71,7 +71,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
 
           </div>
 
-          <nav className="hidden items-center justify-center gap-2 xl:gap-4 lg:flex">
+          <nav className="primary-desktop-nav items-center justify-center gap-2 xl:gap-4" aria-label="Primary navigation">
             {navItems.slice(0, 5).map((page) => (
               <a
                 key={page.id}
@@ -88,7 +88,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
             ))}
           </nav>
 
-          <div className="flex items-center justify-end space-x-3">
+          <div className="header-actions flex items-center justify-end space-x-3">
             <a
               href="/notifications"
               aria-label="Notifications"

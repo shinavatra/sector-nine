@@ -80,7 +80,7 @@ export function TacticalOperationsChampionship({ onNavigate, isPremium = false }
   const standings = [...participants].sort((a, b) => (b.wins || 0) - (a.wins || 0));
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="legacy-tournament-page container mx-auto px-4 py-8">
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center space-x-4 mb-4">
