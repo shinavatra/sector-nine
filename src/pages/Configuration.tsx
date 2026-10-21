@@ -6,7 +6,7 @@ import { Label } from "../components/ui/label";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { ArrowLeft, Settings, Shield, Bell, ChevronDown, User, Save, Loader2, Lock, Palette } from "lucide-react";
+import { ArrowLeft, Settings, Shield, Bell, Check, ChevronDown, User, Save, Loader2, Lock, Palette } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import { useUser } from "../contexts/UserContext";
@@ -460,15 +460,22 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
                     <button
                       key={theme.id}
                       type="button"
+                      aria-pressed={selected}
+                      data-selected={selected || undefined}
+                      data-saved={preferredTheme === theme.id || undefined}
                       disabled={!unlocked || isSavingTheme}
                       onClick={() => setDraftTheme(theme.id)}
-                      className={`min-w-0 rounded border p-4 text-left font-mono transition-colors ${
+                      className={`theme-choice min-w-0 rounded border p-4 text-left font-mono transition-colors ${
                         selected ? 'border-orange-500 bg-orange-900/20' : 'border-orange-900/20 bg-black/20'
                       } ${unlocked ? 'text-gray-300 hover:border-orange-700' : 'cursor-not-allowed opacity-65'}`}
                     >
                       <span className="flex items-center justify-between gap-2 text-sm font-bold text-orange-300">
                         {theme.name}
-                        {!unlocked && <Lock className="size-4 shrink-0" aria-label="Locked" />}
+                        <span className="flex shrink-0 items-center gap-2">
+                          {preferredTheme === theme.id && <span className="theme-choice-saved">SAVED</span>}
+                          {selected && <span className="theme-choice-check" aria-label="Selected"><Check className="size-4" /></span>}
+                          {!unlocked && <Lock className="size-4" aria-label="Locked" />}
+                        </span>
                       </span>
                       <span className="mt-2 block text-xs text-gray-500">{theme.description}</span>
                       {!unlocked && <span className="mt-3 block text-[11px] text-amber-400">Verify game ownership to unlock.</span>}
