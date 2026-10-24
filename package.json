@@ -107,6 +107,7 @@
     "test:friends-social": "node scripts/test-friends-social.mjs",
     "test:party-matchmaking": "npm run build:server && node scripts/test-party-team-matchmaking.mjs",
     "test:party-matchmaking:e2e": "npm run build:server && node scripts/test-party-matchmaking-e2e.mjs",
+    "test:theme-layout-assets": "npm run build && node scripts/test-theme-layout-assets.mjs",
     "test:host-pairing": "npm run build:server && node scripts/test-host-pairing.mjs",
     "test:host-pairing:e2e": "npm run build:server && node scripts/test-host-pairing-e2e.mjs",
     "db:test": "node -e \"require('dotenv').config(); const {Pool}=require('pg'); const p=new Pool({connectionString:process.env.DATABASE_URL}); p.query('SELECT version()').then(r=>{console.log('✅ Connected:',r.rows[0].version.slice(0,50));p.end()}).catch(e=>{console.error('❌',e.message);p.end()})\""

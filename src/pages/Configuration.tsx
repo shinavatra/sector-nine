@@ -53,6 +53,8 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   const [framesLoading, setFramesLoading] = useState(true);
   const [equippingFrame, setEquippingFrame] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState("");
+  const [openSettingsGroup,setOpenSettingsGroup]=useState<string|null>(null);
+  const setSettingsGroup=(id:string,open:boolean)=>setOpenSettingsGroup(current=>open?id:current===id?null:current);
   const steamDisplayNameAuthoritative = Boolean(user?.steamVerified && user?.steamPersonaName);
   const canChangeDisplayName = steamDisplayNameAuthoritative || (user?.points ?? 0) >= 1500;
   
@@ -279,7 +281,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
         {/* Settings Tab */}
         <TabsContent value="settings" className="space-y-5">
           {/* Account Settings */}
-          <SettingsGroup title="ACCOUNT AND PROFILE" description="Identity, biography, visibility, and presence" defaultOpen>
+          <SettingsGroup id="account" title="ACCOUNT AND PROFILE" description="Identity, biography, visibility, and presence" open={openSettingsGroup==='account'} onOpenChange={open=>setSettingsGroup('account',open)}>
           <Card className="bg-black/40 border-orange-900/20">
             <CardHeader>
               <CardTitle className="text-orange-400 font-mono">ACCOUNT SETTINGS</CardTitle>
@@ -432,7 +434,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
           </Card>
           </SettingsGroup>
 
-          <SettingsGroup title="APPEARANCE" description="Theme mode and owned profile frames" defaultOpen>
+          <SettingsGroup id="appearance" title="APPEARANCE" description="Theme mode and owned profile frames" open={openSettingsGroup==='appearance'} onOpenChange={open=>setSettingsGroup('appearance',open)}>
           <Card className="theme-panel bg-black/40 border-orange-900/20">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-orange-400 font-mono">
@@ -544,7 +546,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
           </Card>
           </SettingsGroup>
 
-          <SettingsGroup title="FRIENDS" description="Requests, accepted friends, and player search">
+          <SettingsGroup id="friends" title="FRIENDS" description="Requests, accepted friends, and player search" open={openSettingsGroup==='friends'} onOpenChange={open=>setSettingsGroup('friends',open)}>
           <Friends
             currentPlayerId={user?.id || ''}
             currentPlayerName={displayPlayerName(user)}
@@ -553,7 +555,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
           </SettingsGroup>
           
           {/* Persisted social links */}
-          <SettingsGroup title="SOCIAL LINKS" description="Public profile destinations">
+          <SettingsGroup id="social" title="SOCIAL LINKS" description="Public profile destinations" open={openSettingsGroup==='social'} onOpenChange={open=>setSettingsGroup('social',open)}>
           <Card className="bg-black/40 border-orange-900/20">
             <CardHeader>
               <CardTitle className="text-orange-400 font-mono">SOCIAL MEDIA LINKS</CardTitle>
@@ -575,7 +577,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
             </CardContent>
           </Card>
           </SettingsGroup>
-          <SettingsGroup title="SECURITY" description="Update your account password">
+          <SettingsGroup id="security" title="SECURITY" description="Update your account password" open={openSettingsGroup==='security'} onOpenChange={open=>setSettingsGroup('security',open)}>
           <Card className="bg-black/40 border-orange-900/20">
             <CardHeader><CardTitle className="text-orange-400 font-mono">SECURITY</CardTitle></CardHeader>
             <CardContent className="space-y-4">
@@ -689,9 +691,8 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   );
 }
 
-function SettingsGroup({ title, description, defaultOpen = false, children }: { title: string; description: string; defaultOpen?: boolean; children: ReactNode }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return <details open={open} onToggle={event => setOpen(event.currentTarget.open)} className="group rounded-lg border border-orange-900/25 bg-black/20">
+function SettingsGroup({ id,title,description,open,onOpenChange,children }: { id:string;title:string;description:string;open:boolean;onOpenChange:(open:boolean)=>void;children:ReactNode }) {
+  return <details id={`configuration-${id}`} open={open} onToggle={event=>{const next=event.currentTarget.open;if(next!==open)onOpenChange(next)}} className="group rounded-lg border border-orange-900/25 bg-black/20">
     <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 marker:content-none">
       <span className="min-w-0"><span className="block font-mono text-sm font-semibold text-orange-300">{title}</span><span className="mt-1 block text-xs text-gray-500">{description}</span></span>
       <ChevronDown className="size-5 shrink-0 text-orange-500 transition-transform group-open:rotate-180" />

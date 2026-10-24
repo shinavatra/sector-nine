@@ -2150,8 +2150,14 @@ app.get('/matchmaking/options',requireAuth,async(req:AuthRequest,res)=>{
     const gameId=String(req.query.game_id||user?.preferred_game_id||'hl1')
     if(!isSupportedGameId(gameId))return res.status(400).json({error:'Invalid game ID',code:'INVALID_GAME_ID'})
     const config=(await pool.query('SELECT * FROM game_matchmaking_config WHERE game_id=$1',[gameId])).rows[0]
-    const modeRules=(await pool.query(`SELECT rule_id,game_mode,team_size,total_players,max_party_size,minimum_ready_players,team_count,allow_mixed_parties,matchmaking_available,server_pipeline_ready,display_name,availability_reason
-      FROM matchmaking_mode_rules WHERE game_id=$1 ORDER BY COALESCE(total_players,2147483647),rule_id`,[gameId])).rows
+    let modeRules:any[]
+    try{modeRules=(await pool.query(`SELECT rule_id,game_mode,team_size,total_players,max_party_size,minimum_ready_players,team_count,allow_mixed_parties,matchmaking_available,server_pipeline_ready,display_name,availability_reason
+      FROM matchmaking_mode_rules WHERE game_id=$1 ORDER BY COALESCE(total_players,2147483647),rule_id`,[gameId])).rows}
+    catch(error:any){
+      if(error?.code!=='42P01')throw error
+      modeRules=gameId==='hl1'?(config?.modes||[]).map((gameMode:string)=>({rule_id:`legacy-${gameMode}`,game_mode:gameMode,team_size:1,total_players:2,max_party_size:1,minimum_ready_players:1,team_count:2,allow_mixed_parties:false,matchmaking_available:Boolean(config?.enabled),server_pipeline_ready:Boolean(config?.enabled),display_name:gameMode==='classic-deathmatch'?'Adrenaline Gamer 6.6 — 1v1':'Instagib — 1v1',availability_reason:null})):[]
+      logEvent('warn','matchmaking_mode_rules_missing',{requestId:res.locals.requestId,gameId,requiredMigration:'049_party_and_team_matchmaking.sql'})
+    }
     const mapPools=(await pool.query('SELECT game_mode,maps FROM game_map_pools WHERE game_id=$1 AND is_active ORDER BY game_mode',[gameId])).rows
     const regions=(await pool.query(
       `SELECT region,COUNT(*)::int total_servers,

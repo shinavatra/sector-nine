@@ -5368,72 +5368,72 @@ body {
 }
 
 :root[data-theme="l4d2"] {
-  --theme-primary-rgb: 184, 75, 67;
-  --theme-particle-rgb: 151, 142, 119;
-  --theme-spark-rgb: 188, 68, 56;
-  --theme-tracer-rgb: 224, 91, 65;
-  --primary: #b84b43;
-  --accent-foreground: #ded9ca;
-  --ring: #c4594f;
-  --chart-1: #b84b43;
-  --chart-2: #899768;
+  --theme-primary-rgb: 113, 137, 78;
+  --theme-particle-rgb: 92, 111, 63;
+  --theme-spark-rgb: 201, 194, 163;
+  --theme-tracer-rgb: 151, 164, 105;
+  --primary: #71894e;
+  --accent-foreground: #d3c9a8;
+  --ring: #8fa765;
+  --chart-1: #71894e;
+  --chart-2: #a99f78;
   --chart-4: #d26a58;
-  --sidebar-primary: #b84b43;
-  --sidebar-accent-foreground: #ded9ca;
-  --sidebar-ring: #c4594f;
-  --theme-primary: #c4594f;
-  --theme-primary-hover: #dc7468;
-  --theme-secondary: #899768;
-  --theme-background: #0c0809;
-  --theme-panel: rgba(28, 12, 14, 0.74);
-  --theme-panel-elevated: #1b1012;
-  --theme-border: rgba(184, 75, 67, 0.48);
-  --theme-border-strong: rgba(196, 89, 79, 0.8);
-  --theme-accent-soft: rgba(184, 75, 67, 0.2);
-  --theme-secondary-soft: rgba(137, 151, 104, 0.14);
-  --theme-text: #ded9ca;
-  --theme-text-muted: #aaa397;
-  --theme-success: #899768;
+  --sidebar-primary: #71894e;
+  --sidebar-accent-foreground: #d3c9a8;
+  --sidebar-ring: #8fa765;
+  --theme-primary: #8fa765;
+  --theme-primary-hover: #afbf83;
+  --theme-secondary: #c1b68d;
+  --theme-background: #080b07;
+  --theme-panel: rgba(13, 18, 10, 0.78);
+  --theme-panel-elevated: #141a10;
+  --theme-border: rgba(113, 137, 78, 0.48);
+  --theme-border-strong: rgba(143, 167, 101, 0.82);
+  --theme-accent-soft: rgba(113, 137, 78, 0.2);
+  --theme-secondary-soft: rgba(193, 182, 141, 0.14);
+  --theme-text: #e0dccb;
+  --theme-text-muted: #aaa58f;
+  --theme-success: #8fa765;
   --theme-warning: #c88a28;
   --theme-danger: #d26a58;
-  --theme-progress: #c4594f;
+  --theme-progress: #8fa765;
   --theme-hero-image: none;
   --theme-logo-image: none;
   --theme-texture-image: none;
-  --theme-glow: 0 0 30px rgba(184, 75, 67, 0.23);
+  --theme-glow: 0 0 30px rgba(113, 137, 78, 0.22);
   --theme-shadow: 0 18px 44px rgba(0, 0, 0, 0.45);
 }
 
 :root[data-theme="cod4"] {
-  --theme-primary-rgb: 151, 174, 177;
+  --theme-primary-rgb: 171, 145, 83;
   --theme-particle-rgb: 123, 145, 149;
   --theme-spark-rgb: 183, 199, 198;
   --theme-tracer-rgb: 229, 218, 184;
-  --primary: #97aeb1;
-  --accent-foreground: #97aeb1;
-  --ring: #97aeb1;
-  --chart-1: #97aeb1;
-  --chart-2: #78866b;
-  --chart-3: #c7954e;
-  --sidebar-primary: #97aeb1;
-  --sidebar-accent-foreground: #97aeb1;
-  --sidebar-ring: #97aeb1;
-  --theme-primary: #97aeb1;
-  --theme-primary-hover: #b6c7c8;
-  --theme-secondary: #78866b;
+  --primary: #ab9153;
+  --accent-foreground: #ab9153;
+  --ring: #ab9153;
+  --chart-1: #ab9153;
+  --chart-2: #6f7e57;
+  --chart-3: #819396;
+  --sidebar-primary: #ab9153;
+  --sidebar-accent-foreground: #ab9153;
+  --sidebar-ring: #ab9153;
+  --theme-primary: #ab9153;
+  --theme-primary-hover: #c4aa69;
+  --theme-secondary: #78876a;
   --theme-background: #090b0d;
   --theme-panel: rgba(13, 18, 21, 0.76);
   --theme-panel-elevated: #12181c;
-  --theme-border: rgba(151, 174, 177, 0.46);
-  --theme-border-strong: rgba(151, 174, 177, 0.78);
-  --theme-accent-soft: rgba(151, 174, 177, 0.18);
+  --theme-border: rgba(129, 147, 150, 0.46);
+  --theme-border-strong: rgba(171, 145, 83, 0.8);
+  --theme-accent-soft: rgba(171, 145, 83, 0.18);
   --theme-secondary-soft: rgba(120, 134, 107, 0.16);
   --theme-text: #d8dddc;
   --theme-text-muted: #929e9f;
   --theme-success: #879579;
   --theme-warning: #c7954e;
   --theme-danger: #f87171;
-  --theme-progress: #97aeb1;
+  --theme-progress: #ab9153;
   --theme-hero-image: none;
   --theme-logo-image: none;
   --theme-texture-image: none;
@@ -5869,8 +5869,12 @@ svg {
 .page-container-form { width: min(100%, 64rem); }
 
 .app-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
   min-height: 4rem;
   padding-top: env(safe-area-inset-top, 0px);
+  isolation: isolate;
 }
 
 .app-header .main-header-grid { min-height: 4rem; }
@@ -5992,7 +5996,7 @@ p, li, dd { line-height: 1.55; }
 
 :root[data-theme="l4d2"] .atmospheric-grid {
   background-image:
-    radial-gradient(circle at 85% 15%, rgba(169, 71, 62, 0.08), transparent 30%),
+    radial-gradient(circle at 85% 15%, rgba(193, 182, 141, 0.07), transparent 30%),
     linear-gradient(rgba(134, 168, 95, 0.035) 1px, transparent 1px);
   background-size: 100% 100%, 64px 64px;
 }

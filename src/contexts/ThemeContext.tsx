@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useUser } from "./UserContext";
 
 export type ThemeId = "default" | "hl1" | "cs16" | "l4d2" | "cod4";
@@ -61,6 +61,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const cached = useMemo(readCache, []);
   const [themeMode, setThemeMode] = useState<ThemeMode>(cached.mode);
   const [preferredTheme, setPreferredTheme] = useState<ThemeId>(cached.preferred);
+  const hydratedUserId = useRef<string | null>(null);
+  const saveRevision = useRef(0);
   const [selectedGameId, setSelectedGameId] = useState(() => localStorage.getItem("selected_game_id") || "hl1");
   const availableThemes = useMemo<ThemeId[]>(
     () => user?.availableThemes?.filter(theme => validThemes.has(theme)) ||
@@ -79,10 +81,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (isLoading) return;
+    if (!user) {
+      const latestCache=readCache();
+      hydratedUserId.current = null;
+      setThemeMode(latestCache.mode);
+      setPreferredTheme(latestCache.preferred);
+      return;
+    }
+    if (hydratedUserId.current === user.id) return;
+    hydratedUserId.current = user.id;
     setThemeMode(user.themeMode);
     setPreferredTheme(user.preferredTheme);
-  }, [user?.id, user?.preferredTheme, user?.themeMode]);
+  }, [cached.mode, cached.preferred, isLoading, user?.id, user?.preferredTheme, user?.themeMode]);
 
   const effectiveTheme = useMemo<ThemeId>(() => {
     const requested = themeMode === "follow_game" ? themeForGame(selectedGameId) : preferredTheme;
@@ -90,13 +101,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [availableThemes, preferredTheme, selectedGameId, themeMode]);
 
   useLayoutEffect(() => {
-    document.documentElement.dataset.theme = effectiveTheme;
+    const root=document.documentElement;
+    for(const attribute of [...root.attributes])if(attribute.name.startsWith('data-theme'))root.removeAttribute(attribute.name);
+    for(const className of [...root.classList])if(/^theme(?:-|$)/.test(className))root.classList.remove(className);
+    for(const property of [...root.style])if(property.startsWith('--theme-'))root.style.removeProperty(property);
+    root.setAttribute('data-theme',effectiveTheme);
     localStorage.setItem(CACHE_KEY, JSON.stringify({ mode: themeMode, preferred: preferredTheme }));
   }, [effectiveTheme, preferredTheme, themeMode]);
 
   const saveThemePreferences = useCallback(async (mode: ThemeMode, preferred: ThemeId) => {
-    await updateProfile({ themeMode: mode, preferredTheme: preferred });
-  }, [updateProfile]);
+    const revision=++saveRevision.current;
+    const previous={mode:themeMode,preferred:preferredTheme};
+    setThemeMode(mode);setPreferredTheme(preferred);
+    localStorage.setItem(CACHE_KEY,JSON.stringify({mode,preferred}));
+    try{await updateProfile({ themeMode: mode, preferredTheme: preferred })}
+    catch(error){if(saveRevision.current===revision){setThemeMode(previous.mode);setPreferredTheme(previous.preferred)}throw error}
+  }, [preferredTheme, themeMode, updateProfile]);
 
   const value = useMemo<ThemeContextValue>(() => ({
     themeMode,
