@@ -10,6 +10,7 @@ import { Globe, Zap, Map as MapIcon, Users, CheckCircle, AlertTriangle } from "l
 import { matchmakingAPI, reportAPI } from "../utils/api";
 import { toast } from "sonner";
 import { GameQueue, type MatchmakingSnapshot } from "../components/GameQueue";
+import { PartyPanel } from "../components/PartyPanel";
 import { useGame } from "../contexts/GameContext";
 import { SUPPORTED_REGIONS, isSupportedRegionId, type SupportedRegionId } from "../shared/regions";
 import type { ReactNode } from "react";
@@ -37,6 +38,8 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
   const [mapPools,setMapPools]=useState<Record<string,string[]>>({});
   const [requiredMapCount,setRequiredMapCount]=useState(5);
   const [matchmakingEnabled,setMatchmakingEnabled]=useState(false);
+  const [modeRules,setModeRules]=useState<any[]>([]);
+  const [selectedTeamSize,setSelectedTeamSize]=useState(1);
   const [optionsError,setOptionsError]=useState('');
 
 
@@ -49,6 +52,7 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
     let active=true;
     setSelectedMaps([]);
     setGameModes([]);
+    setModeRules([]);
     setMapOptions([]);
     setMatchmakingEnabled(false);
     setOptionsError('');
@@ -67,8 +71,12 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
         total:liveRegions.get(region.id)?.total||0,
       })));
       const modes=Array.isArray(data?.modes)?data.modes:[];
+      const rules=Array.isArray(data?.modeRules)?data.modeRules:[];
+      setModeRules(rules);
+      const firstRule=rules.find((rule:any)=>rule.matchmaking_available&&rule.server_pipeline_ready)||rules[0];
       setGameModes(modes);
-      setSelectedMod(modes[0]||'');
+      setSelectedMod(firstRule?.game_mode||modes[0]||'');
+      setSelectedTeamSize(Number(firstRule?.team_size)||1);
       setRequiredMapCount(Number(data?.requiredMapCount)||5);
       const pools=Object.fromEntries((Array.isArray(data?.mapPools)?data.mapPools:[]).map((pool:any)=>[String(pool.game_mode),Array.isArray(pool.maps)?pool.maps:[]]));
       setMapPools(pools);
@@ -171,7 +179,7 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
 
     setQueueBusy(true);
     try {
-      const response=await matchmakingAPI.joinQueue(selectedGame.id,selectedMod,selectedMaps,selectedServer);
+      const response=await matchmakingAPI.joinQueue(selectedGame.id,selectedMod,selectedMaps,selectedServer,selectedTeamSize);
       setQueue(response);
       toast.info(response.state==="searching"?"Searching for opponent...":"Match found",{description:"Matchmaking state was saved by the backend"});
     } catch (error: any) {
@@ -251,6 +259,7 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
         </div>
 
         <div className="max-w-4xl mx-auto">
+          <PartyPanel/>
           {optionsError && (
             <Alert className="mb-6 border-red-700/50 bg-red-950/70 text-red-100">
               <AlertTriangle className="h-4 w-4" />
@@ -261,7 +270,7 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
             <Alert className="mb-6 border-amber-700/50 bg-amber-950/70 text-amber-100">
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription className="font-mono">
-                {selectedGame.name.toUpperCase()} MATCHMAKING IS NOT ENABLED. ENABLE IT IN ADMIN SYSTEM.
+                {selectedGame.name.toUpperCase()} MATCHMAKING IS COMING SOON OR UNAVAILABLE.
               </AlertDescription>
             </Alert>
           )}
@@ -364,7 +373,8 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
                   </div>
 
                   <div className="grid gap-4">
-                    {mods.map(mod => (
+                    {modeRules.map(rule=><Card key={rule.rule_id} className={`border-2 ${selectedMod===rule.game_mode&&selectedTeamSize===Number(rule.team_size)?'border-orange-500 bg-orange-900/20':'border-gray-700 bg-gray-900/30'} ${!rule.matchmaking_available||!rule.server_pipeline_ready?'cursor-not-allowed opacity-60':'cursor-pointer'}`} onClick={()=>{if(rule.matchmaking_available&&rule.server_pipeline_ready){setSelectedMod(rule.game_mode);setSelectedTeamSize(Number(rule.team_size)||1)}}}><CardContent className="flex items-center justify-between gap-4 p-4"><div><h4 className="font-mono text-orange-300">{rule.display_name}</h4><p className="mt-1 text-xs text-gray-500">TEAM {rule.team_size??'TBD'} · TOTAL {rule.total_players??'TBD'} · PARTY {rule.max_party_size??'TBD'}</p>{rule.availability_reason&&<p className="mt-2 text-xs text-amber-300">{rule.availability_reason}</p>}</div><Badge variant="outline" className={rule.matchmaking_available&&rule.server_pipeline_ready?'border-green-700 text-green-300':'border-amber-700 text-amber-300'}>{rule.matchmaking_available&&rule.server_pipeline_ready?'AVAILABLE':'COMING SOON'}</Badge></CardContent></Card>)}
+                    {!modeRules.length&&mods.map(mod => (
                       <Card
                         key={mod.id}
                         className={`cursor-pointer transition-all border-2 ${

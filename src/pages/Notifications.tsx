@@ -19,7 +19,7 @@ const alerts: any[] = [];
 
 const normalizeNotifications=(items:any[]):any[]=>Array.from(new Map<string,any>((Array.isArray(items)?items:[]).filter(item=>item&&typeof item==='object'&&item.id!==undefined&&item.id!==null).map((item:any)=>{
   const createdAt=typeof item.created_at==='string'||item.created_at instanceof Date?new Date(item.created_at):null
-  const normalized={...item,id:String(item.id),title:typeof item.title==='string'&&item.title.trim()?item.title:'Notification',message:typeof item.message==='string'?item.message:'',unread:item.read!==true,read:item.read===true,time:createdAt&&!Number.isNaN(createdAt.getTime())?createdAt.toLocaleString():'Date unavailable',type:item.type==='friend_request'?'friend':typeof item.type==='string'?item.type:'system'}
+  const normalized={...item,id:String(item.id),title:typeof item.title==='string'&&item.title.trim()?item.title:'Notification',message:typeof item.message==='string'?item.message:'',unread:item.read!==true,read:item.read===true,time:createdAt&&!Number.isNaN(createdAt.getTime())?createdAt.toLocaleString():'Date unavailable',type:item.type==='friend_request'?'friend':item.type==='friend_accepted'?'friendAccepted':typeof item.type==='string'?item.type:'system'}
   return[String(item.id),normalized]
 })).values())
 
@@ -103,8 +103,10 @@ export function Notifications({ onNavigate }: NotificationsProps) {
   };
 
   const handleJoinMatch = async (id: string) => {
-    const notification=notifications.find(item=>item.id===id);try{await handleMarkRead(id)}catch(error:any){return void toast.error('Unable to open notification',{description:error.message})}if(notification?.type==='friend'){sessionStorage.setItem('open_friend_requests','1');onNavigate?.('profile');return}
+    const notification=notifications.find(item=>item.id===id);try{await handleMarkRead(id)}catch(error:any){return void toast.error('Unable to open notification',{description:error.message})}if(notification?.type==='friend'){sessionStorage.setItem('open_friend_requests','1');onNavigate?.('configuration');return}
   };
+
+  const handleViewProfile=async(notification:any)=>{try{if(notification.unread)await handleMarkRead(notification.id);if(notification.related_user_id)onNavigate?.(`profile/${encodeURIComponent(notification.related_user_id)}`);else toast.error('Player profile link is missing')}catch(error:any){toast.error('Unable to open player profile',{description:error.message})}}
 
   const handleSavePreferences = async () => {
     if (!user) return void toast.error('You must be signed in to save notification preferences');
@@ -137,6 +139,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
       case 'penalty': return <AlertTriangle className="w-4 h-4" />;
       case 'match': return <Users className="w-4 h-4" />;
       case 'friend': return <Users className="w-4 h-4" />;
+      case 'friendAccepted': return <Users className="w-4 h-4" />;
       case 'achievement': return <Trophy className="w-4 h-4" />;
       case 'tournament': return <Trophy className="w-4 h-4" />;
       case 'system': return <Settings className="w-4 h-4" />;
@@ -151,6 +154,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
       case 'penalty': return 'bg-red-900/20 text-red-400';
       case 'match': return 'bg-green-900/20 text-green-400';
       case 'friend': return 'bg-blue-900/20 text-blue-400';
+      case 'friendAccepted': return 'bg-green-900/20 text-green-400';
       case 'achievement': return 'bg-orange-900/20 text-orange-400';
       case 'tournament': return 'bg-purple-900/20 text-purple-400';
       case 'system': return 'bg-gray-900/20 text-gray-400';
@@ -302,7 +306,8 @@ export function Notifications({ onNavigate }: NotificationsProps) {
                     )}
                     
                     {(notification.type === 'friend' || notification.type === 'invite') && (
-                      <div className="mt-3 flex space-x-2">
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" className="font-mono text-xs sm:text-sm" onClick={()=>void handleViewProfile(notification)}><Eye className="mr-1 size-3 sm:size-4"/>VIEW PROFILE</Button>
                         <Button 
                           size="sm" 
                           className="bg-green-900/20 border border-green-900/30 text-green-400 hover:bg-green-900/30 font-mono text-xs sm:text-sm"
@@ -322,6 +327,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
                         </Button>
                       </div>
                     )}
+                    {notification.type === 'friendAccepted' && <div className="mt-3"><Button size="sm" variant="outline" className="font-mono text-xs sm:text-sm" onClick={()=>void handleViewProfile(notification)}><Eye className="mr-1 size-3 sm:size-4"/>VIEW PROFILE</Button></div>}
                   </div>
                 </div>
               </CardContent>

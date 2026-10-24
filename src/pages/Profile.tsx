@@ -16,13 +16,13 @@ import {
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Progress } from "../components/ui/progress";
 import { useUser } from "../contexts/UserContext";
 import { achievementAPI, userAPI } from "../utils/api";
 import { MatchHistory } from "../components/MatchHistory";
 import { FramedAvatar } from "../components/FramedAvatar";
 import { displayPlayerName } from "../utils/displayName";
 import { isAdminUser, showPlayerProgression } from "../utils/userRole";
+import { RetroXpProgress } from "../components/RetroXpProgress";
 
 interface ProfileProps {
   onNavigate?: (page: string) => void;
@@ -111,15 +111,8 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
   const winRate = matches > 0 ? Math.round((wins / matches) * 100) : 0;
   const kda = deaths > 0 ? (kills / deaths).toFixed(2) : kills.toFixed(2);
 
-  // PostgreSQL calculates level as floor(sqrt(xp / 100)). These bounds express
-  // progress through the current level without inventing a separate XP system.
   const level = Math.max(0, Number(user.level || 0));
   const experience = Math.max(0, Number(user.experience || 0));
-  const levelStartXp = level * level * 100;
-  const nextLevelXp = (level + 1) * (level + 1) * 100;
-  const xpIntoLevel = Math.max(0, experience - levelStartXp);
-  const xpForLevel = Math.max(1, nextLevelXp - levelStartXp);
-  const xpProgress = Math.min(100, Math.round((xpIntoLevel / xpForLevel) * 100));
   const onlineVisible = user.showOnlineStatus !== false;
   const vipActive = Boolean(isPremium || user.isPremium);
   const socialLinks = Object.entries(user.socialLinks).filter(
@@ -197,16 +190,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
               </p>
             )}
 
-            {hasPlayerProgression && <div className="profile-xp">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 font-mono text-sm">
-                <span className="text-green-300">LEVEL {level}</span>
-                <span className="text-orange-300">
-                  {experience.toLocaleString()} XP · {xpIntoLevel.toLocaleString()}/{xpForLevel.toLocaleString()} TO LEVEL {level + 1}
-                </span>
-              </div>
-              <Progress value={xpProgress} className="h-3 bg-gray-800" />
-              <p className="mt-2 text-right font-mono text-xs text-gray-500">{xpProgress}% complete</p>
-            </div>}
+            {hasPlayerProgression && <RetroXpProgress level={level} totalXp={experience} className="profile-xp" />}
 
             <section className="rounded-lg border border-orange-900/20 bg-black/30 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">

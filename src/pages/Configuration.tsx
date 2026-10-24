@@ -548,6 +548,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
           <Friends
             currentPlayerId={user?.id || ''}
             currentPlayerName={displayPlayerName(user)}
+            onNavigate={onNavigate}
           />
           </SettingsGroup>
           

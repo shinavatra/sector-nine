@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+
+const server=fs.readFileSync(new URL('../src/server/index.ts',import.meta.url),'utf8')
+const friends=fs.readFileSync(new URL('../src/components/Friends.tsx',import.meta.url),'utf8')
+const notifications=fs.readFileSync(new URL('../src/pages/Notifications.tsx',import.meta.url),'utf8')
+const publicProfile=fs.readFileSync(new URL('../src/pages/PublicProfile.tsx',import.meta.url),'utf8')
+const app=fs.readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8')
+
+assert.match(server,/LIMIT 20/)
+assert.match(server,/profile_visibility,'public'\)='public'/)
+assert.match(server,/FRIEND_REQUEST_BLOCKED/)
+assert.match(server,/pg_advisory_xact_lock/)
+assert.match(server,/notification_preferences\?\.friendRequests!==false/)
+assert.match(server,/Friend Request Accepted/)
+assert.match(server,/blocker_id=\$1 AND blocked_user_id=\$2/)
+assert.match(server,/CASE WHEN u\.show_online_status THEN u\.last_seen ELSE NULL END/)
+assert.match(friends,/setTimeout\(async\(\)=>/)
+assert.match(friends,/RECEIVED \(\{incoming\.length\}\)/)
+assert.match(friends,/SENT \(\{outgoing\.length\}\)/)
+assert.match(friends,/REQUEST SENT/)
+assert.match(friends,/ACCEPT REQUEST/)
+assert.match(publicProfile,/RetroXpProgress/)
+assert.match(publicProfile,/profile\.friendshipStatus==='friends'/)
+assert.match(notifications,/VIEW PROFILE/)
+assert.match(app,/currentPage\.startsWith\('profile\/'\)/)
+
+console.log('friends and social notifications regression: PASS (17 assertions)')

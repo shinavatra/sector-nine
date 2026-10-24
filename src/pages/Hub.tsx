@@ -37,17 +37,13 @@ export function Hub({ onNavigate }: HubProps) {
   const experience = numberOrZero(user?.experience);
   const playerName = displayPlayerName(user, "Operative");
   const isAdmin = isAdminUser(user);
-  const levelStartXp = level * level * 100;
-  const nextLevelXp = (level + 1) * (level + 1) * 100;
-
   // Create player data from normalized, real profile values.
   const playerData = {
     name: playerName,
     avatar: user?.resolvedAvatar || "",
     rank: user?.isPremium ? "VIP RESEARCHER" : `LEVEL ${user?.level || 0} RESEARCHER`,
     level,
-    experience: Math.max(0, experience - levelStartXp),
-    maxExperience: Math.max(1, nextLevelXp - levelStartXp),
+    totalXp: Math.max(0, experience),
     wins,
     losses,
     kda: deaths > 0 ? (kills / deaths).toFixed(2) : kills > 0 ? kills.toFixed(2) : "0.00",

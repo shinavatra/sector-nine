@@ -198,8 +198,8 @@ export const userAPI = {
 // =====================================================
 
 export const matchmakingAPI = {
-  joinQueue: async (gameId: string, gameMode: string, selectedMaps: string[], preferredRegion: SupportedRegionId) =>
-    apiFetch('/matchmaking/join', { method: 'POST', body: JSON.stringify({ gameId, gameMode, selectedMaps, preferredRegion }) }),
+  joinQueue: async (gameId: string, gameMode: string, selectedMaps: string[], preferredRegion: SupportedRegionId,teamSize=1) =>
+    apiFetch('/matchmaking/join', { method: 'POST', body: JSON.stringify({ gameId, gameMode, selectedMaps, preferredRegion,teamSize }) }),
 
   leaveQueue: async () =>
     apiFetch('/matchmaking/leave', { method: 'POST' }),
@@ -277,6 +277,18 @@ export const friendsAPI = {
 
   removeFriend: async (friendshipId: string) =>
     apiFetch(`/friends/${friendshipId}`, { method: 'DELETE' }),
+}
+
+export const partyAPI={
+  get:async()=>apiFetch('/party'),
+  create:async()=>apiFetch('/party',{method:'POST'}),
+  invite:async(userId:string)=>apiFetch('/party/invite',{method:'POST',body:JSON.stringify({userId})}),
+  respond:async(inviteId:string,action:'accept'|'decline')=>apiFetch(`/party/invites/${inviteId}/${action}`,{method:'POST'}),
+  ready:async(ready:boolean)=>apiFetch('/party/ready',{method:'PATCH',body:JSON.stringify({ready})}),
+  transfer:async(userId:string)=>apiFetch('/party/leader',{method:'PATCH',body:JSON.stringify({userId})}),
+  kick:async(userId:string)=>apiFetch(`/party/members/${userId}`,{method:'DELETE'}),
+  leave:async()=>apiFetch('/party/leave',{method:'POST'}),
+  disband:async()=>apiFetch('/party',{method:'DELETE'}),
 }
 
 export const presenceAPI = {

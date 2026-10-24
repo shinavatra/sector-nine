@@ -1,9 +1,9 @@
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { Card, CardContent, CardHeader } from "./ui/card";
-import { Progress } from "./ui/progress";
 import { Trophy, Star, Target, Zap } from "lucide-react";
 import { FramedAvatar } from "./FramedAvatar";
+import { RetroXpProgress } from "./RetroXpProgress";
 
 interface PlayerProfileProps {
   player: {
@@ -11,8 +11,7 @@ interface PlayerProfileProps {
     avatar: string;
     rank: string;
     level: number;
-    experience: number;
-    maxExperience: number;
+    totalXp: number;
     wins: number;
     losses: number;
     kda: string;
@@ -61,13 +60,7 @@ export function PlayerProfile({ player }: PlayerProfileProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {!player.isAdmin&&<div>
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-sm text-green-400 font-mono">SECURITY LEVEL {player.level}</span>
-            <span className="text-sm text-orange-400 font-mono">{player.experience}/{player.maxExperience} EXP</span>
-          </div>
-          <Progress value={(player.experience / player.maxExperience) * 100} className="h-2 bg-gray-800" />
-        </div>}
+        {!player.isAdmin&&<RetroXpProgress level={player.level} totalXp={player.totalXp} compact />}
         
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div className="flex items-center space-x-1">

@@ -19,6 +19,7 @@ import { isAdminUser } from "./utils/userRole";
 const lazyPage = <T extends Record<string, unknown>>(loader: () => Promise<T>, name: keyof T) =>
   lazy(async () => ({ default: (await loader())[name] as ComponentType<any> }));
 const Profile=lazyPage(()=>import("./pages/Profile"),"Profile");
+const PublicProfile=lazyPage(()=>import("./pages/PublicProfile"),"PublicProfile");
 const Notifications=lazyPage(()=>import("./pages/Notifications"),"Notifications");
 const Achievements=lazyPage(()=>import("./pages/Achievements"),"Achievements");
 const ForgotPassword=lazyPage(()=>import("./pages/ForgotPassword"),"ForgotPassword");
@@ -100,7 +101,7 @@ function AppContent() {
 
   useEffect(()=>{void refreshPlatformSettings()},[refreshPlatformSettings])
 
-  useEffect(()=>{if(!isAuthenticated){setNotificationUnreadCount(0);seenFriendNotifications.current.clear();notificationsInitialized.current=false;return}let active=true;const poll=async()=>{if(notificationPollInFlight.current){notificationPollQueued.current=true;return}const revision=notificationPollRevision.current;notificationPollInFlight.current=true;try{const data:any=await notificationsAPI.getNotifications();if(!active||revision!==notificationPollRevision.current)return;const items=Array.isArray(data?.notifications)?data.notifications:[];const unread=items.filter((item:any)=>!item.read);setNotificationUnreadCount(typeof data?.unreadCount==='number'?data.unreadCount:unread.length);for(const item of unread.filter((entry:any)=>entry.type==='friend_request')){const id=String(item.id);if(seenFriendNotifications.current.has(id))continue;seenFriendNotifications.current.add(id);if(notificationsInitialized.current)toast(item.message||'New friend request',{action:{label:'Open',onClick:()=>{sessionStorage.setItem('open_friend_requests','1');navigate('profile')}}})}notificationsInitialized.current=true}catch{/* Keep the last valid badge during transient failures. */}finally{notificationPollInFlight.current=false;if(active&&notificationPollQueued.current){notificationPollQueued.current=false;void poll()}}};const unsubscribe=subscribeToNotificationChanges(unreadCount=>{notificationPollRevision.current+=1;if(typeof unreadCount==='number'){setNotificationUnreadCount(unreadCount);return}void poll()});void poll();const interval=window.setInterval(poll,7000);return()=>{active=false;notificationPollRevision.current+=1;notificationPollQueued.current=false;unsubscribe();window.clearInterval(interval)}},[isAuthenticated,navigate]);
+  useEffect(()=>{if(!isAuthenticated){setNotificationUnreadCount(0);seenFriendNotifications.current.clear();notificationsInitialized.current=false;return}let active=true;const poll=async()=>{if(notificationPollInFlight.current){notificationPollQueued.current=true;return}const revision=notificationPollRevision.current;notificationPollInFlight.current=true;try{const data:any=await notificationsAPI.getNotifications();if(!active||revision!==notificationPollRevision.current)return;const items=Array.isArray(data?.notifications)?data.notifications:[];const unread=items.filter((item:any)=>!item.read);setNotificationUnreadCount(typeof data?.unreadCount==='number'?data.unreadCount:unread.length);for(const item of unread.filter((entry:any)=>entry.type==='friend_request')){const id=String(item.id);if(seenFriendNotifications.current.has(id))continue;seenFriendNotifications.current.add(id);if(notificationsInitialized.current)toast(item.message||'New friend request',{action:{label:'Open',onClick:()=>{sessionStorage.setItem('open_friend_requests','1');navigate('configuration')}}})}notificationsInitialized.current=true}catch{/* Keep the last valid badge during transient failures. */}finally{notificationPollInFlight.current=false;if(active&&notificationPollQueued.current){notificationPollQueued.current=false;void poll()}}};const unsubscribe=subscribeToNotificationChanges(unreadCount=>{notificationPollRevision.current+=1;if(typeof unreadCount==='number'){setNotificationUnreadCount(unreadCount);return}void poll()});void poll();const interval=window.setInterval(poll,7000);return()=>{active=false;notificationPollRevision.current+=1;notificationPollQueued.current=false;unsubscribe();window.clearInterval(interval)}},[isAuthenticated,navigate]);
 
  // Check for Steam callback and password reset token on first load
 useEffect(() => {
@@ -211,6 +212,11 @@ const handleLogin = async (isNewUser: boolean = false) => {
     if (currentPage.startsWith('tournaments/')) {
       const tournamentId=decodeURIComponent(currentPage.slice('tournaments/'.length));
       return <TournamentDetail tournamentId={tournamentId} onNavigate={setCurrentPage} isPremium={user?.isPremium || false} />;
+    }
+
+    if (currentPage.startsWith('profile/')) {
+      const profileUserId=decodeURIComponent(currentPage.slice('profile/'.length));
+      return <PublicProfile userId={profileUserId} onNavigate={setCurrentPage} />;
     }
 
     switch (currentPage) {

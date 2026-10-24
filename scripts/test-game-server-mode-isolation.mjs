@@ -8,10 +8,10 @@ const createDialog=fs.readFileSync('src/pages/Admin.tsx','utf8')
 const migration=fs.readFileSync('src/server/041_game_server_mode_isolation.sql','utf8')
 
 const assignment=server.slice(server.indexOf('const assignMatchmakingServer='),server.indexOf('const pairQueuedPlayer='))
-assert.match(assignment,/SELECT id,game_id,game_mode,server_id,status,matchmaking_region,selected_map FROM matches/)
+assert.match(assignment,/SELECT id,game_id,game_mode,server_id,status,matchmaking_region,selected_map,total_players FROM matches/)
 assert.match(assignment,/WHERE s\.game_id=\$1 AND s\.game_mode=\$2 AND s\.region=\$3 AND s\.status='online' AND s\.current_match_id IS NULL/)
 assert.match(assignment,/FOR UPDATE OF s SKIP LOCKED LIMIT 1/)
-assert.match(assignment,/\[match\.game_id,match\.game_mode,match\.matchmaking_region\]/)
+assert.match(assignment,/\[match\.game_id,match\.game_mode,match\.matchmaking_region,Number\(match\.total_players\|\|2\)\]/)
 
 const match={game_id:'hl1',game_mode:'classic-deathmatch',matchmaking_region:'eu'}
 const eligible=server=>server.game_id===match.game_id&&server.game_mode===match.game_mode&&server.region===match.matchmaking_region&&server.status==='online'&&server.current_match_id===null

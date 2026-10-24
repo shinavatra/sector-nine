@@ -24,6 +24,7 @@ import { hl1EngineMapName, trustedHl1Rules } from './hl1MatchContract'
 import { hashSecret,HostPairingError,issueHostCredential,normalizePairingCode,timingSafeHashMatches,validCapabilities,validatePairableHost } from './hostAgentAuth'
 import { TrustedMatchResultError, validateTrustedMatchCompletion, validateTrustedMatchContext } from './trustedMatchResult'
 import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_DAYS, RefreshSessionError, issueSession, revokeSessionByToken, revokeUserSessions, rotateSession } from './secureSessions'
+import { assignGroupsToTeams, groupsConflict, type QueueGroup, type TeamAssignment } from './teamMatchmaking'
 
 dotenv.config()
 
@@ -315,6 +316,8 @@ app.use('/host-agent/pair', limiter(60 * 1000, 10))
 app.use('/host-agent', limiter(60 * 1000, 180))
 app.use('/admin', limiter(60 * 1000, 180))
 app.use('/matchmaking', limiter(60 * 1000, 120))
+app.use('/party/invite', limiter(60 * 1000, 12))
+app.use('/party', limiter(60 * 1000, 90))
 app.use('/news', limiter(60 * 1000, 120))
 app.use('/users', limiter(60 * 1000, 120))
 app.use('/profile-comments', limiter(60 * 1000, 60))
@@ -402,7 +405,17 @@ const optionalAuth = async (req: AuthRequest, res: Response, next: NextFunction)
 const canViewUserProfile = async (viewerId: string | undefined, profileUserId: string) => {
   const user = (await pool.query('SELECT id,profile_visibility FROM users WHERE id=$1 AND deleted_at IS NULL', [profileUserId])).rows[0]
   if (!user) return { exists: false, allowed: false }
-  if (viewerId === profileUserId || user.profile_visibility === 'public') return { exists: true, allowed: true }
+  if (viewerId === profileUserId) return { exists: true, allowed: true }
+  if (viewerId) {
+    const blocked = await pool.query(
+      `SELECT 1 FROM user_blocks
+       WHERE (blocker_id=$1 AND blocked_user_id=$2) OR (blocker_id=$2 AND blocked_user_id=$1)
+       LIMIT 1`,
+      [viewerId, profileUserId],
+    )
+    if (blocked.rows[0]) return { exists: true, allowed: false }
+  }
+  if (user.profile_visibility === 'public') return { exists: true, allowed: true }
   if (user.profile_visibility === 'friends' && viewerId) {
     const friendship = await pool.query(
       `SELECT id FROM friendships WHERE status='accepted'
@@ -1663,16 +1676,23 @@ app.post('/user/frame/equip', requireAuth, async (req: AuthRequest, res) => {
 
 app.get('/users/:userId/profile',optionalAuth,async(req:AuthRequest,res)=>{
   try{
+    if(!validUserId(req.params.userId))return res.status(404).json({error:'Profile not found'})
     const access=await canViewUserProfile(req.userId,req.params.userId)
     if(!access.exists)return res.status(404).json({error:'Profile not found'})
     if(!access.allowed)return res.status(403).json({error:'This profile is not visible to you',code:'PROFILE_PRIVATE'})
     const result=await pool.query(
       `SELECT id,username,${displayNameSql('users')} AS display_name,bio,level,experience,wins,losses,total_kills,total_deaths,equipped_frame,
-              is_premium,steam_verified,country_code,created_at,last_seen,(${onlineUserPredicate('users')}) AS is_online,
+              is_premium,steam_verified,country_code,created_at,CASE WHEN show_online_status THEN last_seen ELSE NULL END AS last_seen,(${onlineUserPredicate('users')}) AS is_online,
               COALESCE(CASE WHEN avatar_source='custom' THEN NULLIF(custom_avatar_url,'') END,steam_avatar) AS resolved_avatar
        FROM users WHERE id=$1 AND deleted_at IS NULL`,[req.params.userId])
     const u=result.rows[0]
-    return res.json({profile:{id:u.id,username:u.username,displayName:u.display_name,bio:u.bio,level:u.level,experience:u.experience,wins:u.wins,losses:u.losses,totalKills:u.total_kills,totalDeaths:u.total_deaths,equippedFrame:u.equipped_frame,isPremium:u.is_premium,steamVerified:u.steam_verified,countryCode:u.country_code,createdAt:u.created_at,lastSeen:u.last_seen,isOnline:u.is_online,resolvedAvatar:u.resolved_avatar}})
+    const relationship=req.userId&&req.userId!==u.id?(await pool.query(
+      `SELECT id,user_id,friend_id,status FROM friendships
+       WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1) LIMIT 1`,
+      [req.userId,u.id]
+    )).rows[0]:null
+    const friendshipStatus=!relationship?'none':relationship.status==='accepted'?'friends':relationship.status==='pending'&&relationship.user_id===req.userId?'request_sent':relationship.status==='pending'?'request_received':'none'
+    return res.json({profile:{id:u.id,username:u.username,displayName:u.display_name,bio:u.bio,level:u.level,experience:u.experience,wins:u.wins,losses:u.losses,totalKills:u.total_kills,totalDeaths:u.total_deaths,equippedFrame:u.equipped_frame,isPremium:u.is_premium,steamVerified:u.steam_verified,countryCode:u.country_code,createdAt:u.created_at,lastSeen:u.last_seen,isOnline:u.is_online,resolvedAvatar:u.resolved_avatar,friendshipStatus,friendshipId:relationship?.id??null}})
   }catch(err:any){return sendDatabaseError(res,err)}
 })
 
@@ -1823,12 +1843,97 @@ app.get('/matches/active', async (req, res) => {
 })
 
 // =====================================================
+// PARTY SYSTEM
+// =====================================================
+
+const getPartyState=async(db:any,userId:string)=>{
+  const party=(await db.query(
+    `SELECT p.* FROM parties p JOIN party_members mine ON mine.party_id=p.id
+     WHERE mine.user_id=$1`,[userId])).rows[0]
+  const invites=(await db.query(
+    `SELECT i.id,i.party_id,i.inviter_id,i.expires_at,u.username,${displayNameSql('u')} display_name,
+            COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) avatar
+     FROM party_invites i JOIN users u ON u.id=i.inviter_id
+     WHERE i.invitee_id=$1 AND i.status='pending' AND i.expires_at>NOW() ORDER BY i.created_at DESC`,[userId])).rows
+  if(!party)return{party:null,invites}
+  const members=(await db.query(
+    `SELECT pm.user_id,pm.ready,pm.joined_at,u.username,${displayNameSql('u')} display_name,
+            COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) avatar,
+            u.steam_verified,u.verified_game_ids,u.owns_hl1,
+            (${onlineUserPredicate('u')}) is_online
+     FROM party_members pm JOIN users u ON u.id=pm.user_id WHERE pm.party_id=$1
+     ORDER BY CASE WHEN pm.user_id=$2 THEN 0 ELSE 1 END,pm.joined_at`,[party.id,party.leader_id])).rows
+  return{party:{...party,members,isLeader:String(party.leader_id)===userId},invites}
+}
+
+const lockOwnParty=async(db:any,userId:string)=>
+  (await db.query(`SELECT p.* FROM parties p JOIN party_members pm ON pm.party_id=p.id WHERE pm.user_id=$1 FOR UPDATE OF p`,[userId])).rows[0]
+
+app.get('/party',requireAuth,async(req:AuthRequest,res)=>{try{return res.json(await getPartyState(pool,req.userId!))}catch(error:any){return sendDatabaseError(res,error)}})
+
+app.post('/party',requireAuth,async(req:AuthRequest,res)=>{
+  const db=await pool.connect();try{await db.query('BEGIN');await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`party:${req.userId}`])
+    const existing=await lockOwnParty(db,req.userId!);if(existing){await db.query('COMMIT');return res.json(await getPartyState(pool,req.userId!))}
+    const party=(await db.query('INSERT INTO parties(leader_id) VALUES($1) RETURNING id',[req.userId])).rows[0]
+    await db.query('INSERT INTO party_members(party_id,user_id,ready) VALUES($1,$2,true)',[party.id,req.userId]);await db.query('COMMIT')
+    return res.status(201).json(await getPartyState(pool,req.userId!))
+  }catch(error:any){await db.query('ROLLBACK');return error?.code==='23505'?res.status(409).json({error:'You already belong to a party.',code:'ALREADY_IN_PARTY'}):sendDatabaseError(res,error)}finally{db.release()}
+})
+
+app.post('/party/invite',requireAuth,async(req:AuthRequest,res)=>{
+  const inviteeId=String(req.body.userId||'');if(!validUserId(inviteeId)||inviteeId===req.userId)return res.status(400).json({error:'Invalid invitee.',code:'INVALID_INVITEE'})
+  const db=await pool.connect();try{await db.query('BEGIN');const party=await lockOwnParty(db,req.userId!)
+    if(!party||String(party.leader_id)!==req.userId){await db.query('ROLLBACK');return res.status(403).json({error:'Only the party leader can invite friends.',code:'PARTY_LEADER_REQUIRED'})}
+    if(party.queue_status!=='idle'){await db.query('ROLLBACK');return res.status(409).json({error:'Party roster is locked while queued.',code:'PARTY_ROSTER_LOCKED'})}
+    const allowed=(await db.query(`SELECT 1 FROM friendships f WHERE f.status='accepted' AND ((f.user_id=$1 AND f.friend_id=$2) OR (f.user_id=$2 AND f.friend_id=$1))
+      AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_user_id=$2) OR (b.blocker_id=$2 AND b.blocked_user_id=$1))`,[req.userId,inviteeId])).rows[0]
+    if(!allowed){await db.query('ROLLBACK');return res.status(403).json({error:'Party invites are limited to unblocked friends.',code:'PARTY_INVITE_NOT_ALLOWED'})}
+    const already=(await db.query('SELECT 1 FROM party_members WHERE user_id=$1',[inviteeId])).rows[0];if(already){await db.query('ROLLBACK');return res.status(409).json({error:'That player already belongs to a party.',code:'ALREADY_IN_PARTY'})}
+    const recent=Number((await db.query("SELECT COUNT(*)::int count FROM party_invites WHERE inviter_id=$1 AND created_at>NOW()-INTERVAL '10 minutes'",[req.userId])).rows[0].count)
+    if(recent>=10){await db.query('ROLLBACK');return res.status(429).json({error:'Party invite limit reached.',code:'PARTY_INVITE_RATE_LIMIT'})}
+    const invite=(await db.query(`INSERT INTO party_invites(party_id,inviter_id,invitee_id) VALUES($1,$2,$3)
+      ON CONFLICT(party_id,invitee_id) WHERE status='pending' DO UPDATE SET expires_at=NOW()+INTERVAL '15 minutes' RETURNING id`,[party.id,req.userId,inviteeId])).rows[0]
+    await db.query(`INSERT INTO notifications(user_id,type,title,message,related_user_id,read) VALUES($1,'party_invite','Party Invite','A friend invited you to a party.',$2,false)`,[inviteeId,req.userId]);await db.query('COMMIT')
+    return res.status(201).json({inviteId:invite.id})
+  }catch(error:any){await db.query('ROLLBACK');return sendDatabaseError(res,error)}finally{db.release()}
+})
+
+app.post('/party/invites/:id/:action',requireAuth,async(req:AuthRequest,res)=>{
+  const action=req.params.action;if(!['accept','decline'].includes(action))return res.status(404).json({error:'Unknown invite action'})
+  const db=await pool.connect();try{await db.query('BEGIN');const invite=(await db.query(`SELECT * FROM party_invites WHERE id=$1 AND invitee_id=$2 AND status='pending' AND expires_at>NOW() FOR UPDATE`,[req.params.id,req.userId])).rows[0]
+    if(!invite){await db.query('ROLLBACK');return res.status(404).json({error:'Party invite is no longer available.',code:'PARTY_INVITE_NOT_FOUND'})}
+    if(action==='decline'){await db.query("UPDATE party_invites SET status='declined',responded_at=NOW() WHERE id=$1",[invite.id]);await db.query('COMMIT');return res.json(await getPartyState(pool,req.userId!))}
+    const stillAllowed=(await db.query(`SELECT 1 FROM friendships f WHERE f.status='accepted' AND ((f.user_id=$1 AND f.friend_id=$2) OR (f.user_id=$2 AND f.friend_id=$1))
+      AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_user_id=$2) OR (b.blocker_id=$2 AND b.blocked_user_id=$1))`,[invite.inviter_id,req.userId])).rows[0]
+    if(!stillAllowed){await db.query("UPDATE party_invites SET status='cancelled',responded_at=NOW() WHERE id=$1",[invite.id]);await db.query('COMMIT');return res.status(403).json({error:'This party invite can no longer be accepted.',code:'PARTY_INVITE_BLOCKED'})}
+    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`party:${req.userId}`]);if(await lockOwnParty(db,req.userId!)){await db.query('ROLLBACK');return res.status(409).json({error:'Leave your current party first.',code:'ALREADY_IN_PARTY'})}
+    const party=(await db.query('SELECT * FROM parties WHERE id=$1 FOR UPDATE',[invite.party_id])).rows[0];if(!party||party.queue_status!=='idle'){await db.query('ROLLBACK');return res.status(409).json({error:'The party is unavailable.',code:'PARTY_UNAVAILABLE'})}
+    const rule=party.selected_game_id?(await db.query('SELECT max_party_size FROM matchmaking_mode_rules WHERE game_id=$1 AND game_mode=$2 AND team_size=$3',[party.selected_game_id,party.selected_game_mode,party.selected_team_size])).rows[0]:null
+    const count=Number((await db.query('SELECT COUNT(*)::int count FROM party_members WHERE party_id=$1',[party.id])).rows[0].count);if(count>=5||(rule?.max_party_size&&count>=rule.max_party_size)){await db.query('ROLLBACK');return res.status(409).json({error:'Party is full for the selected mode.',code:'PARTY_FULL'})}
+    await db.query('INSERT INTO party_members(party_id,user_id) VALUES($1,$2)',[party.id,req.userId]);await db.query("UPDATE party_invites SET status='accepted',responded_at=NOW() WHERE id=$1",[invite.id]);await db.query("UPDATE party_invites SET status='cancelled',responded_at=NOW() WHERE invitee_id=$1 AND status='pending' AND id<>$2",[req.userId,invite.id]);await db.query('COMMIT')
+    return res.json(await getPartyState(pool,req.userId!))
+  }catch(error:any){await db.query('ROLLBACK');return error?.code==='23505'?res.status(409).json({error:'You already belong to a party.',code:'ALREADY_IN_PARTY'}):sendDatabaseError(res,error)}finally{db.release()}
+})
+
+app.patch('/party/ready',requireAuth,async(req:AuthRequest,res)=>{try{const party=await lockOwnParty(pool,req.userId!);if(!party)return res.status(404).json({error:'Party not found'});if(party.queue_status!=='idle')return res.status(409).json({error:'Ready state is locked while queued.',code:'PARTY_QUEUE_LOCKED'});await pool.query('UPDATE party_members SET ready=$1 WHERE party_id=$2 AND user_id=$3',[req.body.ready===true,party.id,req.userId]);return res.json(await getPartyState(pool,req.userId!))}catch(error:any){return sendDatabaseError(res,error)}})
+
+app.patch('/party/leader',requireAuth,async(req:AuthRequest,res)=>{const target=String(req.body.userId||'');const db=await pool.connect();try{await db.query('BEGIN');const party=await lockOwnParty(db,req.userId!);if(!party||String(party.leader_id)!==req.userId){await db.query('ROLLBACK');return res.status(403).json({error:'Only the party leader can transfer leadership.'})}if(party.queue_status!=='idle'||!(await db.query('SELECT 1 FROM party_members WHERE party_id=$1 AND user_id=$2',[party.id,target])).rows[0]){await db.query('ROLLBACK');return res.status(409).json({error:'Leadership cannot be transferred.'})}await db.query('UPDATE parties SET leader_id=$1,updated_at=NOW() WHERE id=$2',[target,party.id]);await db.query('COMMIT');return res.json(await getPartyState(pool,req.userId!))}catch(error:any){await db.query('ROLLBACK');return sendDatabaseError(res,error)}finally{db.release()}})
+
+app.delete('/party/members/:userId',requireAuth,async(req:AuthRequest,res)=>{const db=await pool.connect();try{await db.query('BEGIN');const party=await lockOwnParty(db,req.userId!);if(!party||String(party.leader_id)!==req.userId){await db.query('ROLLBACK');return res.status(403).json({error:'Only the party leader can kick members.'})}if(req.params.userId===req.userId||party.queue_status!=='idle'){await db.query('ROLLBACK');return res.status(409).json({error:'Member cannot be removed.'})}await db.query('DELETE FROM party_members WHERE party_id=$1 AND user_id=$2',[party.id,req.params.userId]);await db.query('COMMIT');return res.json(await getPartyState(pool,req.userId!))}catch(error:any){await db.query('ROLLBACK');return sendDatabaseError(res,error)}finally{db.release()}})
+
+app.post('/party/leave',requireAuth,async(req:AuthRequest,res)=>{const db=await pool.connect();try{await db.query('BEGIN');const party=await lockOwnParty(db,req.userId!);if(!party){await db.query('COMMIT');return res.json({party:null,invites:[]})}if(party.queue_status!=='idle'){await db.query('ROLLBACK');return res.status(409).json({error:'Leave matchmaking before leaving the party.',code:'PARTY_QUEUE_LOCKED'})}if(String(party.leader_id)===req.userId){const next=(await db.query('SELECT user_id FROM party_members WHERE party_id=$1 AND user_id<>$2 ORDER BY joined_at LIMIT 1',[party.id,req.userId])).rows[0];if(next)await db.query('UPDATE parties SET leader_id=$1 WHERE id=$2',[next.user_id,party.id]);else await db.query('DELETE FROM parties WHERE id=$1',[party.id])}await db.query('DELETE FROM party_members WHERE party_id=$1 AND user_id=$2',[party.id,req.userId]);await db.query('COMMIT');return res.json({party:null,invites:[]})}catch(error:any){await db.query('ROLLBACK');return sendDatabaseError(res,error)}finally{db.release()}})
+
+app.delete('/party',requireAuth,async(req:AuthRequest,res)=>{const db=await pool.connect();try{await db.query('BEGIN');const party=await lockOwnParty(db,req.userId!);if(!party||String(party.leader_id)!==req.userId){await db.query('ROLLBACK');return res.status(403).json({error:'Only the party leader can disband the party.'})}if(party.queue_status!=='idle'){await db.query('ROLLBACK');return res.status(409).json({error:'Leave matchmaking before disbanding the party.'})}await db.query('DELETE FROM parties WHERE id=$1',[party.id]);await db.query('COMMIT');return res.json({party:null,invites:[]})}catch(error:any){await db.query('ROLLBACK');return sendDatabaseError(res,error)}finally{db.release()}})
+
+// =====================================================
 // MATCHMAKING
 // =====================================================
 
 // Queue, acceptance, match, and server assignment state are PostgreSQL-backed.
 const getMatchmakingState=async(db:any,userId:string)=>{
-  const queue=(await db.query('SELECT game_id,game_mode,selected_maps,preferred_region,joined_at FROM queue_entries WHERE user_id=$1',[userId])).rows[0]
+  const queue=(await db.query(`SELECT q.game_id,q.game_mode,q.selected_maps,q.preferred_region,q.joined_at,q.team_size,q.total_players,q.party_id
+    FROM queue_entries q LEFT JOIN party_members pm ON pm.party_id=q.party_id
+    WHERE q.user_id=$1 OR pm.user_id=$1 LIMIT 1`,[userId])).rows[0]
   if(queue)return{state:'searching',queue}
   const match=(await db.query(
     `SELECT m.*,mine.status AS viewer_acceptance,counts.accepted_count,counts.pending_count,
@@ -1853,25 +1958,27 @@ const getMatchmakingState=async(db:any,userId:string)=>{
   const opponentSelection=selections.find((selection:any)=>String(selection.user_id)!==userId)
   const mapPool=(await db.query('SELECT maps FROM game_map_pools WHERE game_id=$1 AND game_mode=$2 AND is_active',[match.game_id,match.game_mode])).rows[0]?.maps||[]
   const remainingMaps=(match.maps||[]).filter((map:string)=>!bans.some((ban:any)=>ban.map_id===map))
-  const state=match.server_id?'server_assigned':match.accepted_count<2?(match.accepted_count>0?'accepting':'found'):match.selected_map?'accepted':selections.length<2?'map_selecting':'map_banning'
+  const requiredPlayers=Number(match.total_players||2)
+  const state=match.server_id?'server_assigned':match.accepted_count<requiredPlayers?(match.accepted_count>0?'accepting':'found'):match.selected_map?'accepted':selections.length<2?'map_selecting':'map_banning'
   const publicEndpoint=normalizePublicServerEndpoint(match.server_host,match.server_port)
-  return{state,match,viewerAccepted:match.viewer_acceptance==='accepted',acceptedCount:match.accepted_count,totalPlayers:2,
-    mapSelection:match.accepted_count===2?{requiredCount:5,availableMaps:mapPool,viewerMaps:ownSelection?.maps||[],viewerConfirmed:Boolean(ownSelection),opponentConfirmed:Boolean(opponentSelection),opponentSelectedCount:opponentSelection?.maps?.length||0,unavailableMaps:opponentSelection?.maps||[]}:null,
+  return{state,match,viewerAccepted:match.viewer_acceptance==='accepted',acceptedCount:match.accepted_count,totalPlayers:requiredPlayers,
+    mapSelection:match.accepted_count===requiredPlayers?{requiredCount:5,availableMaps:mapPool,viewerMaps:ownSelection?.maps||[],viewerConfirmed:Boolean(ownSelection),opponentConfirmed:Boolean(opponentSelection),opponentSelectedCount:opponentSelection?.maps?.length||0,unavailableMaps:opponentSelection?.maps||[]}:null,
     mapBan:selections.length===2?{pool:match.maps||[],remainingMaps,bans,currentTurnUserId:match.map_ban_turn_user_id,isViewerTurn:String(match.map_ban_turn_user_id||'')===userId}:null,
     server:match.server_id&&publicEndpoint?{id:match.assigned_server_id,name:match.server_name,region:match.server_region,host:publicEndpoint.host,port:publicEndpoint.port}:null}
 }
 
 const assignMatchmakingServer=async(db:any,matchId:string)=>{
-  const match=(await db.query("SELECT id,game_id,game_mode,server_id,status,matchmaking_region,selected_map FROM matches WHERE id=$1 FOR UPDATE",[matchId])).rows[0]
+  const match=(await db.query("SELECT id,game_id,game_mode,server_id,status,matchmaking_region,selected_map,total_players FROM matches WHERE id=$1 FOR UPDATE",[matchId])).rows[0]
   if(!match||match.status!=='pending'||match.server_id||!match.selected_map)return
   if(!isSupportedRegionId(match.matchmaking_region))throw new Error('Match has no supported matchmaking region.')
   const accepted=Number((await db.query("SELECT COUNT(*)::int count FROM match_acceptances WHERE match_id=$1 AND status='accepted'",[matchId])).rows[0].count)
-  if(accepted!==2)return
+  if(accepted!==Number(match.total_players||2))return
   const server=(await db.query(
     `SELECT s.id FROM game_servers s
      LEFT JOIN hosts h ON h.id=s.host_id
      LEFT JOIN host_server_profiles hp ON hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id AND hp.game_server_id=s.id
      WHERE s.game_id=$1 AND s.game_mode=$2 AND s.region=$3 AND s.status='online' AND s.current_match_id IS NULL
+       AND COALESCE(s.max_slots,s.slots)>= $4
        AND (s.host_id IS NULL OR (
          h.enabled=TRUE AND h.status='online' AND h.credential_hash IS NOT NULL AND h.credential_revoked_at IS NULL
          AND h.last_seen_at>NOW()-INTERVAL '30 seconds'
@@ -1888,7 +1995,7 @@ const assignMatchmakingServer=async(db:any,matchId:string)=>{
          )
        ))
      ORDER BY s.created_at
-     FOR UPDATE OF s SKIP LOCKED LIMIT 1`,[match.game_id,match.game_mode,match.matchmaking_region])).rows[0]
+     FOR UPDATE OF s SKIP LOCKED LIMIT 1`,[match.game_id,match.game_mode,match.matchmaking_region,Number(match.total_players||2)])).rows[0]
   if(!server)throw new Error(noServerInSelectedRegionError)
   // Keep the match pending until RCON confirms that the selected map started.
   await db.query("UPDATE matches SET server_id=$1 WHERE id=$2",[server.id,matchId])
@@ -1900,27 +2007,34 @@ const pairQueuedPlayer=async(db:any,userId:string)=>{
   await db.query('SELECT pg_advisory_xact_lock($1)',[7392026])
   const own=(await db.query('SELECT * FROM queue_entries WHERE user_id=$1 FOR UPDATE',[userId])).rows[0]
   if(!own)return
-  const opponent=(await db.query(
-    `SELECT * FROM queue_entries WHERE user_id<>$1 AND game_id=$2 AND game_mode=$3
-       AND preferred_region=$4
-       AND NOT EXISTS (
-         SELECT 1 FROM user_blocks
-         WHERE (blocker_id=$1 AND blocked_user_id=queue_entries.user_id)
-            OR (blocker_id=queue_entries.user_id AND blocked_user_id=$1)
-       )
-     ORDER BY joined_at FOR UPDATE SKIP LOCKED LIMIT 1`,[userId,own.game_id,own.game_mode,own.preferred_region])).rows[0]
-  if(!opponent)return
+  const rows=(await db.query(
+    `SELECT q.*,COALESCE(pm.members,ARRAY[q.user_id]::uuid[]) members
+     FROM queue_entries q LEFT JOIN LATERAL(
+       SELECT ARRAY_AGG(user_id ORDER BY joined_at) members FROM party_members WHERE party_id=q.party_id
+     ) pm ON TRUE
+     WHERE q.game_id=$1 AND q.game_mode=$2 AND q.preferred_region=$3 AND q.team_size=$4 AND q.total_players=$5
+     ORDER BY q.joined_at FOR UPDATE OF q SKIP LOCKED`,[own.game_id,own.game_mode,own.preferred_region,own.team_size,own.total_players])).rows
+  const queuedGroups:QueueGroup[]=rows.map((row:any)=>({id:String(row.id),members:row.members.map(String),joinedAt:new Date(row.joined_at).toISOString()}))
+  const allMembers=[...new Set(queuedGroups.flatMap(group=>group.members))]
+  const blockedRows=allMembers.length?(await db.query(`SELECT blocker_id,blocked_user_id FROM user_blocks WHERE blocker_id=ANY($1::uuid[]) AND blocked_user_id=ANY($1::uuid[])`,[allMembers])).rows:[]
+  const blockedPairs=new Set<string>(blockedRows.map((row:any)=>[String(row.blocker_id),String(row.blocked_user_id)].sort().join(':')))
+  const ownGroup=queuedGroups.find(group=>group.id===String(own.id))!
+  const candidates=queuedGroups.filter(group=>group.id!==ownGroup.id)
+  let assignments:TeamAssignment[]|null=null
+  const search=(index:number,selected:QueueGroup[],players:number)=>{if(assignments)return;if(players===Number(own.total_players)){const groups=[ownGroup,...selected];if(!groups.some((left,i)=>groups.slice(i+1).some(right=>groupsConflict(left,right,blockedPairs))))assignments=assignGroupsToTeams(groups,Number(own.team_size),Math.floor(Number(own.total_players)/Number(own.team_size)));return}if(players>Number(own.total_players))return;for(let next=index;next<candidates.length;next++)search(next+1,[...selected,candidates[next]],players+candidates[next].members.length)}
+  search(0,[],ownGroup.members.length)
+  const resolvedAssignments=assignments as TeamAssignment[]|null
+  if(!resolvedAssignments||!resolvedAssignments.some(team=>team.groups.some(group=>group.id===String(own.id))))return
+  const teams=resolvedAssignments.map(team=>({...team,groups:team.groups.map(group=>rows.find((row:any)=>String(row.id)===group.id))}))
+  const player1=teams[0].members[0],player2=teams[1]?.members[0]||teams[0].members[1]
   const match=(await db.query(
-    `INSERT INTO matches(match_type,game_mode,game_id,player1_id,player2_id,selected_map,maps,status,matchmaking_region)
-     VALUES($1,$1,$2,$3,$4,NULL,ARRAY[]::TEXT[],'pending',$5) RETURNING *`,
-    [own.game_mode,own.game_id,userId,opponent.user_id,own.preferred_region])).rows[0]
-  await db.query("INSERT INTO match_acceptances(match_id,user_id) VALUES($1,$2),($1,$3)",[match.id,userId,opponent.user_id])
-  await db.query('DELETE FROM queue_entries WHERE user_id=$1 OR user_id=$2',[userId,opponent.user_id])
-  await db.query(
-    `INSERT INTO notifications(user_id,type,title,message,related_match_id)
-     VALUES($1,'match_found','Match Found!','Your match is waiting for acceptance.',$2),
-           ($3,'match_found','Match Found!','Your match is waiting for acceptance.',$2)`,
-    [userId,match.id,opponent.user_id])
+    `INSERT INTO matches(match_type,game_mode,game_id,player1_id,player2_id,selected_map,maps,status,matchmaking_region,team_size,total_players)
+     VALUES($1,$1,$2,$3,$4,NULL,ARRAY[]::TEXT[],'pending',$5,$6,$7) RETURNING *`,
+    [own.game_mode,own.game_id,player1,player2,own.preferred_region,own.team_size,own.total_players])).rows[0]
+  const participants=teams.flatMap(team=>team.members.map((member:string)=>({userId:member,teamNumber:team.teamNumber,partyId:team.groups.find((group:any)=>group?.members?.map(String).includes(member))?.party_id||null})))
+  for(const participant of participants){await db.query('INSERT INTO match_participants(match_id,user_id,team_number,party_id) VALUES($1,$2,$3,$4)',[match.id,participant.userId,participant.teamNumber,participant.partyId]);await db.query('INSERT INTO match_acceptances(match_id,user_id) VALUES($1,$2)',[match.id,participant.userId]);await db.query(`INSERT INTO notifications(user_id,type,title,message,related_match_id) VALUES($1,'match_found','Match Found!','Your team match is waiting for acceptance.',$2)`,[participant.userId,match.id])}
+  const queueIds=teams.flatMap(team=>team.groups.map((group:any)=>group.id));await db.query('DELETE FROM queue_entries WHERE id=ANY($1::uuid[])',[queueIds])
+  const partyIds=[...new Set(teams.flatMap(team=>team.groups.map((group:any)=>group.party_id).filter(Boolean)))];if(partyIds.length)await db.query("UPDATE parties SET queue_status='matched',updated_at=NOW() WHERE id=ANY($1::uuid[])",[partyIds])
 }
 
 app.post('/matchmaking/join', requireAuth, async (req: AuthRequest, res) => {
@@ -1943,6 +2057,10 @@ app.post('/matchmaking/join', requireAuth, async (req: AuthRequest, res) => {
     const preferredRegion=req.body.preferredRegion??req.body.preferred_region
     if(!isSupportedRegionId(preferredRegion))return res.status(400).json({error:'Select a supported matchmaking region.',code:'INVALID_REGION'})
     const gameMode=typeof req.body.gameMode==='string'&&req.body.gameMode?req.body.gameMode:config.default_mode
+    const teamSize=Number(req.body.teamSize??req.body.team_size??1)
+    const rule=(await pool.query(`SELECT * FROM matchmaking_mode_rules WHERE game_id=$1 AND game_mode=$2 AND team_size=$3 AND total_players=team_count*team_size`,[gameId,gameMode,teamSize])).rows[0]
+    if(!rule)return res.status(400).json({error:'Unsupported team size for the selected mode.',code:'INVALID_TEAM_SIZE'})
+    if(!rule.matchmaking_available||!rule.server_pipeline_ready)return res.status(409).json({error:rule.availability_reason||'This mode is unavailable.',code:'MODE_UNAVAILABLE'})
     const poolRow=(await pool.query('SELECT maps FROM game_map_pools WHERE game_id=$1 AND game_mode=$2 AND is_active',[gameId,gameMode])).rows[0]
     const selectedMaps=Array.isArray(req.body.selectedMaps)&&req.body.selectedMaps.length?req.body.selectedMaps:poolRow?.maps||[]
     if(!config.modes.includes(gameMode)||!poolRow||selectedMaps.some((map:any)=>typeof map!=='string'||!poolRow.maps.includes(map))||selectedMaps.length!==config.required_map_count)
@@ -1966,15 +2084,38 @@ app.post('/matchmaking/join', requireAuth, async (req: AuthRequest, res) => {
     const db=await pool.connect()
     try{
       await db.query('BEGIN')
+      await db.query('SELECT pg_advisory_xact_lock($1)',[7392026])
       await db.query("DELETE FROM queue_entries WHERE joined_at<NOW()-($1||' minutes')::interval",[settings.matchmaking_defaults.queueTimeoutMinutes])
       const existing=await getMatchmakingState(db,userId)
       if(existing.state!=='idle'){await db.query('COMMIT');return res.json(existing)}
+      const party=await lockOwnParty(db,userId)
+      let partyId:string|null=null
+      let queueUserId=userId
+      let memberRows:any[]=[]
+      if(party){
+        if(String(party.leader_id)!==userId){await db.query('ROLLBACK');return res.status(403).json({error:'Only the party leader can join matchmaking.',code:'PARTY_LEADER_REQUIRED'})}
+        memberRows=(await db.query(`SELECT pm.user_id,pm.ready,u.steam_id,u.steam_verified,u.owns_hl1,u.vac_banned,u.game_banned,u.verified_game_ids
+          FROM party_members pm JOIN users u ON u.id=pm.user_id WHERE pm.party_id=$1 FOR UPDATE OF pm`,[party.id])).rows
+        if(teamSize===1&&memberRows.length>1){await db.query('ROLLBACK');return res.status(409).json({error:'A two-player party cannot join a 1v1 queue.',code:'PARTY_NOT_ALLOWED_IN_1V1'})}
+        if(memberRows.length>Number(rule.max_party_size)||memberRows.length>teamSize){await db.query('ROLLBACK');return res.status(409).json({error:'Party is too large for this mode.',code:'PARTY_TOO_LARGE'})}
+        if(memberRows.filter(member=>member.ready).length<memberRows.length||memberRows.length<Number(rule.minimum_ready_players)){await db.query('ROLLBACK');return res.status(409).json({error:'Every party member must be ready.',code:'PARTY_NOT_READY'})}
+        for(const member of memberRows){const memberEligibility=gameEligibilityError(member,gameId);if(memberEligibility){await db.query('ROLLBACK');return res.status(memberEligibility.status).json({...memberEligibility,memberId:member.user_id})}}
+        partyId=party.id;queueUserId=String(party.leader_id)
+        await db.query(`UPDATE parties SET selected_game_id=$1,selected_game_mode=$2,selected_team_size=$3,selected_region=$4,queue_status='searching',updated_at=NOW() WHERE id=$5`,[gameId,gameMode,teamSize,preferredRegion,party.id])
+      }
+      const rosterIds=memberRows.length?memberRows.map(member=>member.user_id):[userId]
+      const rosterBlocked=(await db.query(`SELECT 1 FROM user_blocks WHERE blocker_id=ANY($1::uuid[]) AND blocked_user_id=ANY($1::uuid[]) LIMIT 1`,[rosterIds])).rows[0]
+      if(rosterBlocked){await db.query('ROLLBACK');return res.status(409).json({error:'Blocked players cannot queue in the same party.',code:'PARTY_BLOCK_CONFLICT'})}
+      const rosterBusy=(await db.query(`SELECT 1 FROM queue_entries q LEFT JOIN party_members pm ON pm.party_id=q.party_id WHERE q.user_id=ANY($1::uuid[]) OR pm.user_id=ANY($1::uuid[]) LIMIT 1`,[rosterIds])).rows[0]
+      if(rosterBusy){await db.query('ROLLBACK');return res.status(409).json({error:'A party member is already queued.',code:'DUPLICATE_QUEUE_MEMBERSHIP'})}
+      const rosterBan=(await db.query(`SELECT user_id,reason,expires_at,ban_level FROM bans WHERE user_id=ANY($1::uuid[]) AND is_active=true AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1`,[rosterIds])).rows[0]
+      if(rosterBan){await db.query('ROLLBACK');return res.status(403).json({error:'A party member is banned from matchmaking.',code:'PARTY_MEMBER_BANNED'})}
       await db.query(
-        `INSERT INTO queue_entries(user_id,game_id,game_mode,selected_maps,preferred_region)
-         VALUES($1,$2,$3,$4,$5)`,
-        [userId,gameId,gameMode,selectedMaps,preferredRegion]
+        `INSERT INTO queue_entries(user_id,game_id,game_mode,selected_maps,preferred_region,party_id,team_size,total_players)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [queueUserId,gameId,gameMode,selectedMaps,preferredRegion,partyId,teamSize,rule.total_players]
       )
-      await pairQueuedPlayer(db,userId)
+      await pairQueuedPlayer(db,queueUserId)
       await db.query('COMMIT')
       return res.json(await getMatchmakingState(pool,userId))
     }catch(error){await db.query('ROLLBACK');throw error}finally{db.release()}
@@ -1985,7 +2126,10 @@ app.post('/matchmaking/join', requireAuth, async (req: AuthRequest, res) => {
 
 app.post('/matchmaking/leave', requireAuth, async (req: AuthRequest, res) => {
   try {
-    await pool.query('DELETE FROM queue_entries WHERE user_id=$1', [req.userId])
+    const party=await lockOwnParty(pool,req.userId!)
+    if(party&&String(party.leader_id)!==req.userId)return res.status(403).json({error:'Only the party leader can leave the queue.',code:'PARTY_LEADER_REQUIRED'})
+    await pool.query('DELETE FROM queue_entries WHERE user_id=$1 OR party_id=$2', [req.userId,party?.id||null])
+    if(party)await pool.query("UPDATE parties SET queue_status='idle',updated_at=NOW() WHERE id=$1",[party.id])
     return res.json({ state: 'idle' })
   } catch (err: any) {
     return sendDatabaseError(res,err)
@@ -2006,6 +2150,8 @@ app.get('/matchmaking/options',requireAuth,async(req:AuthRequest,res)=>{
     const gameId=String(req.query.game_id||user?.preferred_game_id||'hl1')
     if(!isSupportedGameId(gameId))return res.status(400).json({error:'Invalid game ID',code:'INVALID_GAME_ID'})
     const config=(await pool.query('SELECT * FROM game_matchmaking_config WHERE game_id=$1',[gameId])).rows[0]
+    const modeRules=(await pool.query(`SELECT rule_id,game_mode,team_size,total_players,max_party_size,minimum_ready_players,team_count,allow_mixed_parties,matchmaking_available,server_pipeline_ready,display_name,availability_reason
+      FROM matchmaking_mode_rules WHERE game_id=$1 ORDER BY COALESCE(total_players,2147483647),rule_id`,[gameId])).rows
     const mapPools=(await pool.query('SELECT game_mode,maps FROM game_map_pools WHERE game_id=$1 AND is_active ORDER BY game_mode',[gameId])).rows
     const regions=(await pool.query(
       `SELECT region,COUNT(*)::int total_servers,
@@ -2013,7 +2159,7 @@ app.get('/matchmaking/options',requireAuth,async(req:AuthRequest,res)=>{
        FROM game_servers WHERE game_id=$1 AND region=ANY($2::text[]) GROUP BY region`,[gameId,SUPPORTED_REGIONS.map(region=>region.id)])).rows
     const regionStats=new Map(regions.map((region:any)=>[region.region,region]))
     const gameNames:Record<SupportedGameId,string>={hl1:'Half-Life 1',cs16:'Counter-Strike 1.6',l4d2:'Left 4 Dead 2',cod4:'Call of Duty 4 Promod'}
-    return res.json({game:{id:gameId,name:gameNames[gameId]},enabled:Boolean(config?.enabled),modes:config?.modes||[],requiredMapCount:config?.required_map_count||5,mapPools,regions:SUPPORTED_REGIONS.map(region=>({region:region.id,label:region.label,total_servers:Number(regionStats.get(region.id)?.total_servers)||0,available_servers:Number(regionStats.get(region.id)?.available_servers)||0}))})
+    return res.json({game:{id:gameId,name:gameNames[gameId]},enabled:modeRules.some((rule:any)=>rule.matchmaking_available&&rule.server_pipeline_ready),modes:config?.modes||[],modeRules,requiredMapCount:config?.required_map_count||5,mapPools,regions:SUPPORTED_REGIONS.map(region=>({region:region.id,label:region.label,total_servers:Number(regionStats.get(region.id)?.total_servers)||0,available_servers:Number(regionStats.get(region.id)?.available_servers)||0}))})
   }catch(err:any){return sendDatabaseError(res,err)}
 })
 
@@ -2052,10 +2198,11 @@ app.post('/matchmaking/maps',requireAuth,async(req:AuthRequest,res)=>{
       `SELECT m.* FROM matches m
        JOIN match_acceptances ma ON ma.match_id=m.id
        WHERE ma.user_id=$1 AND ma.status='accepted' AND m.status='pending'
+         AND $1 IN (m.player1_id,m.player2_id)
        ORDER BY m.created_at DESC LIMIT 1 FOR UPDATE OF m`,[req.userId])).rows[0]
     if(!match){await db.query('ROLLBACK');return res.status(409).json({error:'No accepted match is ready for map selection',code:'NO_MAP_SELECTION_MATCH'})}
     const accepted=Number((await db.query("SELECT COUNT(*)::int count FROM match_acceptances WHERE match_id=$1 AND status='accepted'",[match.id])).rows[0].count)
-    if(accepted!==2){await db.query('ROLLBACK');return res.status(409).json({error:'Both players must accept before selecting maps',code:'MATCH_NOT_FULLY_ACCEPTED'})}
+    if(accepted!==Number(match.total_players||2)){await db.query('ROLLBACK');return res.status(409).json({error:'Every player must accept before captains select maps',code:'MATCH_NOT_FULLY_ACCEPTED'})}
     if(match.selected_map||(Array.isArray(match.maps)&&match.maps.length===10)){await db.query('ROLLBACK');return res.status(409).json({error:'Map selection is already complete',code:'MAP_SELECTION_COMPLETE'})}
     const mapPool=(await db.query('SELECT maps FROM game_map_pools WHERE game_id=$1 AND game_mode=$2 AND is_active',[match.game_id,match.game_mode])).rows[0]?.maps||[]
     const maps=Array.isArray(req.body.selectedMaps)?req.body.selectedMaps:[]
@@ -2087,6 +2234,7 @@ app.post('/matchmaking/ban-map',requireAuth,async(req:AuthRequest,res)=>{
       `SELECT m.* FROM matches m
        JOIN match_acceptances ma ON ma.match_id=m.id
        WHERE ma.user_id=$1 AND ma.status='accepted' AND m.status='pending'
+         AND $1 IN (m.player1_id,m.player2_id)
        ORDER BY m.created_at DESC LIMIT 1 FOR UPDATE OF m`,[req.userId])).rows[0]
     if(!match){await db.query('ROLLBACK');return res.status(409).json({error:'No accepted match is ready for map banning',code:'NO_MAP_BAN_MATCH'})}
     if(match.selected_map){await db.query('ROLLBACK');return res.status(409).json({error:'The final map is already selected',code:'MAP_BAN_COMPLETE'})}
@@ -2122,6 +2270,7 @@ app.post('/matchmaking/decline',requireAuth,async(req:AuthRequest,res)=>{
          AND m.status='pending' RETURNING ma.match_id`,[req.userId])).rows[0]
     if(!acceptance){await db.query('ROLLBACK');return res.status(409).json({error:'No pending match acceptance',code:'NO_PENDING_MATCH'})}
     await db.query("UPDATE matches SET status='cancelled',completed_at=NOW() WHERE id=$1",[acceptance.match_id])
+    await db.query(`UPDATE parties SET queue_status='idle',updated_at=NOW() WHERE id IN (SELECT DISTINCT party_id FROM match_participants WHERE match_id=$1 AND party_id IS NOT NULL)`,[acceptance.match_id])
     await db.query('COMMIT')
     return res.json({state:'idle'})
   }catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}
@@ -2449,6 +2598,10 @@ const directChatAccess = async (senderId: string, recipientId: string) => {
     `SELECT 1 FROM friendships
      WHERE status='accepted'
        AND ((user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1))
+       AND NOT EXISTS (
+         SELECT 1 FROM user_blocks
+         WHERE (blocker_id=$1 AND blocked_user_id=$2) OR (blocker_id=$2 AND blocked_user_id=$1)
+       )
      LIMIT 1`,
     [senderId, recipientId]
   )
@@ -2608,16 +2761,18 @@ app.get('/friends', requireAuth, async (req: AuthRequest, res) => {
     const result = await pool.query(
       `SELECT f.id, f.status, f.created_at AS "addedAt", u.id AS "userId", u.username, ${displayNameSql('u')} AS "displayName",
               COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar,
-              u.level, u.is_premium AS "isPremium", u.last_seen AS "lastSeen",
+              u.level, u.is_premium AS "isPremium", CASE WHEN u.show_online_status THEN u.last_seen ELSE NULL END AS "lastSeen",
               (${onlineUserPredicate('u')}) AS "isOnline"
        FROM friendships f
        LEFT JOIN users u ON (CASE WHEN f.user_id=$1 THEN f.friend_id ELSE f.user_id END) = u.id
-       WHERE (f.user_id=$1 OR f.friend_id=$1) AND f.status='accepted' AND u.id IS NOT NULL AND u.deleted_at IS NULL`,
+       WHERE (f.user_id=$1 OR f.friend_id=$1) AND f.status='accepted' AND u.id IS NOT NULL AND u.deleted_at IS NULL
+       ORDER BY "isOnline" DESC, LOWER(${displayNameSql('u')}), LOWER(u.username)`,
       [req.userId]
     )
     const requests = await pool.query(
       `SELECT f.id,f.status,f.created_at AS "sentAt",f.user_id AS "senderId",f.friend_id AS "recipientId",
-              u.username,${displayNameSql('u')} AS "displayName",COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS avatar
+              u.username,${displayNameSql('u')} AS "displayName",COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS avatar,
+              u.level,(${onlineUserPredicate('u')}) AS "isOnline"
        FROM friendships f JOIN users u ON u.id=CASE WHEN f.user_id=$1 THEN f.friend_id ELSE f.user_id END
        WHERE (f.user_id=$1 OR f.friend_id=$1) AND f.status='pending' AND u.deleted_at IS NULL
        ORDER BY f.created_at DESC`,[req.userId])
@@ -2672,12 +2827,38 @@ app.post('/presence/offline', requireAuth, async (req: AuthRequest, res) => {
 
 app.get('/friends/search', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const q = req.query.q as string
-    if (!q || q.length < 2) return res.json({ users: [] })
+    const q = String(req.query.q || '').trim().slice(0,64)
+    if (q.length < 2) return res.json({ users: [] })
+    const pattern=`%${q.replace(/[\\%_]/g,'\\$&')}%`
     const result = await pool.query(
-      `SELECT id, username, ${displayNameSql('users')} AS "displayName", COALESCE(CASE WHEN avatar_source='custom' THEN NULLIF(custom_avatar_url,'') END,steam_avatar) AS steam_avatar, level, is_premium
-       FROM users WHERE (username ILIKE $1 OR ${displayNameSql('users')} ILIKE $1) AND id != $2 AND deleted_at IS NULL LIMIT 20`,
-      [`%${q}%`, req.userId]
+      `SELECT u.id,u.username,${displayNameSql('u')} AS "displayName",
+              COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS steam_avatar,
+              u.level,u.is_premium,(${onlineUserPredicate('u')}) AS "isOnline",
+              (COALESCE(u.profile_visibility,'public')='public' OR f.status='accepted') AS "profileVisible",
+              f.id AS "requestId",
+              CASE
+                WHEN f.status='accepted' THEN 'friends'
+                WHEN f.status='pending' AND f.user_id=$2 THEN 'request_sent'
+                WHEN f.status='pending' AND f.friend_id=$2 THEN 'request_received'
+                ELSE 'none'
+              END AS "friendshipStatus"
+       FROM users u
+       LEFT JOIN LATERAL (
+         SELECT id,user_id,friend_id,status FROM friendships
+         WHERE (user_id=$2 AND friend_id=u.id) OR (user_id=u.id AND friend_id=$2)
+         LIMIT 1
+       ) f ON TRUE
+       WHERE (u.username ILIKE $1 ESCAPE '\\' OR ${displayNameSql('u')} ILIKE $1 ESCAPE '\\')
+         AND u.id<>$2 AND u.deleted_at IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks b
+           WHERE (b.blocker_id=$2 AND b.blocked_user_id=u.id) OR (b.blocker_id=u.id AND b.blocked_user_id=$2)
+         )
+         AND (COALESCE(u.profile_visibility,'public')<>'private' OR f.status='accepted')
+       ORDER BY CASE WHEN LOWER(u.username)=LOWER($3) OR LOWER(${displayNameSql('u')})=LOWER($3) THEN 0 ELSE 1 END,
+                "isOnline" DESC,LOWER(${displayNameSql('u')}),LOWER(u.username)
+       LIMIT 20`,
+      [pattern,req.userId,q]
     )
     return res.json({ users: result.rows })
   } catch (err: any) {
@@ -2690,22 +2871,25 @@ app.post('/friends/request', requireAuth, async (req: AuthRequest, res) => {
   try {
     await db.query('BEGIN')
     const { targetUserId } = req.body
-    if(targetUserId===req.userId){await db.query('ROLLBACK');return res.status(400).json({error:'You cannot send a friend request to yourself'})}
-    const target=await db.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL',[targetUserId])
+    if(!validUserId(targetUserId)||targetUserId===req.userId){await db.query('ROLLBACK');return res.status(400).json({error:'Select another valid player',code:'INVALID_FRIEND_TARGET'})}
+    await db.query(`SELECT pg_advisory_xact_lock(hashtextextended(LEAST($1::text,$2::text)||':'||GREATEST($1::text,$2::text),0))`,[req.userId,targetUserId])
+    const target=await db.query('SELECT id,notification_preferences FROM users WHERE id=$1 AND deleted_at IS NULL',[targetUserId])
     if(!target.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'User not found'})}
+    const blocked=await db.query(`SELECT 1 FROM user_blocks WHERE (blocker_id=$1 AND blocked_user_id=$2) OR (blocker_id=$2 AND blocked_user_id=$1) LIMIT 1`,[req.userId,targetUserId])
+    if(blocked.rows[0]){await db.query('ROLLBACK');return res.status(403).json({error:'Friend requests are unavailable for this player',code:'FRIEND_REQUEST_BLOCKED'})}
     const existing=await db.query(`SELECT id,status FROM friendships WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1) FOR UPDATE`,[req.userId,targetUserId])
     if(existing.rows[0]&&existing.rows[0].status!=='declined'){await db.query('ROLLBACK');return res.status(409).json({error:existing.rows[0].status==='accepted'?'You are already friends':'A friend request is already pending'})}
     const request=existing.rows[0]
       ?await db.query(`UPDATE friendships SET user_id=$1,friend_id=$2,status='pending',updated_at=NOW() WHERE id=$3 RETURNING *`,[req.userId,targetUserId,existing.rows[0].id])
       :await db.query(`INSERT INTO friendships(user_id,friend_id,status) VALUES($1,$2,'pending') RETURNING *`,[req.userId,targetUserId])
     const uResult = await db.query(`SELECT username,${displayNameSql('users')} AS display_name FROM users WHERE id=$1`, [req.userId])
-    await db.query(
-      `INSERT INTO notifications (user_id,type,title,message,related_user_id,related_friendship_id,read)
-       VALUES ($1,'friend_request','Friend Request',$2,$3,$4,false)
-       ON CONFLICT (related_friendship_id) WHERE related_friendship_id IS NOT NULL
-       DO UPDATE SET user_id=EXCLUDED.user_id,message=EXCLUDED.message,related_user_id=EXCLUDED.related_user_id,read=false,created_at=NOW()`,
-      [targetUserId, `${resolveDisplayName(uResult.rows[0])} sent you a friend request`, req.userId,request.rows[0].id]
-    )
+    if(target.rows[0].notification_preferences?.friendRequests!==false)await db.query(
+        `INSERT INTO notifications (user_id,type,title,message,related_user_id,related_friendship_id,read)
+         VALUES ($1,'friend_request','Friend Request',$2,$3,$4,false)
+         ON CONFLICT (related_friendship_id) WHERE related_friendship_id IS NOT NULL
+         DO UPDATE SET user_id=EXCLUDED.user_id,message=EXCLUDED.message,related_user_id=EXCLUDED.related_user_id,read=false,created_at=NOW()`,
+        [targetUserId, `${resolveDisplayName(uResult.rows[0])} sent you a friend request.`, req.userId,request.rows[0].id]
+      )
     await db.query('COMMIT')
     return res.status(201).json({ request:request.rows[0] })
   } catch (err: any) {
@@ -2716,12 +2900,23 @@ app.post('/friends/request', requireAuth, async (req: AuthRequest, res) => {
 app.post('/friends/accept', requireAuth, async (req: AuthRequest, res) => {
   const db=await pool.connect();try {await db.query('BEGIN')
     const { requestId } = req.body
+    if(!validUserId(requestId)){await db.query('ROLLBACK');return res.status(400).json({error:'Invalid friend request',code:'INVALID_FRIEND_REQUEST'})}
+    const pending=await db.query(`SELECT id,user_id,friend_id FROM friendships WHERE id=$1 AND friend_id=$2 AND status='pending' FOR UPDATE`,[requestId,req.userId])
+    if(!pending.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'Pending request not found or not addressed to you'})}
+    const blocked=await db.query(`SELECT 1 FROM user_blocks WHERE (blocker_id=$1 AND blocked_user_id=$2) OR (blocker_id=$2 AND blocked_user_id=$1) LIMIT 1`,[pending.rows[0].user_id,req.userId])
+    if(blocked.rows[0]){await db.query(`UPDATE friendships SET status='declined',updated_at=NOW() WHERE id=$1`,[requestId]);await db.query("DELETE FROM notifications WHERE related_friendship_id=$1",[requestId]);await db.query('COMMIT');return res.status(403).json({error:'This friend request can no longer be accepted',code:'FRIEND_REQUEST_BLOCKED'})}
     const result=await db.query(
       `UPDATE friendships SET status='accepted',updated_at=NOW() WHERE id=$1 AND friend_id=$2 AND status='pending' RETURNING *`,
       [requestId, req.userId]
     )
-    if(!result.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'Pending request not found or not addressed to you'})}
     await db.query("DELETE FROM notifications WHERE user_id=$1 AND related_friendship_id=$2 AND type='friend_request'",[req.userId,requestId])
+    const acceptedBy=await db.query(`SELECT username,${displayNameSql('users')} AS display_name FROM users WHERE id=$1`,[req.userId])
+    const requester=await db.query(`SELECT notification_preferences FROM users WHERE id=$1`,[pending.rows[0].user_id])
+    if(requester.rows[0]?.notification_preferences?.friendRequests!==false)await db.query(
+      `INSERT INTO notifications(user_id,type,title,message,related_user_id,read)
+       VALUES($1,'system','Friend Request Accepted',$2,$3,false)`,
+      [pending.rows[0].user_id,`${resolveDisplayName(acceptedBy.rows[0])} accepted your friend request.`,req.userId]
+    )
     const unread=await db.query('SELECT COUNT(*)::int AS count FROM notifications WHERE user_id=$1 AND read=false',[req.userId])
     await db.query('COMMIT')
     return res.json({ friendship:result.rows[0],unreadCount:unread.rows[0].count })
@@ -2732,7 +2927,7 @@ app.post('/friends/accept', requireAuth, async (req: AuthRequest, res) => {
 
 app.post('/friends/requests/:requestId/decline',requireAuth,async(req:AuthRequest,res)=>{const db=await pool.connect();try{await db.query('BEGIN');const result=await db.query(`UPDATE friendships SET status='declined',updated_at=NOW() WHERE id=$1 AND friend_id=$2 AND status='pending' RETURNING *`,[req.params.requestId,req.userId]);if(!result.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'Pending request not found or not addressed to you'})}await db.query("DELETE FROM notifications WHERE user_id=$1 AND related_friendship_id=$2 AND type='friend_request'",[req.userId,req.params.requestId]);const unread=await db.query('SELECT COUNT(*)::int AS count FROM notifications WHERE user_id=$1 AND read=false',[req.userId]);await db.query('COMMIT');return res.json({request:result.rows[0],unreadCount:unread.rows[0].count})}catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}})
 app.delete('/friends/requests/:requestId',requireAuth,async(req:AuthRequest,res)=>{const db=await pool.connect();try{await db.query('BEGIN');const pending=await db.query(`SELECT id,friend_id FROM friendships WHERE id=$1 AND user_id=$2 AND status='pending' FOR UPDATE`,[req.params.requestId,req.userId]);if(!pending.rows[0]){await db.query('ROLLBACK');return res.status(404).json({error:'Outgoing request not found'})}await db.query("DELETE FROM notifications WHERE user_id=$1 AND related_friendship_id=$2 AND type='friend_request'",[pending.rows[0].friend_id,req.params.requestId]);await db.query(`DELETE FROM friendships WHERE id=$1 AND user_id=$2 AND status='pending'`,[req.params.requestId,req.userId]);await db.query('COMMIT');return res.json({ok:true})}catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}})
-app.delete('/friends/:friendshipId',requireAuth,async(req:AuthRequest,res)=>{try{const result=await pool.query(`DELETE FROM friendships WHERE id=$1 AND status='accepted' AND (user_id=$2 OR friend_id=$2) RETURNING id`,[req.params.friendshipId,req.userId]);if(!result.rows[0])return res.status(404).json({error:'Accepted friendship not found'});return res.json({ok:true})}catch(err:any){return sendDatabaseError(res,err)}})
+app.delete('/friends/:friendshipId',requireAuth,async(req:AuthRequest,res)=>{try{if(!validUserId(req.params.friendshipId))return res.status(400).json({error:'Invalid friendship',code:'INVALID_FRIENDSHIP'});const result=await pool.query(`DELETE FROM friendships WHERE id=$1 AND status='accepted' AND (user_id=$2 OR friend_id=$2) RETURNING id`,[req.params.friendshipId,req.userId]);return res.json({ok:true,removed:Boolean(result.rows[0])})}catch(err:any){return sendDatabaseError(res,err)}})
 
 // =====================================================
 // NOTIFICATIONS
@@ -2759,7 +2954,8 @@ app.get('/notifications', requireAuth, async (req: AuthRequest, res) => {
   try {
     const [result,unread] = await Promise.all([pool.query(
       `SELECT
-         n.id, n.user_id, n.type, n.title,
+         n.id, n.user_id, n.title,
+         CASE WHEN n.type='system' AND n.title='Friend Request Accepted' THEN 'friend_accepted' ELSE n.type END AS type,
          CASE
            WHEN n.type='message' AND cm.id IS NOT NULL
              THEN COALESCE(${displayNameSql('sender')}, cm.username) || ' sent you a message'
@@ -2897,18 +3093,23 @@ app.get('/blocks',requireAuth,async(req:AuthRequest,res)=>{
 app.post('/blocks',requireAuth,async(req:AuthRequest,res)=>{
   const blockedUserId=typeof req.body?.blockedUserId==='string'?req.body.blockedUserId:''
   if(!validUserId(blockedUserId)||blockedUserId===req.userId)return res.status(400).json({error:'Select another valid user to block',code:'INVALID_BLOCK_TARGET'})
+  const db=await pool.connect()
   try{
-    const blocked=(await pool.query(
+    await db.query('BEGIN')
+    const blocked=(await db.query(
       `INSERT INTO user_blocks(blocker_id,blocked_user_id)
        SELECT $1,u.id FROM users u WHERE u.id=$2 AND u.deleted_at IS NULL
        ON CONFLICT(blocker_id,blocked_user_id) DO UPDATE SET blocker_id=EXCLUDED.blocker_id
        RETURNING blocked_user_id AS player_id,created_at AS blocked_at`,
       [req.userId,blockedUserId],
     )).rows[0]
-    if(!blocked)return res.status(404).json({error:'User not found',code:'USER_NOT_FOUND'})
-    const user=(await pool.query(`SELECT ${displayNameSql('users')} AS player_name FROM users WHERE id=$1`,[blockedUserId])).rows[0]
+    if(!blocked){await db.query('ROLLBACK');return res.status(404).json({error:'User not found',code:'USER_NOT_FOUND'})}
+    const relationships=await db.query(`DELETE FROM friendships WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1) RETURNING id`,[req.userId,blockedUserId])
+    if(relationships.rows.length)await db.query(`DELETE FROM notifications WHERE related_friendship_id=ANY($1::uuid[])`,[relationships.rows.map(row=>row.id)])
+    const user=(await db.query(`SELECT ${displayNameSql('users')} AS player_name FROM users WHERE id=$1`,[blockedUserId])).rows[0]
+    await db.query('COMMIT')
     return res.status(201).json({blockedPlayer:{...blocked,...user}})
-  }catch(err:any){return sendDatabaseError(res,err)}
+  }catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}
 })
 
 app.delete('/blocks/:userId',requireAuth,async(req:AuthRequest,res)=>{

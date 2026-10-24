@@ -1,0 +1,27 @@
+import assert from'node:assert/strict'
+import fs from'node:fs'
+import{createRequire}from'node:module'
+const require=createRequire(import.meta.url)
+const{assignGroupsToTeams,groupsConflict}=require('../dist/server/teamMatchmaking.js')
+const group=(id,members,order)=>({id,members,joinedAt:`2026-01-01T00:00:0${order}.000Z`})
+const assertTeams=(groups,expected)=>{const result=assignGroupsToTeams(groups,2,2);assert.ok(result);assert.deepEqual(result.map(team=>team.members.length),[2,2]);assert.equal(new Set(result.flatMap(team=>team.members)).size,4);assert.deepEqual(result.map(team=>team.groups.length),expected)}
+assertTeams([group('a',['a1','a2'],1),group('b',['b1','b2'],2)],[1,1])
+assertTeams([group('a',['a1','a2'],1),group('b',['b1'],2),group('c',['c1'],3)],[1,2])
+assertTeams([group('a',['a1'],1),group('b',['b1'],2),group('c',['c1'],3),group('d',['d1'],4)],[2,2])
+assert.equal(assignGroupsToTeams([group('a',['a1','a2'],1)],1,2),null)
+assert.equal(assignGroupsToTeams([group('a',['same'],1),group('b',['same'],2)],1,2),null)
+assert.equal(groupsConflict(group('a',['a1'],1),group('b',['b1'],2),new Set(['a1:b1'])),true)
+const migration=fs.readFileSync(new URL('../src/server/049_party_and_team_matchmaking.sql',import.meta.url),'utf8')
+assert.match(migration,/hl1-ag-1v1.*1,2,1/)
+assert.match(migration,/hl1-ag-2v2.*2,4,2/)
+assert.match(migration,/cs16-clan-war.*5,10,5/)
+assert.match(migration,/cod4-promod-tdm.*NULL,NULL,NULL/)
+assert.match(migration,/l4d2-coop.*FALSE,FALSE/)
+assert.match(migration,/l4d2-versus.*FALSE,FALSE/)
+const server=fs.readFileSync(new URL('../src/server/index.ts',import.meta.url),'utf8')
+assert.match(server,/PARTY_NOT_ALLOWED_IN_1V1/)
+assert.match(server,/MODE_UNAVAILABLE/)
+assert.match(server,/DUPLICATE_QUEUE_MEMBERSHIP/)
+assert.match(server,/FOR UPDATE OF q SKIP LOCKED/)
+assert.match(server,/PARTY_INVITE_NOT_ALLOWED/)
+console.log('party and team matchmaking regression: PASS (17 assertions)')
