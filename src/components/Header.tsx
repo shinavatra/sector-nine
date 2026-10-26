@@ -10,6 +10,7 @@ import { FramedAvatar } from "./FramedAvatar";
 import { useUser } from "../contexts/UserContext";
 import { displayPlayerName, playerInitials } from "../utils/displayName";
 import { isAdminUser, showPlayerProgression } from "../utils/userRole";
+import { useGame } from "../contexts/GameContext";
 
 interface HeaderProps {
   onNavigate?: (page: string) => void;
@@ -21,6 +22,7 @@ interface HeaderProps {
 
 export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = false, notificationUnreadCount = 0 }: HeaderProps) {
   const { user } = useUser();
+  const {selectedGame,availableGames,setSelectedGame,lockedReason,loading:gameSaving}=useGame();
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const playerName = displayPlayerName(user, "Player");
   const isAdmin = isAdminUser(user);
@@ -68,6 +70,11 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
                 <span className="hidden truncate font-mono text-sm font-bold tracking-wider text-orange-300 sm:block">SECTOR NINE</span>
               </a>
             </div>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="hidden max-w-36 truncate border-orange-900/30 font-mono text-xs text-orange-300 sm:inline-flex">{selectedGame.shortName}</Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-64 border-orange-900/30 bg-[#111113]">{availableGames.map(game=>{const reason=lockedReason(game.id);return <DropdownMenuItem key={game.id} disabled={Boolean(reason)||gameSaving} onSelect={()=>void setSelectedGame(game.id)} className="flex items-center justify-between"><span>{game.name}</span><span className="text-[10px] text-gray-500">{reason?'UNAVAILABLE':game.id===selectedGame.id?'SELECTED':''}</span></DropdownMenuItem>})}</DropdownMenuContent>
+            </DropdownMenu>
 
           </div>
 

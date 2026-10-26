@@ -7,7 +7,7 @@ import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { ArrowLeft, Settings, Shield, Bell, Check, ChevronDown, User, Save, Loader2, Lock, Palette } from "lucide-react";
+import { ArrowLeft, Settings, Shield, Bell, Check, ChevronDown, User, Save, Loader2, Lock, Palette, ExternalLink, Link2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import { useUser } from "../contexts/UserContext";
@@ -18,8 +18,10 @@ import { toast } from "sonner";
 import { ReportingSystem } from "../components/ReportingSystem";
 import { Friends } from "../components/Friends";
 import { FramedAvatar } from "../components/FramedAvatar";
+import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { authAPI, userAPI } from "../utils/api";
 import { displayPlayerName } from "../utils/displayName";
+import { initiateSteamLogin } from "../utils/steamAuth";
 
 type ProfileFrame = {
   id: string;
@@ -37,7 +39,7 @@ interface ConfigurationProps {
 export function Configuration({ onNavigate }: ConfigurationProps) {
   const { user, updateProfile, changeDisplayName, adoptProfile } = useUser();
   const { themeMode, preferredTheme, effectiveTheme, availableThemes, saveThemePreferences } = useTheme();
-  const {selectedGame,availableGames,setSelectedGame,loading:gameSaving}=useGame();
+  const {selectedGame,availableGames,setSelectedGame,lockedReason,loading:gameSaving}=useGame();
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
   const [profileVisibility, setProfileVisibility] = useState<'public' | 'friends' | 'private'>("friends");
@@ -56,6 +58,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   const [framesLoading, setFramesLoading] = useState(true);
   const [equippingFrame, setEquippingFrame] = useState<string | null>(null);
   const [frameDialogOpen, setFrameDialogOpen] = useState(false);
+  const [connectingSteam,setConnectingSteam]=useState(false);
   const [saveNotice, setSaveNotice] = useState("");
   const [openSettingsGroup,setOpenSettingsGroup]=useState<string|null>(null);
   const setSettingsGroup=(id:string,open:boolean)=>setOpenSettingsGroup(current=>open?id:current===id?null:current);
@@ -130,6 +133,8 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
       setEquippingFrame(null);
     }
   };
+
+  const connectSteam=async()=>{setConnectingSteam(true);try{await initiateSteamLogin('link')}catch(error){setConnectingSteam(false);toast.error('Steam connection failed',{description:error instanceof Error?error.message:'Unable to start Steam authentication'})}};
 
   const ownedFrames = profileFrames.filter(frame => frame.owned === true && user?.ownedFrames.includes(frame.id));
   const equippedFrame = profileFrames.find(frame => frame.id === user?.equippedFrame);
@@ -295,17 +300,18 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
               <CardTitle className="text-orange-400 font-mono">ACCOUNT SETTINGS</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="max-w-sm space-y-2">
-                <Label className="text-gray-400 font-mono">Game to play</Label>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2"><Label className="text-gray-400 font-mono">Game Selection</Label>
                 <Select value={selectedGame.id} onValueChange={async value=>{try{await setSelectedGame(value as typeof selectedGame.id);setSaveNotice('Selected game saved');toast.success('Selected game updated')}catch(error){toast.error('Unable to select game',{description:error instanceof Error?error.message:'The game is unavailable'})}}} disabled={gameSaving}>
                   <SelectTrigger aria-label="Game to play" className="w-full bg-black/20 border-orange-900/20 text-gray-300 font-mono">
                     <SelectValue placeholder="Select game" />
                   </SelectTrigger>
                   <SelectContent className="border-orange-900/30 bg-[#111113] text-gray-200">
-                    {availableGames.map(game=><SelectItem key={game.id} value={game.id} className="font-mono">{game.name}</SelectItem>)}
+                    {availableGames.map(game=><SelectItem key={game.id} value={game.id} disabled={Boolean(lockedReason(game.id))} className="font-mono">{game.name}{lockedReason(game.id)?' — Unavailable':''}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-gray-500 font-mono">Matchmaking, statistics and game-aware pages follow this selection. Theme remains independent unless Follow Selected Game is enabled.</p>
+                <p className="text-xs text-gray-500 font-mono">Scopes competitive navigation and data.</p></div>
+                <div className="space-y-2"><Label className="text-gray-400 font-mono">Theme Selection</Label><Select value={preferredTheme} onValueChange={async value=>{try{await saveThemePreferences('manual',value as ThemeId);setDraftThemeMode('manual');setDraftTheme(value as ThemeId);setSaveNotice('Theme preference saved')}catch(error){toast.error('Theme update failed',{description:error instanceof Error?error.message:'Unable to save theme'})}} disabled={isSavingTheme}><SelectTrigger aria-label="Theme Selection" className="w-full border-orange-900/20 bg-black/20 font-mono text-gray-300"><SelectValue/></SelectTrigger><SelectContent className="border-orange-900/30 bg-[#111113] text-gray-200">{themeDefinitions.map(theme=><SelectItem key={theme.id} value={theme.id} disabled={!availableThemes.includes(theme.id)}>{theme.name}</SelectItem>)}</SelectContent></Select><p className="text-xs text-gray-500 font-mono">Independent manual interface theme.</p></div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
@@ -438,6 +444,13 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
                   )}
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+          <Card className="border-orange-900/20 bg-black/40">
+            <CardHeader><CardTitle className="flex items-center gap-2 font-mono text-orange-400"><Link2 className="size-5"/>CONNECTED ACCOUNTS</CardTitle></CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded border border-orange-900/20 bg-black/25 p-4"><p className="font-mono text-sm text-gray-300">Email account</p><p className="mt-1 break-all text-xs text-gray-500">{user?.email||'No email address'}</p><Badge variant="outline" className="mt-3 border-green-800/40 text-green-300">CONNECTED</Badge></div>
+              <div className="rounded border border-orange-900/20 bg-black/25 p-4">{user?.steamId?<div className="flex gap-3"><Avatar className="size-12"><AvatarImage src={user.steamAvatar||''}/><AvatarFallback>ST</AvatarFallback></Avatar><div className="min-w-0"><p className="truncate font-mono text-sm text-gray-200">{user.steamPersonaName||'Steam account'}</p><p className="break-all text-xs text-gray-500">{user.steamId}</p><Badge variant="outline" className="mt-2 border-green-800/40 text-green-300">STEAM CONNECTED</Badge>{user.steamProfileUrl&&<a href={user.steamProfileUrl} target="_blank" rel="noreferrer" className="mt-2 flex items-center gap-1 text-xs text-orange-300 hover:underline">View Steam Profile<ExternalLink className="size-3"/></a>}</div></div>:<div><p className="font-mono text-sm text-gray-300">Steam</p><p className="mt-1 text-xs text-gray-500">Connect through verified Steam OpenID to enable ownership checks and matchmaking.</p><Button type="button" onClick={connectSteam} disabled={connectingSteam} className="mt-3 w-full bg-orange-700 text-black hover:bg-orange-600">{connectingSteam?<><Loader2 className="mr-2 size-4 animate-spin"/>CONNECTING...</>:<>CONNECT STEAM ACCOUNT</>}</Button></div>}</div>
             </CardContent>
           </Card>
           </SettingsGroup>

@@ -59,11 +59,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
   }, [user?.preferredGameId]);
 
   const lockedReason = useCallback((gameId: GameId) => {
+    if (!enabledGameIds.includes(gameId)) return "Coming soon or unavailable.";
     if (verifiedGames.includes(gameId)) return null;
     if (!user?.steamId) return "Connect Steam to verify ownership.";
     if (user.vacBanned || user.gameBanned) return "Steam account is not eligible for competitive play.";
     return "Verified ownership or game access is required.";
-  }, [user?.gameBanned, user?.steamId, user?.vacBanned, verifiedGames]);
+  }, [enabledGameIds, user?.gameBanned, user?.steamId, user?.vacBanned, verifiedGames]);
 
   const setSelectedGame = useCallback(async (gameId: GameId) => {
     if(!enabledGameIds.includes(gameId)){
@@ -99,7 +100,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<GameContextValue>(() => ({
     selectedGame: supportedGames.find(game => game.id === selectedGameId) || supportedGames[0],
-    availableGames: supportedGames.filter(game=>enabledGameIds.includes(game.id)),
+    availableGames: supportedGames,
     verifiedGames,
     setSelectedGame,
     loading: isLoading || saving,

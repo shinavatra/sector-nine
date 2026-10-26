@@ -89,6 +89,7 @@
     "db:migrate:baseline": "node scripts/migrate-postgres.mjs --baseline",
     "db:migrate:status": "node scripts/migrate-postgres.mjs --status",
     "test:steam-auth": "node scripts/test-steam-auth-flow.mjs",
+    "test:account-game-store": "node scripts/test-account-game-store-repair.mjs",
     "test:secure-sessions": "npm run build:server && node scripts/test-secure-sessions.mjs",
     "test:multi-tab-refresh": "node scripts/test-multi-tab-refresh.mjs",
     "test:frontend-proxy": "node scripts/test-frontend-proxy.mjs",

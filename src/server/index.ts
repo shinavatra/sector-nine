@@ -1459,7 +1459,8 @@ app.get('/store/catalog', async (_req, res) => {
          ORDER BY featured DESC,created_at DESC,id`,
       ),
       pool.query(
-        `SELECT id,name,description,style,rarity,price_points,vip_only,featured
+        `SELECT id,name,description,style,rarity,price_points,vip_only,featured,metadata,
+                COALESCE((metadata->>'purchasable')::boolean,true) AS purchasable
          FROM frames
          WHERE is_active=true
          ORDER BY featured DESC,price_points ASC,id`,
