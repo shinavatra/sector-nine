@@ -22,6 +22,10 @@ export const themeDefinitions: ThemeDefinition[] = [
   { id: "cod4", name: "Call of Duty 4 Promod", gameId: "cod4", description: "Sector Nine with restrained military green, steel, and amber accents.", gameLabel: "Call of Duty 4 Promod", protocol: "MODERN WARFARE PROTOCOL", status: "OPERATIONS NETWORK: ONLINE" },
 ];
 
+if (new Set(themeDefinitions.map(theme => theme.id)).size !== themeDefinitions.length) {
+  throw new Error("Theme definitions must use unique IDs");
+}
+
 interface ThemeCache {
   mode: ThemeMode;
   preferred: ThemeId;
@@ -63,6 +67,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preferredTheme, setPreferredTheme] = useState<ThemeId>(cached.preferred);
   const hydratedUserId = useRef<string | null>(null);
   const saveRevision = useRef(0);
+  const persistenceQueue = useRef<Promise<void>>(Promise.resolve());
+  const activeUserId = useRef<string | null>(user?.id || null);
+  activeUserId.current = user?.id || null;
   const [selectedGameId, setSelectedGameId] = useState(() => localStorage.getItem("selected_game_id") || "hl1");
   const availableThemes = useMemo<ThemeId[]>(
     () => user?.availableThemes?.filter(theme => validThemes.has(theme)) ||
@@ -110,13 +117,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [effectiveTheme, preferredTheme, themeMode]);
 
   const saveThemePreferences = useCallback(async (mode: ThemeMode, preferred: ThemeId) => {
+    if (!validThemes.has(preferred)) throw new Error("Invalid theme ID");
+    const targetUserId = user?.id || null;
     const revision=++saveRevision.current;
     const previous={mode:themeMode,preferred:preferredTheme};
     setThemeMode(mode);setPreferredTheme(preferred);
     localStorage.setItem(CACHE_KEY,JSON.stringify({mode,preferred}));
-    try{await updateProfile({ themeMode: mode, preferredTheme: preferred })}
+    const persistence = persistenceQueue.current
+      .catch(() => undefined)
+      .then(() => {
+        if (!targetUserId || activeUserId.current !== targetUserId) throw new Error("Theme save cancelled after account change");
+        return updateProfile({ themeMode: mode, preferredTheme: preferred });
+      });
+    persistenceQueue.current = persistence;
+    try{await persistence}
     catch(error){if(saveRevision.current===revision){setThemeMode(previous.mode);setPreferredTheme(previous.preferred)}throw error}
-  }, [preferredTheme, themeMode, updateProfile]);
+  }, [preferredTheme, themeMode, updateProfile, user?.id]);
 
   const value = useMemo<ThemeContextValue>(() => ({
     themeMode,

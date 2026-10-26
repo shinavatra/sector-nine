@@ -1583,7 +1583,7 @@ app.get('/profile/customization', requireAuth, async (req: AuthRequest, res) => 
   try {
     const [userResult,frames,ranks,badges,medals,ownedMedals,ownedSpecialBadges,gameStats]=await Promise.all([
       pool.query('SELECT equipped_frame,owned_frames,active_profile_rank_id,active_special_badge_id,preferred_game_id FROM users WHERE id=$1',[req.userId]),
-      pool.query("SELECT id,name,description,rarity,metadata FROM frames WHERE is_active=true AND metadata->>'catalogType'='future_fl_shop' ORDER BY id"),
+      pool.query('SELECT id,name,description,style,rarity,metadata FROM frames WHERE is_active=true ORDER BY id'),
       pool.query('SELECT id,name,asset_url,min_rating,max_rating,auto_assign_enabled FROM profile_rank_definitions ORDER BY created_at,id'),
       pool.query('SELECT id,name,asset_url,allows_custom_title FROM profile_special_badges ORDER BY created_at,id'),
       pool.query('SELECT id,level,name,asset_url,rating_threshold,auto_award_enabled FROM competitive_medal_definitions ORDER BY level'),
@@ -1662,12 +1662,21 @@ app.post('/user/badge/equip', requireAuth, async (req: AuthRequest, res) => {
 app.post('/user/frame/equip', requireAuth, async (req: AuthRequest, res) => {
   try {
     const { frameId } = req.body
-    if(frameId===null){const result=await pool.query('UPDATE users SET equipped_frame=NULL WHERE id=$1 RETURNING *',[req.userId]);return res.json({profile:toProfile(result.rows[0])})}
+    if(frameId===null){const result=await pool.query('UPDATE users SET equipped_frame=NULL WHERE id=$1 RETURNING *',[req.userId]);if(!result.rows[0])return res.status(404).json({error:'User not found'});return res.json({profile:toProfile(result.rows[0])})}
     if(typeof frameId!=='string'||frameId.length>100)return res.status(400).json({error:'Invalid frame'})
-    const userResult = await pool.query('SELECT owned_frames FROM users WHERE id=$1', [req.userId])
-    const user = userResult.rows[0]
-    if (!user?.owned_frames?.includes(frameId)) return res.status(400).json({ error: 'Frame not owned' })
-    const result = await pool.query(`UPDATE users SET equipped_frame=$1 WHERE id=$2 RETURNING *`, [frameId, req.userId])
+    const result = await pool.query(
+      `UPDATE users SET equipped_frame=$1
+       WHERE id=$2
+         AND $1=ANY(COALESCE(owned_frames,'{}'::text[]))
+         AND EXISTS(SELECT 1 FROM frames WHERE frames.id=$1 AND frames.is_active=true)
+       RETURNING *`,
+      [frameId, req.userId],
+    )
+    if(!result.rows[0]){
+      const user=await pool.query('SELECT 1 FROM users WHERE id=$1',[req.userId])
+      if(!user.rows[0])return res.status(404).json({error:'User not found'})
+      return res.status(403).json({error:'Frame not owned or unavailable',code:'FRAME_NOT_OWNED'})
+    }
     return res.json({ profile: toProfile(result.rows[0]) })
   } catch (err: any) {
     return sendInternalError(res, err)

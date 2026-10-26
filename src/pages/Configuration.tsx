@@ -6,6 +6,7 @@ import { Label } from "../components/ui/label";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { ArrowLeft, Settings, Shield, Bell, Check, ChevronDown, User, Save, Loader2, Lock, Palette } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { ReactNode } from "react";
@@ -17,7 +18,7 @@ import { toast } from "sonner";
 import { ReportingSystem } from "../components/ReportingSystem";
 import { Friends } from "../components/Friends";
 import { FramedAvatar } from "../components/FramedAvatar";
-import { authAPI, storeAPI, userAPI } from "../utils/api";
+import { authAPI, userAPI } from "../utils/api";
 import { displayPlayerName } from "../utils/displayName";
 
 type ProfileFrame = {
@@ -25,6 +26,8 @@ type ProfileFrame = {
   name: string;
   style?: string | null;
   metadata?: { assetUrl?: string; thumbnailUrl?: string; purchasable?: boolean };
+  owned?: boolean;
+  active?: boolean;
 };
 
 interface ConfigurationProps {
@@ -52,6 +55,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   const [profileFrames, setProfileFrames] = useState<ProfileFrame[]>([]);
   const [framesLoading, setFramesLoading] = useState(true);
   const [equippingFrame, setEquippingFrame] = useState<string | null>(null);
+  const [frameDialogOpen, setFrameDialogOpen] = useState(false);
   const [saveNotice, setSaveNotice] = useState("");
   const [openSettingsGroup,setOpenSettingsGroup]=useState<string|null>(null);
   const setSettingsGroup=(id:string,open:boolean)=>setOpenSettingsGroup(current=>open?id:current===id?null:current);
@@ -97,7 +101,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
 
   useEffect(() => {
     let active = true;
-    storeAPI.getCatalog()
+    userAPI.getProfileCustomization()
       .then((response: any) => {
         if (active) setProfileFrames(Array.isArray(response?.frames) ? response.frames : []);
       })
@@ -115,6 +119,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
     try {
       const response: any = await userAPI.equipFrame(frameId);
       if (response?.profile) adoptProfile(response.profile);
+      setProfileFrames(frames => frames.map(frame => ({ ...frame, active: frameId === frame.id })));
       setSaveNotice('Profile frame saved');
       toast.success('Profile frame updated');
     } catch (error) {
@@ -125,6 +130,9 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
       setEquippingFrame(null);
     }
   };
+
+  const ownedFrames = profileFrames.filter(frame => frame.owned === true && user?.ownedFrames.includes(frame.id));
+  const equippedFrame = profileFrames.find(frame => frame.id === user?.equippedFrame);
 
   const handleSaveTheme = async () => {
     setIsSavingTheme(true);
@@ -511,37 +519,48 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
                 <div className="min-w-0 font-mono">
                   <p className="text-sm text-gray-300">Current frame</p>
                   <p className="truncate text-xs text-gray-500">
-                    {profileFrames.find(frame => frame.id === user?.equippedFrame)?.name || 'Basic frame'}
+                    {equippedFrame?.name || 'No frame equipped'}
                   </p>
                 </div>
               </div>
               {framesLoading ? (
                 <div className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="size-4 animate-spin" />Loading owned frames...</div>
               ) : (
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {profileFrames.filter(frame => frame.id.startsWith('retro_frame_')).map(frame => {
-                    const selected = user?.equippedFrame === frame.id;
-                    const owned = Boolean(user?.ownedFrames.includes(frame.id));
-                    return (
-                      <button
-                        key={frame.id}
-                        type="button"
-                        disabled={!owned || selected || equippingFrame !== null}
-                        onClick={() => handleEquipFrame(frame.id)}
-                        className={`min-w-0 rounded border p-3 text-left font-mono transition-colors ${selected ? 'border-orange-500 bg-orange-900/20 text-orange-300' : owned ? 'border-orange-900/20 bg-black/20 text-gray-400 hover:border-orange-700' : 'cursor-not-allowed border-gray-900 bg-black/30 text-gray-600'}`}
-                      >
-                        {frame.metadata?.thumbnailUrl?<img src={frame.metadata.thumbnailUrl} alt="" className="mb-2 size-16 object-contain" />:<span className={`mb-2 block size-8 rounded-full bg-black/60 ${frame.id !== 'fr_basic' ? frame.style || 'ring-2 ring-orange-400' : ''}`} />}
-                        <span className="block truncate text-sm font-bold">{frame.name}</span>
-                        <span className="mt-1 block text-xs">{selected ? 'EQUIPPED' : !owned ? 'LOCKED' : equippingFrame === frame.id ? 'EQUIPPING...' : 'PREVIEW / EQUIP'}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <Button type="button" variant="outline" onClick={() => setFrameDialogOpen(true)} className="border-orange-900/40 font-mono text-orange-300">
+                  CHANGE FRAME
+                </Button>
               )}
-              {user?.equippedFrame&&<Button variant="outline" disabled={equippingFrame!==null} onClick={()=>handleEquipFrame(null)} className="border-red-900/40 font-mono text-red-300">REMOVE ACTIVE FRAME</Button>}
-              {!framesLoading && profileFrames.every(frame => !user?.ownedFrames.includes(frame.id)) && (
+              {!framesLoading && ownedFrames.length === 0 && (
                 <p className="text-sm text-gray-500">No available owned frames.</p>
               )}
+              <Dialog open={frameDialogOpen} onOpenChange={setFrameDialogOpen}>
+                <DialogContent className="max-h-[88vh] overflow-hidden border-orange-900/40 bg-neutral-950 p-4 sm:max-w-3xl sm:p-6">
+                  <DialogHeader>
+                    <DialogTitle className="font-mono text-orange-300">CHANGE PROFILE FRAME</DialogTitle>
+                    <DialogDescription>Choose from frames you own. Locked collection items are not shown here.</DialogDescription>
+                  </DialogHeader>
+                  <div className="max-h-[58vh] overflow-y-auto pr-1">
+                    {ownedFrames.length === 0 ? (
+                      <div className="rounded border border-dashed border-orange-900/30 p-8 text-center font-mono text-sm text-gray-500">You do not own any profile frames yet.</div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {ownedFrames.map(frame => {
+                          const selected = user?.equippedFrame === frame.id;
+                          return <button key={frame.id} type="button" disabled={selected || equippingFrame !== null} onClick={() => handleEquipFrame(frame.id)} className={`min-w-0 rounded border p-3 text-left font-mono transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 ${selected ? 'border-orange-500 bg-orange-900/20 text-orange-300' : 'border-orange-900/20 bg-black/30 text-gray-300 hover:border-orange-700'}`}>
+                            {frame.metadata?.thumbnailUrl ? <img src={frame.metadata.thumbnailUrl} alt={`${frame.name} preview`} className="mx-auto mb-2 size-24 object-contain" /> : <span className={`mx-auto mb-2 block size-16 rounded-full bg-black/60 ${frame.style || 'ring-2 ring-orange-400'}`} />}
+                            <span className="block truncate text-sm font-bold">{frame.name}</span>
+                            <span className="mt-1 block text-xs text-orange-300">{selected ? 'EQUIPPED' : equippingFrame === frame.id ? 'EQUIPPING...' : 'EQUIP'}</span>
+                          </button>;
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <DialogFooter className="border-t border-orange-900/20 pt-4">
+                    <Button type="button" variant="outline" disabled={!user?.equippedFrame || equippingFrame !== null} onClick={() => handleEquipFrame(null)} className="border-red-900/40 font-mono text-red-300">REMOVE FRAME</Button>
+                    <DialogClose asChild><Button type="button" variant="outline" className="font-mono">CLOSE</Button></DialogClose>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </CardContent>
           </Card>
           </SettingsGroup>
