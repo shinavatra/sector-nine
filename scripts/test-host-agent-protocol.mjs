@@ -4,6 +4,7 @@ import {createRequire} from 'node:module'
 
 const require=createRequire(import.meta.url)
 const {parseHostAgentReport,HostAgentProtocolError}=require('../dist/server/hostAgentProtocol.js')
+const {gameAdapter,hostableAdapter}=require('../dist/server/gameAdapters.js')
 const source=fs.readFileSync(new URL('../src/server/index.ts',import.meta.url),'utf8')
 const route=source.slice(source.indexOf("app.post('/game-server/:id/heartbeat'"),source.indexOf("app.get('/game-servers/status'"))
 const migration=fs.readFileSync(new URL('../src/server/043_host_agent_report_receipts.sql',import.meta.url),'utf8')
@@ -26,6 +27,8 @@ assert.match(source,/timingSafeHashMatches\(plain,server\.server_token_hash\)/,'
 assert.match(route,/validateTrustedMatchCompletion\(match,report\)/,'completion validates assignment identities, map, mode rules, and derives the winner')
 assert.match(route,/NO_CURRENT_MATCH/,'reports requiring a match reject no current match')
 assert.match(route,/STALE_MATCH_ASSOCIATION/,'stale server-to-match relationships are rejected')
+assert.match(route,/ASSIGNMENT_PROFILE_MISMATCH/,'callbacks reject mismatched match, server, and profile game contracts')
+assert.match(route,/UNSUPPORTED_ASSIGNED_GAME/,'callbacks reject assignments without a trusted adapter')
 assert.match(route,/match\.status!==['"]in_progress['"]/,'completion requires an in-progress match')
 assert.match(route,/game_server_agent_reports WHERE server_id=\$1 AND report_id=\$2/,'completion retries read the receipt before requiring a current match')
 assert.match(route,/receipt\.payload_hash!==payloadHash/,'reused report IDs with changed data are rejected')
@@ -34,5 +37,14 @@ assert.ok(route.indexOf('validateTrustedMatchCompletion(match,report)')<route.in
 assert.match(route,/TrustedMatchResultError/,'semantic validation failures are handled as rejected reports and roll back the transaction')
 assert.match(migration,/PRIMARY KEY \(server_id, report_id\)/,'receipt identity is unique per server')
 for(const line of route.split(/\r?\n/).filter(line=>line.includes('logEvent(')))assert.doesNotMatch(line,/\{[^}]*\b(?:token|authorization|tokenHash|server_token_hash)\s*[:,}]/,'structured logs never include token values')
+
+assert.equal(gameAdapter('hl1')?.engine,'goldsrc')
+assert.equal(gameAdapter('cs16')?.implementation,'foundation')
+assert.equal(gameAdapter('cod4')?.implementation,'foundation')
+assert.equal(gameAdapter('l4d2')?.implementation,'foundation')
+assert.equal(hostableAdapter('hl1','classic-deathmatch'),true)
+assert.equal(hostableAdapter('cs16','competitive-1v1'),false)
+assert.equal(hostableAdapter('cod4','promod-1v1'),false)
+assert.equal(hostableAdapter('l4d2','survival-duel'),false)
 
 console.log('Host Agent protocol regression checks passed.')

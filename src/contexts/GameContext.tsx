@@ -66,6 +66,20 @@ export function GameProvider({ children }: { children: ReactNode }) {
     return "Verified ownership or game access is required.";
   }, [enabledGameIds, user?.gameBanned, user?.steamId, user?.vacBanned, verifiedGames]);
 
+  useEffect(() => {
+    const synchronizeSelectedGame = () => {
+      const stored = localStorage.getItem("selected_game_id") as GameId | null;
+      if (!stored || !supportedGames.some(game => game.id === stored) || lockedReason(stored)) return;
+      setSelectedGameId(stored);
+    };
+    window.addEventListener("storage", synchronizeSelectedGame);
+    window.addEventListener("sector-nine:selected-game", synchronizeSelectedGame);
+    return () => {
+      window.removeEventListener("storage", synchronizeSelectedGame);
+      window.removeEventListener("sector-nine:selected-game", synchronizeSelectedGame);
+    };
+  }, [lockedReason]);
+
   const setSelectedGame = useCallback(async (gameId: GameId) => {
     if(!enabledGameIds.includes(gameId)){
       const message="This game is not enabled on the platform.";

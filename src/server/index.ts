@@ -25,6 +25,7 @@ import { hashSecret,HostPairingError,issueHostCredential,normalizePairingCode,ti
 import { TrustedMatchResultError, validateTrustedMatchCompletion, validateTrustedMatchContext } from './trustedMatchResult'
 import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_DAYS, RefreshSessionError, issueSession, revokeSessionByToken, revokeUserSessions, rotateSession } from './secureSessions'
 import { assignGroupsToTeams, groupsConflict, type QueueGroup, type TeamAssignment } from './teamMatchmaking'
+import { gameAdapter,hostableAdapter } from './gameAdapters'
 
 dotenv.config()
 
@@ -616,6 +617,14 @@ const authenticateHost=async(req:Request)=>{
   return host
 }
 const serverAgentCredentialValid=(server:any,plain:string)=>Boolean(server&&((server.server_token_hash&&timingSafeHashMatches(plain,server.server_token_hash))||(server.host_credential_hash&&server.host_enabled&&!server.host_credential_revoked_at&&timingSafeHashMatches(plain,server.host_credential_hash))))
+const assignmentIdentifier=(row:any)=>crypto.createHash('sha256').update([row.match_id,row.server_id,row.host_profile_id,row.game_id,row.game_mode].join(':')).digest('hex')
+const assignmentEnvelope=(row:any)=>{
+  const adapter=gameAdapter(row.game_id)
+  if(!adapter||!hostableAdapter(row.game_id,row.game_mode))return null
+  const assignmentId=assignmentIdentifier(row)
+  const authContext=jwt.sign({purpose:'host_assignment',assignmentId,matchId:row.match_id,serverId:row.server_id,serverProfileId:row.host_profile_id,gameId:row.game_id,modeId:row.game_mode},JWT_SECRET,{expiresIn:'30m'})
+  return{assignmentId,assignment_id:assignmentId,matchId:row.match_id,match_id:row.match_id,gameId:row.game_id,game_id:row.game_id,modeId:row.game_mode,mode_id:row.game_mode,gameMode:row.game_mode,serverProfileId:row.host_profile_id,server_profile_id:row.host_profile_id,authContext,trusted_auth_context:authContext,adapter:{engine:adapter.engine,contractVersion:2}}
+}
 
 app.post('/host-agent/pair',async(req,res)=>{
   const code=normalizePairingCode(req.body?.pairingCode),agentVersion=typeof req.body?.agentVersion==='string'?req.body.agentVersion.trim().slice(0,100):null
@@ -657,8 +666,8 @@ app.post('/host-agent/heartbeat',async(req,res)=>{
 
 app.get('/host-agent/assignments',async(req,res)=>{
   const host=await authenticateHost(req);if(!host)return res.status(401).json({error:'Invalid or revoked host credential',code:'HOST_AUTH_INVALID'})
-  const rows=(await pool.query(`SELECT s.id server_id,s.host_profile_id,s.region,s.current_match_id,m.id match_id,m.game_id,m.game_mode,m.selected_map,m.player1_id,m.player2_id,p1.steam_id player1_steam_id,p2.steam_id player2_steam_id FROM game_servers s JOIN host_server_profiles hp ON hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id AND hp.game_server_id=s.id LEFT JOIN matches m ON m.id=s.current_match_id AND m.server_id=s.id LEFT JOIN users p1 ON p1.id=m.player1_id LEFT JOIN users p2 ON p2.id=m.player2_id WHERE s.host_id=$1 AND hp.approval_status='approved' AND hp.matchmaking_enabled AND hp.removed_at IS NULL ORDER BY s.created_at`,[host.id])).rows,assignments:any[]=[]
-  for(const row of rows){if(!row.match_id){assignments.push({serverId:row.server_id,profileId:row.host_profile_id,assignment:null});continue}const rules=trustedHl1Rules(row.game_mode),hldsMap=hl1EngineMapName(row.selected_map);if(row.game_id!=='hl1'||!rules||!hldsMap||!row.player1_steam_id||!row.player2_steam_id)continue;assignments.push({serverId:row.server_id,profileId:row.host_profile_id,assignment:{matchId:row.match_id,gameId:row.game_id,gameMode:row.game_mode,region:row.region,selectedMap:row.selected_map,hldsMap,fragLimit:rules.fragLimit,timeLimitSeconds:rules.timeLimitSeconds,disconnectPolicy:rules.disconnectPolicy,player1:{userId:row.player1_id,steamId:row.player1_steam_id},player2:{userId:row.player2_id,steamId:row.player2_steam_id}}})}
+  const rows=(await pool.query(`SELECT s.id server_id,s.host_profile_id,s.region,s.current_match_id,s.game_id server_game_id,s.game_mode server_game_mode,hp.game_id profile_game_id,hp.game_mode profile_game_mode,m.id match_id,m.game_id,m.game_mode,m.selected_map,m.player1_id,m.player2_id,p1.steam_id player1_steam_id,p2.steam_id player2_steam_id FROM game_servers s JOIN host_server_profiles hp ON hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id AND hp.game_server_id=s.id LEFT JOIN matches m ON m.id=s.current_match_id AND m.server_id=s.id LEFT JOIN users p1 ON p1.id=m.player1_id LEFT JOIN users p2 ON p2.id=m.player2_id WHERE s.host_id=$1 AND hp.approval_status='approved' AND hp.matchmaking_enabled AND hp.removed_at IS NULL ORDER BY s.created_at`,[host.id])).rows,assignments:any[]=[]
+  for(const row of rows){if(!row.match_id){assignments.push({serverId:row.server_id,profileId:row.host_profile_id,assignment:null});continue}if(row.game_id!==row.server_game_id||row.game_mode!==row.server_game_mode||row.game_id!==row.profile_game_id||row.game_mode!==row.profile_game_mode)continue;const envelope=assignmentEnvelope(row),rules=trustedHl1Rules(row.game_mode),hldsMap=hl1EngineMapName(row.selected_map);if(!envelope||!rules||!hldsMap||!row.player1_steam_id||!row.player2_steam_id)continue;assignments.push({serverId:row.server_id,profileId:row.host_profile_id,assignment:{...envelope,region:row.region,selectedMap:row.selected_map,hldsMap,fragLimit:rules.fragLimit,timeLimitSeconds:rules.timeLimitSeconds,disconnectPolicy:rules.disconnectPolicy,player1:{userId:row.player1_id,steamId:row.player1_steam_id},player2:{userId:row.player2_id,steamId:row.player2_steam_id}}})}
   return res.json({host:{id:host.id,name:host.name,region:host.region},assignments})
 })
 
@@ -671,7 +680,12 @@ app.post('/game-server/:id/heartbeat',async(req,res)=>{
   const db=await pool.connect()
   try{
     await db.query('BEGIN')
-    const server=(await db.query('SELECT s.id,s.current_match_id,s.server_token_hash,h.credential_hash host_credential_hash,h.enabled host_enabled,h.credential_revoked_at host_credential_revoked_at FROM game_servers s LEFT JOIN hosts h ON h.id=s.host_id WHERE s.id=$1 FOR UPDATE OF s',[req.params.id])).rows[0]
+    const server=(await db.query(`SELECT s.id,s.current_match_id,s.server_token_hash,s.game_id,s.game_mode,s.host_profile_id,
+      hp.game_id profile_game_id,hp.game_mode profile_game_mode,hp.approval_status profile_approval,hp.matchmaking_enabled profile_enabled,
+      h.credential_hash host_credential_hash,h.enabled host_enabled,h.credential_revoked_at host_credential_revoked_at
+      FROM game_servers s LEFT JOIN hosts h ON h.id=s.host_id
+      LEFT JOIN host_server_profiles hp ON hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id AND hp.game_server_id=s.id
+      WHERE s.id=$1 FOR UPDATE OF s`,[req.params.id])).rows[0]
     if(!serverAgentCredentialValid(server,token)){await db.query('ROLLBACK');logEvent('warn','host_agent_auth_rejected',{serverId:req.params.id,reason:server?'credential_mismatch':'unknown_server'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
     const payloadHash=crypto.createHash('sha256').update(JSON.stringify(report)).digest('hex')
     if(report.type==='match_completed'){
@@ -689,6 +703,8 @@ app.post('/game-server/:id/heartbeat',async(req,res)=>{
         FROM matches m JOIN users p1 ON p1.id=m.player1_id JOIN users p2 ON p2.id=m.player2_id
         WHERE m.id=$1 FOR UPDATE OF m`,[server.current_match_id])).rows[0]
       if(!match||match.server_id!==server.id)throw new HostAgentProtocolError('STALE_MATCH_ASSOCIATION','Server current match is not authoritatively assigned to this server',409)
+      if(match.game_id!==server.game_id||match.game_mode!==server.game_mode||match.game_id!==server.profile_game_id||match.game_mode!==server.profile_game_mode||server.profile_approval!=='approved'||!server.profile_enabled)throw new HostAgentProtocolError('ASSIGNMENT_PROFILE_MISMATCH','Reported match, server and profile are not compatible',409)
+      if(!hostableAdapter(match.game_id,match.game_mode))throw new HostAgentProtocolError('UNSUPPORTED_ASSIGNED_GAME','No trusted game adapter is implemented for this assignment',409)
     }
     if(report.type==='match_running'&&!['pending','in_progress'].includes(match.status))throw new HostAgentProtocolError('UNSUPPORTED_MATCH_TRANSITION',`Cannot report running from ${match.status}`,409)
     if(report.type==='match_completed'&&match.status!=='in_progress')throw new HostAgentProtocolError('UNSUPPORTED_MATCH_TRANSITION',`Cannot report completed from ${match.status}`,409)
@@ -718,13 +734,15 @@ app.get('/game-server/:id/assignment',async(req,res)=>{
   if(!token)return res.status(401).json({error:'Server agent token required',code:'INVALID_SERVER_TOKEN'})
   try{
     const result=await pool.query(
-      `SELECT s.id server_id,s.region,s.current_match_id,s.server_token_hash,
+      `SELECT s.id server_id,s.region,s.current_match_id,s.server_token_hash,s.host_profile_id,s.game_id server_game_id,s.game_mode server_game_mode,
               h.credential_hash host_credential_hash,h.enabled host_enabled,
               h.credential_revoked_at host_credential_revoked_at,
+              hp.game_id profile_game_id,hp.game_mode profile_game_mode,
               m.id match_id,m.game_id,m.game_mode,m.selected_map,m.status,
               m.player1_id,m.player2_id,p1.steam_id player1_steam_id,p2.steam_id player2_steam_id
        FROM game_servers s
        LEFT JOIN hosts h ON h.id=s.host_id
+       LEFT JOIN host_server_profiles hp ON hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id AND hp.game_server_id=s.id
        LEFT JOIN matches m ON m.id=s.current_match_id AND m.server_id=s.id
        LEFT JOIN users p1 ON p1.id=m.player1_id
        LEFT JOIN users p2 ON p2.id=m.player2_id
@@ -732,13 +750,15 @@ app.get('/game-server/:id/assignment',async(req,res)=>{
     const row=result.rows[0]
     if(!serverAgentCredentialValid(row,token))return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})
     if(!row.match_id)return res.status(204).end()
-    if(row.game_id!=='hl1')return res.status(409).json({error:'Assigned game is not supported by the HL1 telemetry runtime',code:'UNSUPPORTED_ASSIGNED_GAME'})
+    if(row.game_id!==row.server_game_id||row.game_mode!==row.server_game_mode||row.game_id!==row.profile_game_id||row.game_mode!==row.profile_game_mode)return res.status(409).json({error:'Match, server and profile compatibility mismatch',code:'ASSIGNMENT_PROFILE_MISMATCH'})
+    const envelope=assignmentEnvelope(row)
+    if(!envelope)return res.status(409).json({error:'Assigned game adapter is not implemented for trusted hosting',code:'UNSUPPORTED_ASSIGNED_GAME'})
     const rules=trustedHl1Rules(row.game_mode)
     if(!rules)return res.status(409).json({error:'Assigned HL1 mode has no trusted rules',code:'UNSUPPORTED_ASSIGNED_MODE'})
     if(!row.selected_map||!row.player1_steam_id||!row.player2_steam_id)return res.status(409).json({error:'Assigned match is missing map or Steam identity data',code:'INCOMPLETE_MATCH_ASSIGNMENT'})
     const hldsMap=hl1EngineMapName(row.selected_map)
     if(!hldsMap)return res.status(409).json({error:'Assigned map has no trusted GoldSrc mapping',code:'UNSUPPORTED_ASSIGNED_MAP'})
-    return res.json({assignment:{matchId:row.match_id,gameId:row.game_id,gameMode:row.game_mode,region:row.region,selectedMap:row.selected_map,hldsMap,fragLimit:rules.fragLimit,timeLimitSeconds:rules.timeLimitSeconds,disconnectPolicy:rules.disconnectPolicy,player1:{userId:row.player1_id,steamId:row.player1_steam_id},player2:{userId:row.player2_id,steamId:row.player2_steam_id}}})
+    return res.json({assignment:{...envelope,region:row.region,selectedMap:row.selected_map,hldsMap,fragLimit:rules.fragLimit,timeLimitSeconds:rules.timeLimitSeconds,disconnectPolicy:rules.disconnectPolicy,player1:{userId:row.player1_id,steamId:row.player1_steam_id},player2:{userId:row.player2_id,steamId:row.player2_steam_id}}})
   }catch(err:any){return sendDatabaseError(res,err)}
 })
 
@@ -751,7 +771,12 @@ app.post('/game-server/:id/events',async(req,res)=>{
   const db=await pool.connect()
   try{
     await db.query('BEGIN')
-    const server=(await db.query('SELECT s.id,s.current_match_id,s.server_token_hash,h.credential_hash host_credential_hash,h.enabled host_enabled,h.credential_revoked_at host_credential_revoked_at FROM game_servers s LEFT JOIN hosts h ON h.id=s.host_id WHERE s.id=$1 FOR UPDATE OF s',[req.params.id])).rows[0]
+    const server=(await db.query(`SELECT s.id,s.current_match_id,s.server_token_hash,s.game_id,s.game_mode,s.host_profile_id,
+      hp.game_id profile_game_id,hp.game_mode profile_game_mode,hp.approval_status profile_approval,hp.matchmaking_enabled profile_enabled,
+      h.credential_hash host_credential_hash,h.enabled host_enabled,h.credential_revoked_at host_credential_revoked_at
+      FROM game_servers s LEFT JOIN hosts h ON h.id=s.host_id
+      LEFT JOIN host_server_profiles hp ON hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id AND hp.game_server_id=s.id
+      WHERE s.id=$1 FOR UPDATE OF s`,[req.params.id])).rows[0]
     if(!serverAgentCredentialValid(server,token)){await db.query('ROLLBACK');logEvent('warn','host_agent_event_auth_rejected',{serverId:req.params.id,reason:server?'credential_mismatch':'unknown_server'});return res.status(401).json({error:'Invalid server agent token',code:'INVALID_SERVER_TOKEN'})}
     const existing=(await db.query('SELECT match_id,source_payload_hash FROM match_events WHERE source_server_id=$1 AND source_event_id=$2',[server.id,event.eventId])).rows[0]
     if(existing){
@@ -759,8 +784,10 @@ app.post('/game-server/:id/events',async(req,res)=>{
       await db.query('COMMIT');logEvent('info','host_agent_event_replayed',{serverId:server.id,matchId:existing.match_id,eventId:event.eventId,sourceSequence:event.sequence});return res.json({ok:true,matchId:existing.match_id,eventId:event.eventId,idempotent:true})
     }
     if(!server.current_match_id)throw new HostAgentEventError('NO_CURRENT_MATCH','Server has no current assigned match',409)
-    const match=(await db.query('SELECT id,server_id,status,player1_id,player2_id FROM matches WHERE id=$1 FOR UPDATE',[server.current_match_id])).rows[0]
+    const match=(await db.query('SELECT id,server_id,status,game_id,game_mode,player1_id,player2_id FROM matches WHERE id=$1 FOR UPDATE',[server.current_match_id])).rows[0]
     if(!match||match.server_id!==server.id)throw new HostAgentEventError('STALE_MATCH_ASSOCIATION','Current match is not authoritatively assigned to this server',409)
+    if(match.game_id!==server.game_id||match.game_mode!==server.game_mode||match.game_id!==server.profile_game_id||match.game_mode!==server.profile_game_mode||server.profile_approval!=='approved'||!server.profile_enabled)throw new HostAgentEventError('ASSIGNMENT_PROFILE_MISMATCH','Event match, server and profile are not compatible',409)
+    if(!hostableAdapter(match.game_id,match.game_mode))throw new HostAgentEventError('UNSUPPORTED_ASSIGNED_GAME','No trusted game adapter is implemented for this event',409)
     if(match.status==='completed')throw new HostAgentEventError('MATCH_ALREADY_COMPLETED','Completed matches cannot receive gameplay events',409)
     if(match.status!=='in_progress')throw new HostAgentEventError('MATCH_NOT_IN_PROGRESS','Only an in-progress match can receive gameplay events',409)
     const participants=[match.player1_id,match.player2_id]
@@ -1331,6 +1358,8 @@ app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
         `SELECT 1 FROM queue_entries WHERE user_id=$1
          UNION ALL
          SELECT 1 FROM matches WHERE status IN ('pending','in_progress') AND (player1_id=$1 OR player2_id=$1)
+         UNION ALL
+         SELECT 1 FROM party_members WHERE user_id=$1
          LIMIT 1`,
         [req.userId],
       )
@@ -1980,6 +2009,7 @@ const getMatchmakingState=async(db:any,userId:string)=>{
 const assignMatchmakingServer=async(db:any,matchId:string)=>{
   const match=(await db.query("SELECT id,game_id,game_mode,server_id,status,matchmaking_region,selected_map,total_players FROM matches WHERE id=$1 FOR UPDATE",[matchId])).rows[0]
   if(!match||match.status!=='pending'||match.server_id||!match.selected_map)return
+  if(!hostableAdapter(match.game_id,match.game_mode))throw new Error('No trusted host adapter is available for this game and mode.')
   if(!isSupportedRegionId(match.matchmaking_region))throw new Error('Match has no supported matchmaking region.')
   const accepted=Number((await db.query("SELECT COUNT(*)::int count FROM match_acceptances WHERE match_id=$1 AND status='accepted'",[matchId])).rows[0].count)
   if(accepted!==Number(match.total_players||2))return
