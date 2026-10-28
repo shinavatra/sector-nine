@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+
+const read=file=>fs.readFileSync(file,'utf8')
+const hub=read('src/pages/Hub.tsx')
+const profile=read('src/pages/Profile.tsx')
+const stats=read('src/pages/Stats.tsx')
+const leaderboard=read('src/components/Leaderboard.tsx')
+const store=read('src/pages/Store.tsx')
+const header=read('src/components/Header.tsx')
+const server=read('src/server/index.ts')
+
+assert.match(hub,/statsAPI\.getUserStats\(selectedGame\.id\)/)
+assert.match(hub,/statsAPI\.getMatchHistory\(selectedGame\.id\)/)
+assert.match(hub,/partyAPI\.get\(\)/)
+assert.match(hub,/onlineFriends\.length/)
+assert.match(hub,/FL Points/)
+assert.doesNotMatch(hub,/HLTV FEED|CONNECTING TO FEED|1000 bonus points/)
+assert.match(profile,/statsAPI\.getUserStats\(selectedGame\.id\)/)
+assert.match(profile,/Competitive rank/)
+assert.match(stats,/<Leaderboard \/>/)
+assert.match(server,/gs\.placement_matches_played,gs\.placement_complete/)
+assert.match(server,/row\.placement_complete\?await pool\.query/)
+assert.match(server,/rankingMetric:scope===['"]seasonal['"]\?['"]points['"]:['"]rating['"]/)
+assert.match(server,/SELECT DISTINCT game_id FROM user_game_stats WHERE placement_complete=true/)
+assert.match(leaderboard,/NO COMPETITIVE RANKING DATA AVAILABLE/)
+assert.match(store,/storeAPI\.getPurchaseHistory\(\)/)
+assert.match(store,/FL POINTS TRANSACTIONS/)
+for(const page of ['matches','store','vip-subscription','achievements'])assert.match(header,new RegExp(`id: ?['"]${page}['"]`))
+
+console.log('user site completion checks: PASS (20 assertions)')

@@ -19,7 +19,7 @@ const alerts: any[] = [];
 
 const normalizeNotifications=(items:any[]):any[]=>Array.from(new Map<string,any>((Array.isArray(items)?items:[]).filter(item=>item&&typeof item==='object'&&item.id!==undefined&&item.id!==null).map((item:any)=>{
   const createdAt=typeof item.created_at==='string'||item.created_at instanceof Date?new Date(item.created_at):null
-  const normalized={...item,id:String(item.id),title:typeof item.title==='string'&&item.title.trim()?item.title:'Notification',message:typeof item.message==='string'?item.message:'',unread:item.read!==true,read:item.read===true,time:createdAt&&!Number.isNaN(createdAt.getTime())?createdAt.toLocaleString():'Date unavailable',type:item.type==='friend_request'?'friend':item.type==='friend_accepted'?'friendAccepted':typeof item.type==='string'?item.type:'system'}
+  const normalized={...item,id:String(item.id),title:typeof item.title==='string'&&item.title.trim()?item.title:'Notification',message:typeof item.message==='string'?item.message:'',unread:item.read!==true,read:item.read===true,time:createdAt&&!Number.isNaN(createdAt.getTime())?createdAt.toLocaleString():'Date unavailable',type:item.type==='friend_request'?'friend':item.type==='friend_accepted'?'friendAccepted':typeof item.type==='string'?item.type:'system',action:typeof item.action_path==='string'?'OPEN':item.action}
   return[String(item.id),normalized]
 })).values())
 
@@ -34,6 +34,8 @@ export function Notifications({ onNavigate }: NotificationsProps) {
   const [notificationsError,setNotificationsError]=useState('');
   const [notificationsErrorCode,setNotificationsErrorCode]=useState('');
   const [notificationView,setNotificationView]=useState<'unread'|'all'>('unread');
+  const [page,setPage]=useState(1);
+  const [pagination,setPagination]=useState({page:1,pageSize:20,total:0,totalPages:0});
   const notificationRequest=useRef(0);
   const [markingAllRead,setMarkingAllRead]=useState(false);
   const [clearingAll,setClearingAll]=useState(false);
@@ -59,7 +61,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
     });
   }, [user]);
 
-  const loadNotifications=useCallback(async(showLoading=false)=>{if(!user){setNotificationsLoading(false);setNotificationsErrorCode('AUTH_REQUIRED');setNotificationsError('Sign in to load notifications.');return}const request=++notificationRequest.current;if(showLoading)setNotificationsLoading(true);try{const data:any=await notificationsAPI.getNotifications();if(request!==notificationRequest.current)return;setNotifications(normalizeNotifications(data.notifications||[]));setNotificationsErrorCode('');setNotificationsError('')}catch(error:any){if(request===notificationRequest.current){setNotificationsErrorCode(typeof error?.code==='string'?error.code:'NOTIFICATIONS_LOAD_FAILED');setNotificationsError(error?.message||'Unable to load notifications')}}finally{if(request===notificationRequest.current)setNotificationsLoading(false)}},[user?.id])
+  const loadNotifications=useCallback(async(showLoading=false)=>{if(!user){setNotificationsLoading(false);setNotificationsErrorCode('AUTH_REQUIRED');setNotificationsError('Sign in to load notifications.');return}const request=++notificationRequest.current;if(showLoading)setNotificationsLoading(true);try{const data:any=await notificationsAPI.getNotifications({page,pageSize:20,filter:notificationView});if(request!==notificationRequest.current)return;setNotifications(normalizeNotifications(data.notifications||[]));setPagination(data.pagination||{page,pageSize:20,total:0,totalPages:0});setNotificationsErrorCode('');setNotificationsError('')}catch(error:any){if(request===notificationRequest.current){setNotificationsErrorCode(typeof error?.code==='string'?error.code:'NOTIFICATIONS_LOAD_FAILED');setNotificationsError(error?.message||'Unable to load notifications')}}finally{if(request===notificationRequest.current)setNotificationsLoading(false)}},[notificationView,page,user?.id])
   useEffect(()=>{if(!user)return;let active=true;void loadNotifications(true);const poll=()=>{if(active)void loadNotifications()};const unsubscribe=subscribeToNotificationChanges(unreadCount=>{if(unreadCount===0)setNotifications(previous=>previous.map(notification=>({...notification,read:true,unread:false})));poll()});const interval=window.setInterval(poll,7000);return()=>{active=false;unsubscribe();window.clearInterval(interval);notificationRequest.current+=1}},[user?.id,loadNotifications]);
 
   const handleMarkAllRead=async()=>{
@@ -103,7 +105,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
   };
 
   const handleJoinMatch = async (id: string) => {
-    const notification=notifications.find(item=>item.id===id);try{await handleMarkRead(id)}catch(error:any){return void toast.error('Unable to open notification',{description:error.message})}if(notification?.type==='friend'){sessionStorage.setItem('open_friend_requests','1');onNavigate?.('configuration');return}
+    const notification=notifications.find(item=>item.id===id);try{await handleMarkRead(id)}catch(error:any){return void toast.error('Unable to open notification',{description:error.message})}if(notification?.type==='friend'){sessionStorage.setItem('open_friend_requests','1');onNavigate?.('configuration');return}if(notification?.action_path==='/matchmaking')return void onNavigate?.('lobby');if(notification?.action_path==='/store')return void onNavigate?.('store');if(notification?.action_path==='/vip')return void onNavigate?.('vip-subscription');onNavigate?.('notifications')
   };
 
   const handleViewProfile=async(notification:any)=>{try{if(notification.unread)await handleMarkRead(notification.id);if(notification.related_user_id)onNavigate?.(`profile/${encodeURIComponent(notification.related_user_id)}`);else toast.error('Player profile link is missing')}catch(error:any){toast.error('Unable to open player profile',{description:error.message})}}
@@ -115,6 +117,10 @@ export function Notifications({ onNavigate }: NotificationsProps) {
       await updateProfile({ notificationPreferences: {
         matchFound: preferences.matchNotifications,
         friendRequests: preferences.friendRequests,
+        partyInvites: user.notificationPreferences.partyInvites,
+        vipUpdates: user.notificationPreferences.vipUpdates,
+        shopPurchases: user.notificationPreferences.shopPurchases,
+        walletTransactions: user.notificationPreferences.walletTransactions,
         tournaments: preferences.tournamentUpdates,
         messages: user.notificationPreferences.messages,
         social: preferences.achievementAlerts,
@@ -145,6 +151,8 @@ export function Notifications({ onNavigate }: NotificationsProps) {
       case 'system': return <Settings className="w-4 h-4" />;
       case 'league': return <Trophy className="w-4 h-4" />;
       case 'invite': return <Users className="w-4 h-4" />;
+      case 'party_invite': return <Users className="w-4 h-4" />;
+      case 'shop': case 'wallet': case 'vip': return <Bell className="w-4 h-4" />;
       default: return <Bell className="w-4 h-4" />;
     }
   };
@@ -183,7 +191,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
   };
 
   const unreadCount = notifications.filter(n => n.unread).length;
-  const displayedNotifications=useMemo(()=>notificationView==='unread'?notifications.filter(notification=>notification.unread):notifications,[notificationView,notifications])
+  const displayedNotifications=useMemo(()=>notifications,[notifications])
 
   return (
     <div className="page-container page-container-form container mx-auto px-4 py-8">
@@ -237,7 +245,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
         </TabsList>
 
         <TabsContent value="notifications" className="space-y-4">
-          <Tabs value={notificationView} onValueChange={value=>setNotificationView(value as 'unread'|'all')}>
+          <Tabs value={notificationView} onValueChange={value=>{setPage(1);setNotificationView(value as 'unread'|'all')}}>
             <TabsList className="grid w-full grid-cols-2 border border-orange-900/20 bg-black/40">
               <TabsTrigger value="unread" className="font-mono data-[state=active]:bg-orange-900/20 data-[state=active]:text-orange-400">UNREAD ({unreadCount})</TabsTrigger>
               <TabsTrigger value="all" className="font-mono data-[state=active]:bg-orange-900/20 data-[state=active]:text-orange-400">ALL ({notifications.length})</TabsTrigger>
@@ -333,6 +341,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
               </CardContent>
             </Card>
           ))}
+          {!notificationsLoading&&!notificationsError&&pagination.totalPages>1&&<div className="flex items-center justify-center gap-3"><Button variant="outline" disabled={page<=1} onClick={()=>setPage(value=>Math.max(1,value-1))}>PREVIOUS</Button><span className="font-mono text-xs text-gray-400">PAGE {pagination.page} / {pagination.totalPages}</span><Button variant="outline" disabled={page>=pagination.totalPages} onClick={()=>setPage(value=>value+1)}>NEXT</Button></div>}
         </TabsContent>
 
         <TabsContent value="alerts" className="space-y-4">

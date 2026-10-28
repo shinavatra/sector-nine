@@ -46,7 +46,7 @@ interface LeaderboardResponse {
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
   filters: { games: string[]; countries: string[]; seasons: Season[] };
   season: Season | null;
-  rankingMetric: "experience" | "wins" | "points";
+  rankingMetric: "rating" | "points";
 }
 
 const selectClass = "border-orange-900/30 bg-black/80 text-gray-200 font-mono";
@@ -65,7 +65,7 @@ export function Leaderboard() {
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({ page: 1, pageSize: 20, total: 0, totalPages: 0 });
   const [filters, setFilters] = useState<LeaderboardResponse["filters"]>({ games: ["all"], countries: [], seasons: [] });
-  const [metric, setMetric] = useState<LeaderboardResponse["rankingMetric"]>("experience");
+  const [metric, setMetric] = useState<LeaderboardResponse["rankingMetric"]>("rating");
   const [profileId, setProfileId] = useState<string | null>(null);
   const [profile, setProfile] = useState<any>(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -194,7 +194,7 @@ export function Leaderboard() {
           ) : error ? (
             <div className="py-10 text-center"><p className="font-mono text-red-400">{error}</p></div>
           ) : players.length === 0 ? (
-            <div className="py-10 text-center"><p className="font-mono text-gray-400">NO RANKING DATA AVAILABLE</p><p className="mt-2 text-sm font-mono text-gray-500">Try another filter or play a ranked match</p></div>
+            <div className="py-10 text-center"><p className="font-mono text-gray-400">NO COMPETITIVE RANKING DATA AVAILABLE</p><p className="mt-2 text-sm font-mono text-gray-500">This game or filter has no established competitive standings.</p></div>
           ) : (
             <div className="space-y-4">
               {players.map(player => {
@@ -220,7 +220,7 @@ export function Leaderboard() {
                       <span className="text-sm font-mono text-gray-400">{player.wins}W / {player.losses}L <span className="text-green-400">({player.win_rate || 0}%)</span></span>
                     </div>
                   </div>
-                  <div className="shrink-0 text-right"><p className="text-lg font-semibold font-mono text-orange-400">{player.score}</p><p className="text-xs font-mono text-green-400">{metric === "experience" ? "XP" : metric.toUpperCase()}</p></div>
+                  <div className="shrink-0 text-right"><p className="text-lg font-semibold font-mono text-orange-400">{player.score}</p><p className="text-xs font-mono text-green-400">{metric.toUpperCase()}</p></div>
                 </button>
               )})}
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-orange-900/20 pt-4">

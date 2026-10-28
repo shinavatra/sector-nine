@@ -31,6 +31,8 @@ export interface UserProfile {
   // VIP / subscription
   isPremium: boolean;
   vipSince: string | null;
+  vipExpiresAt: string | null;
+  vipStatus: 'active' | 'expired' | 'inactive';
   vipMethod: string | null;
 
   // Economy
@@ -103,6 +105,10 @@ export interface SocialLinks {
 export interface NotificationPreferences {
   matchFound: boolean;
   friendRequests: boolean;
+  partyInvites: boolean;
+  vipUpdates: boolean;
+  shopPurchases: boolean;
+  walletTransactions: boolean;
   tournaments: boolean;
   messages: boolean;
   social: boolean;
@@ -324,6 +330,8 @@ function normalizeProfile(raw: any): UserProfile {
     bio:               raw.bio ?? '',
     isPremium:         raw.isPremium ?? false,
     vipSince:          raw.vipSince ?? null,
+    vipExpiresAt:      raw.vipExpiresAt ?? null,
+    vipStatus:         ['active','expired','inactive'].includes(raw.vipStatus) ? raw.vipStatus : raw.isPremium ? 'active' : 'inactive',
     vipMethod:         raw.vipMethod ?? null,
     points:            finiteNumber(raw.points),
     experience:        finiteNumber(raw.experience),
@@ -369,6 +377,10 @@ function normalizeProfile(raw: any): UserProfile {
     notificationPreferences: {
       matchFound: notificationPreferences.matchFound ?? true,
       friendRequests: notificationPreferences.friendRequests ?? true,
+      partyInvites: notificationPreferences.partyInvites ?? true,
+      vipUpdates: notificationPreferences.vipUpdates ?? true,
+      shopPurchases: notificationPreferences.shopPurchases ?? true,
+      walletTransactions: notificationPreferences.walletTransactions ?? true,
       tournaments: notificationPreferences.tournaments ?? true,
       messages: notificationPreferences.messages ?? true,
       social: notificationPreferences.social ?? true,

@@ -7,6 +7,7 @@ import { TrendingUp, Target, Trophy, Zap, Activity, Award } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useGame } from "../contexts/GameContext";
 import { statsAPI } from "../utils/api";
+import { Leaderboard } from "../components/Leaderboard";
 
 interface StatsProps {
   onNavigate?: (page: string) => void;
@@ -35,6 +36,8 @@ export function Stats({ onNavigate }: StatsProps) {
         <h1 className="text-3xl font-bold text-orange-400 font-mono">RESEARCH STATISTICS</h1>
         <p className="text-gray-400 font-mono mt-1">Comprehensive analysis of experimental performance</p>
       </div>
+
+      <div className="mb-8"><Leaderboard /></div>
 
       {/* Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
@@ -160,11 +163,7 @@ export function Stats({ onNavigate }: StatsProps) {
               <CardTitle className="text-orange-400 font-mono">GAME STATISTICS</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-8">
-                <Target className="w-16 h-16 text-orange-400 mx-auto mb-4 opacity-50" />
-                <p className="text-gray-400 font-mono">NO GAME DATA AVAILABLE</p>
-                <p className="text-gray-500 font-mono text-sm mt-2">Play matches to see your game statistics</p>
-              </div>
+              {totalMatches?<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[["Rating",currentRating],["Matches",totalMatches],["Wins",Number(gameStats?.wins)||0],["Losses",Number(gameStats?.losses)||0]].map(([label,value])=><div key={String(label)} className="rounded border border-orange-900/20 bg-black/30 p-4"><p className="font-mono text-xs text-gray-500">{label}</p><p className="mt-1 font-mono text-xl text-orange-300">{value}</p></div>)}</div>:<div className="text-center py-8"><Target className="w-16 h-16 text-orange-400 mx-auto mb-4 opacity-50"/><p className="text-gray-400 font-mono">NO {selectedGame.shortName} COMPETITIVE DATA AVAILABLE</p></div>}
             </CardContent>
           </Card>
         </TabsContent>
@@ -177,8 +176,8 @@ export function Stats({ onNavigate }: StatsProps) {
             <CardContent>
               <div className="text-center py-8">
                 <Zap className="w-16 h-16 text-purple-400 mx-auto mb-4 opacity-50" />
-                <p className="text-gray-400 font-mono">NO WEAPON DATA AVAILABLE</p>
-                <p className="text-gray-500 font-mono text-sm mt-2">Use weapons in matches to see statistics</p>
+                <p className="text-gray-400 font-mono">WEAPON STATISTICS UNAVAILABLE</p>
+                <p className="text-gray-500 font-mono text-sm mt-2">The backend does not currently provide trusted weapon aggregates.</p>
               </div>
             </CardContent>
           </Card>
@@ -192,8 +191,8 @@ export function Stats({ onNavigate }: StatsProps) {
             <CardContent>
               <div className="text-center py-8">
                 <Award className="w-16 h-16 text-blue-400 mx-auto mb-4 opacity-50" />
-                <p className="text-gray-400 font-mono">NO MAP DATA AVAILABLE</p>
-                <p className="text-gray-500 font-mono text-sm mt-2">Play on different maps to see your performance</p>
+                <p className="text-gray-400 font-mono">MAP STATISTICS UNAVAILABLE</p>
+                <p className="text-gray-500 font-mono text-sm mt-2">The backend does not currently provide trusted map aggregates.</p>
               </div>
             </CardContent>
           </Card>

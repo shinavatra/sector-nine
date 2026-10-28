@@ -7,7 +7,7 @@ import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { ArrowLeft, Settings, Shield, Bell, Check, ChevronDown, User, Save, Loader2, Lock, Palette, ExternalLink, Link2 } from "lucide-react";
+import { ArrowLeft, Settings, Shield, Bell, Check, ChevronDown, User, Save, Loader2, Lock, Palette, ExternalLink, Link2, MonitorSmartphone, Trash2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import { useUser } from "../contexts/UserContext";
@@ -71,6 +71,12 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   const [notifyTournaments, setNotifyTournaments] = useState(true);
   const [notifyMessages, setNotifyMessages] = useState(true);
   const [notifySocial, setNotifySocial] = useState(true);
+  const [notifyPartyInvites,setNotifyPartyInvites]=useState(true);
+  const [notifyVipUpdates,setNotifyVipUpdates]=useState(true);
+  const [notifyShopPurchases,setNotifyShopPurchases]=useState(true);
+  const [notifyWalletTransactions,setNotifyWalletTransactions]=useState(true);
+  const [sessions,setSessions]=useState<any[]>([]);
+  const [sessionsLoading,setSessionsLoading]=useState(false);
 
   useEffect(() => {
     if (!saveNotice) return;
@@ -94,6 +100,10 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
       setNotifyTournaments(user.notificationPreferences.tournaments);
       setNotifyMessages(user.notificationPreferences.messages);
       setNotifySocial(user.notificationPreferences.social);
+      setNotifyPartyInvites(user.notificationPreferences.partyInvites);
+      setNotifyVipUpdates(user.notificationPreferences.vipUpdates);
+      setNotifyShopPurchases(user.notificationPreferences.shopPurchases);
+      setNotifyWalletTransactions(user.notificationPreferences.walletTransactions);
     }
   }, [steamDisplayNameAuthoritative, user]);
 
@@ -101,6 +111,8 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
     setDraftThemeMode(themeMode);
     setDraftTheme(preferredTheme);
   }, [preferredTheme, themeMode]);
+
+  useEffect(()=>{if(user)void loadSessions()},[user?.id]);
 
   useEffect(() => {
     let active = true;
@@ -197,6 +209,10 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
       await updateProfile({ notificationPreferences: {
         matchFound: notifyMatchFound,
         friendRequests: notifyFriendRequests,
+        partyInvites:notifyPartyInvites,
+        vipUpdates:notifyVipUpdates,
+        shopPurchases:notifyShopPurchases,
+        walletTransactions:notifyWalletTransactions,
         tournaments: notifyTournaments,
         messages: notifyMessages,
         social: notifySocial,
@@ -211,6 +227,9 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
       });
     } finally { setIsSaving(false); }
   };
+
+  const loadSessions=async()=>{setSessionsLoading(true);try{const response:any=await authAPI.getSessions();setSessions(Array.isArray(response?.sessions)?response.sessions:[])}catch(error){toast.error('Unable to load sessions',{description:error instanceof Error?error.message:'Request failed'})}finally{setSessionsLoading(false)}};
+  const revokeSession=async(sessionId:string)=>{try{await authAPI.revokeSession(sessionId);setSessions(value=>value.filter(session=>session.id!==sessionId));toast.success('Session revoked')}catch(error){toast.error('Unable to revoke session',{description:error instanceof Error?error.message:'Request failed'})}};
 
   const handleChangeDisplayName = async () => {
     if (!canChangeDisplayName) return;
@@ -618,6 +637,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
               <Input aria-label="New password" type="password" value={newPassword} onChange={event=>setNewPassword(event.target.value)} placeholder="New password (8+ characters)" className="bg-black/20 border-orange-900/20 font-mono" />
               <Input aria-label="Confirm new password" type="password" value={confirmPassword} onChange={event=>setConfirmPassword(event.target.value)} placeholder="Confirm new password" className="bg-black/20 border-orange-900/20 font-mono" />
               <div className="flex justify-end"><Button onClick={handleChangePassword} disabled={isChangingPassword||!currentPassword||!newPassword}>{isChangingPassword?<><Loader2 className="mr-2 size-4 animate-spin"/>CHANGING...</>:'CHANGE PASSWORD'}</Button></div>
+              <div className="border-t border-orange-900/20 pt-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-mono text-orange-300">ACTIVE SESSIONS</h3><p className="text-xs text-gray-500">Tokens are never displayed.</p></div><Button size="sm" variant="outline" onClick={()=>void loadSessions()} disabled={sessionsLoading}>{sessionsLoading?<Loader2 className="size-4 animate-spin"/>:'REFRESH'}</Button></div>{sessionsLoading&&!sessions.length?<p className="text-sm text-gray-500">Loading sessions…</p>:sessions.length?<div className="space-y-2">{sessions.map(session=><div key={session.id} className="flex flex-col gap-3 rounded border border-orange-900/20 bg-black/25 p-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><p className="flex items-center gap-2 font-mono text-sm text-gray-200"><MonitorSmartphone className="size-4 text-orange-400"/>{session.current?'Current session':'Active session'}</p><p className="truncate text-xs text-gray-500">{session.user_agent||'Unknown device'} · Last used {new Date(session.last_used_at).toLocaleString()}</p></div><Button size="sm" variant="outline" className="border-red-900/30 text-red-300" onClick={()=>void revokeSession(session.id)}><Trash2 className="mr-2 size-3"/>REVOKE</Button></div>)}</div>:<p className="text-sm text-gray-500">No active sessions were returned.</p>}</div>
             </CardContent>
           </Card>
           </SettingsGroup>
@@ -695,6 +715,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
                     onCheckedChange={setNotifySocial}
                   />
                 </div>
+                {[['Party Invites',notifyPartyInvites,setNotifyPartyInvites],['VIP Updates',notifyVipUpdates,setNotifyVipUpdates],['Shop Purchases',notifyShopPurchases,setNotifyShopPurchases],['FL Wallet Transactions',notifyWalletTransactions,setNotifyWalletTransactions]].map(([label,checked,setter]:any)=><div key={label} className="flex items-center justify-between gap-4"><div><Label className="font-mono text-gray-400">{label}</Label><p className="font-mono text-xs text-gray-500">Receive {String(label).toLowerCase()} notifications</p></div><Switch aria-label={`${label} notifications`} checked={checked} onCheckedChange={setter}/></div>)}
               </div>
 
               <div className="flex justify-end">

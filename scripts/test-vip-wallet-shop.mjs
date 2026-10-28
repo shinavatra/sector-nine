@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict'
+import {readFile} from 'node:fs/promises'
+
+const server=await readFile(new URL('../src/server/index.ts',import.meta.url),'utf8')
+const api=await readFile(new URL('../src/utils/api.tsx',import.meta.url),'utf8')
+const vip=await readFile(new URL('../src/pages/VIPSubscription.tsx',import.meta.url),'utf8')
+const store=await readFile(new URL('../src/pages/Store.tsx',import.meta.url),'utf8')
+const migration=await readFile(new URL('../src/server/050_vip_wallet_idempotency.sql',import.meta.url),'utf8')
+
+assert.match(migration,/UNIQUE INDEX[\s\S]*user_id,idempotency_key/i)
+assert.match(migration,/CREATE TABLE IF NOT EXISTS vip_membership_history/i)
+assert.match(migration,/CHECK\(balance_after IS NULL OR balance_after>=0\)/)
+assert.match(server,/SELECT \* FROM users WHERE id=\$1 AND deleted_at IS NULL FOR UPDATE/)
+assert.match(server,/points=points-5000/)
+assert.match(server,/vip_expires_at=\$1::timestamptz\+INTERVAL '1 month'/)
+assert.match(server,/price_points!==5000\|\|product\.price_eur_cents!==500/)
+assert.match(server,/const concurrentReplay=/)
+assert.match(server,/owned_frames=array_append/)
+assert.match(server,/FRAME_ALREADY_OWNED/)
+assert.match(server,/frame\.vip_only&&!activeVip/)
+assert.doesNotMatch(server,/UPDATE users SET points=points-\$1,owned_frames=.*equipped_frame/)
+assert.match(api,/['"]Idempotency-Key['"]:idempotencyKey/)
+assert.match(vip,/CONFIRM VIP REDEMPTION/)
+assert.match(vip,/vipHistory/)
+assert.match(vip,/requestKey\.current\|\|crypto\.randomUUID\(\)/)
+assert.match(store,/CONFIRM FRAME PURCHASE/)
+assert.match(store,/will not be equipped automatically/)
+assert.match(store,/purchaseKeys\.current/)
+
+console.log('VIP, wallet and Shop static regression checks passed.')

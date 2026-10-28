@@ -324,6 +324,7 @@ app.use('/users', limiter(60 * 1000, 120))
 app.use('/profile-comments', limiter(60 * 1000, 60))
 app.use('/chat', limiter(60 * 1000, 120))
 app.use('/friends', limiter(60 * 1000, 90))
+app.use('/players', limiter(60 * 1000, 45))
 app.use('/report', limiter(60 * 60 * 1000, 10))
 app.use('/support', limiter(60 * 60 * 1000, 20))
 
@@ -470,6 +471,7 @@ const toProfile = (u: any) => {
     ...verifiedGameIds.filter((gameId: string) => ['hl1', 'cs16', 'l4d2', 'cod4'].includes(gameId)),
   ]))
 
+  const vipActive=Boolean(u.is_premium&&(!u.vip_expires_at||new Date(u.vip_expires_at).getTime()>Date.now()))
   return {
     id: u.id,
     email: u.email,
@@ -479,8 +481,10 @@ const toProfile = (u: any) => {
     displayName: resolveDisplayName(u),
     localDisplayName: u.display_name || null,
     bio: u.bio || '',
-    isPremium: u.is_premium,
+    isPremium: vipActive,
     vipSince: u.vip_since,
+    vipExpiresAt: u.vip_expires_at||null,
+    vipStatus: vipActive?'active':u.vip_expires_at?'expired':'inactive',
     vipMethod: u.vip_method,
     points: u.points,
     experience: u.experience,
@@ -500,6 +504,10 @@ const toProfile = (u: any) => {
     notificationPreferences: u.notification_preferences || {
       matchFound: true,
       friendRequests: true,
+      partyInvites: true,
+      vipUpdates: true,
+      shopPurchases: true,
+      walletTransactions: true,
       tournaments: true,
       messages: true,
       social: true,
@@ -1207,9 +1215,15 @@ app.get('/user/profile', requireAuth, async (req: AuthRequest, res) => {
   try {
     const result = await pool.query(selectUserByIdSql, [req.userId])
     if (!result.rows[0]) return res.status(404).json({ error: 'Profile not found' })
+    const profileRow=result.rows[0]
+    if(profileRow.is_premium&&profileRow.vip_expires_at&&new Date(profileRow.vip_expires_at).getTime()<=Date.now()){
+      await pool.query('UPDATE users SET is_premium=false WHERE id=$1 AND is_premium=true AND vip_expires_at<=NOW()',[req.userId])
+      if(profileRow.notification_preferences?.vipUpdates!==false)await pool.query(`INSERT INTO notifications(user_id,type,title,message,event_key,action_path) VALUES($1,'vip','VIP Expired','Your VIP membership has expired.',$2,'/vip') ON CONFLICT(user_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,[req.userId,`vip-expired:${new Date(profileRow.vip_expires_at).toISOString()}`])
+      profileRow.is_premium=false
+    }
     await pool.query(touchUserPresenceSql, [req.userId])
-    logEvent('info','profile_identity_returned',{userId:result.rows[0].id,role:result.rows[0].role})
-    return res.json({ profile: toProfile(result.rows[0]) })
+    logEvent('info','profile_identity_returned',{userId:profileRow.id,role:profileRow.role})
+    return res.json({ profile: toProfile(profileRow) })
   } catch (err: any) {
     if (err?.code === '42703' && String(err.message).includes('notification_preferences')) {
       return res.status(503).json({
@@ -1313,7 +1327,7 @@ app.put('/user/profile', requireAuth, async (req: AuthRequest, res) => {
     }
     if (req.body.notificationPreferences !== undefined) {
       const preferences = req.body.notificationPreferences
-      const keys = ['matchFound', 'friendRequests', 'tournaments', 'messages', 'social', 'systemMaintenance', 'securityAlerts']
+      const keys = ['matchFound', 'friendRequests', 'partyInvites', 'vipUpdates', 'shopPurchases', 'walletTransactions', 'tournaments', 'messages', 'social', 'systemMaintenance', 'securityAlerts']
       if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences) ||
           Object.keys(preferences).some((key) => !keys.includes(key)) ||
           keys.some((key) => typeof preferences[key] !== 'boolean')) {
@@ -1421,15 +1435,16 @@ app.get('/user/stats', requireAuth, async (req: AuthRequest, res) => {
     const result = await pool.query(
       `SELECT u.username,gs.game_id,gs.rating,gs.points,gs.level,gs.experience,gs.wins,gs.losses,
               gs.win_streak,gs.best_win_streak,gs.kills AS total_kills,gs.deaths AS total_deaths,
-              gs.matches_played,
+              gs.matches_played,gs.placement_matches_played,gs.placement_complete,
               CASE WHEN gs.matches_played>0 THEN ROUND(gs.wins::numeric/gs.matches_played*100,2) ELSE 0 END win_rate
        FROM users u LEFT JOIN user_game_stats gs ON gs.user_id=u.id AND gs.game_id=$2
        WHERE u.id=$1`,
       [req.userId,gameId]
     )
     if (!result.rows[0]) return res.status(404).json({ error: 'User not found' })
-    const lb = await pool.query('SELECT COUNT(*)::int+1 rank FROM user_game_stats WHERE game_id=$1 AND rating>(SELECT COALESCE(rating,0) FROM user_game_stats WHERE user_id=$2 AND game_id=$1)',[gameId,req.userId])
-    return res.json({ stats: { ...result.rows[0], rank: lb.rows[0]?.rank || null } })
+    const row=result.rows[0]
+    const lb=row.placement_complete?await pool.query('SELECT COUNT(*)::int+1 rank FROM user_game_stats WHERE game_id=$1 AND placement_complete=true AND rating>(SELECT rating FROM user_game_stats WHERE user_id=$2 AND game_id=$1)',[gameId,req.userId]):null
+    return res.json({ stats: { ...row, rank: lb?.rows[0]?.rank || null } })
   } catch (err: any) {
     return sendInternalError(res, err)
   }
@@ -1503,16 +1518,16 @@ app.get('/store/catalog', async (_req, res) => {
 
 app.get('/store/purchases',requireAuth,async(req:AuthRequest,res)=>{
   try{
-    const result=await pool.query(
-      `SELECT id,product_id,product_type,item_name,points_amount,euro_amount_cents,
+    const [result,vipHistory]=await Promise.all([pool.query(
+      `SELECT id,product_id,product_type,item_name,points_amount,euro_amount_cents,direction,balance_after,
               payment_method,status,metadata,created_at
        FROM store_transactions
        WHERE user_id=$1
        ORDER BY created_at DESC,id DESC
        LIMIT 50`,
       [req.userId],
-    )
-    return res.json({purchases:result.rows})
+    ),pool.query(`SELECT id,source,starts_at,expires_at,created_at FROM vip_membership_history WHERE user_id=$1 ORDER BY created_at DESC,id DESC LIMIT 50`,[req.userId])])
+    return res.json({purchases:result.rows,vipHistory:vipHistory.rows})
   }catch(err:any){return sendDatabaseError(res,err)}
 })
 
@@ -1520,50 +1535,42 @@ app.post('/user/vip/purchase', requireAuth, async (req: AuthRequest, res) => {
   const db=await pool.connect()
   try {
     const productId=typeof req.body?.productId==='string'?req.body.productId.trim():''
+    const idempotencyKey=String(req.get('Idempotency-Key')||req.body?.idempotencyKey||'').trim()
     if(!productId){
       return res.status(400).json({error:'VIP product is required',code:'STORE_PRODUCT_REQUIRED'})
     }
+    if(!/^[A-Za-z0-9_-]{8,128}$/.test(idempotencyKey))return res.status(400).json({error:'A valid idempotency key is required',code:'IDEMPOTENCY_KEY_REQUIRED'})
     if(req.body?.method!==undefined&&req.body.method!=='points'){
       return res.status(400).json({error:'Online payment requires a verified payment provider callback',code:'PAYMENT_PROVIDER_REQUIRED'})
     }
     await db.query('BEGIN')
+    const replay=(await db.query('SELECT id,product_id FROM store_transactions WHERE user_id=$1 AND idempotency_key=$2 FOR UPDATE',[req.userId,idempotencyKey])).rows[0]
+    if(replay){if(replay.product_id!==productId){await db.query('ROLLBACK');return res.status(409).json({error:'Idempotency key was already used for another product',code:'IDEMPOTENCY_CONFLICT'})}const current=(await db.query('SELECT * FROM users WHERE id=$1',[req.userId])).rows[0];await db.query('COMMIT');return res.json({profile:toProfile(current),transactionId:replay.id,idempotent:true})}
     const product=(await db.query(
-      `SELECT id,name,price_points,billing_period FROM store_products
+      `SELECT id,name,price_points,price_eur_cents,billing_period FROM store_products
        WHERE id=$1 AND product_type='vip' AND is_active=true FOR SHARE`,
       [productId],
     )).rows[0]
-    if(!product||product.price_points==null){
+    if(!product||product.price_points!==5000||product.price_eur_cents!==500||product.billing_period!=='month'){
       await db.query('ROLLBACK')
       return res.status(404).json({error:'VIP product is unavailable',code:'STORE_PRODUCT_UNAVAILABLE'})
     }
-    const result=await db.query(
-      `UPDATE users
-       SET is_premium=true,vip_since=NOW(),vip_method='points',points=points-$1,
-           vip_expires_at=NOW()+CASE $2
-             WHEN 'month' THEN INTERVAL '1 month'
-             WHEN 'year' THEN INTERVAL '1 year'
-             ELSE INTERVAL '1 month'
-           END
-       WHERE id=$3 AND deleted_at IS NULL
-         AND (is_premium=false OR vip_expires_at<=NOW())
-         AND points>=$1
-       RETURNING *`,
-      [product.price_points,product.billing_period,req.userId],
-    )
-    if(!result.rows[0]){
-      const user=(await db.query('SELECT points,is_premium FROM users WHERE id=$1',[req.userId])).rows[0]
+    const locked=(await db.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',[req.userId])).rows[0]
+    if(!locked){await db.query('ROLLBACK');return res.status(404).json({error:'User not found',code:'USER_NOT_FOUND'})}
+    const concurrentReplay=(await db.query('SELECT id,product_id FROM store_transactions WHERE user_id=$1 AND idempotency_key=$2',[req.userId,idempotencyKey])).rows[0]
+    if(concurrentReplay){if(concurrentReplay.product_id!==productId){await db.query('ROLLBACK');return res.status(409).json({error:'Idempotency key was already used for another product',code:'IDEMPOTENCY_CONFLICT'})}await db.query('COMMIT');return res.json({profile:toProfile(locked),transactionId:concurrentReplay.id,idempotent:true,balance:locked.points,vipExpiresAt:locked.vip_expires_at})}
+    if(!locked||Number(locked.points)<5000){
       await db.query('ROLLBACK')
-      if(!user)return res.status(404).json({error:'User not found',code:'USER_NOT_FOUND'})
-      if(user.is_premium)return res.status(409).json({error:'VIP is already active',code:'VIP_ALREADY_ACTIVE'})
-      return res.status(400).json({error:`Insufficient points. Have ${user.points}, need ${product.price_points}`,code:'INSUFFICIENT_POINTS'})
+      return res.status(400).json({error:`Insufficient points. Have ${locked.points}, need 5000`,code:'INSUFFICIENT_POINTS'})
     }
-    await db.query(
-      `INSERT INTO store_transactions(user_id,product_id,product_type,item_name,points_amount,payment_method,metadata)
-       VALUES($1,$2,'vip',$3,$4,'points',jsonb_build_object('billingPeriod',$5::text))`,
-      [req.userId,product.id,product.name,product.price_points,product.billing_period],
-    )
+    const startsAt=locked.vip_expires_at&&new Date(locked.vip_expires_at).getTime()>Date.now()?locked.vip_expires_at:new Date()
+    const result=await db.query(`UPDATE users SET is_premium=true,vip_since=COALESCE(vip_since,NOW()),vip_method='points',points=points-5000,vip_expires_at=$1::timestamptz+INTERVAL '1 month' WHERE id=$2 RETURNING *`,[startsAt,req.userId])
+    const transaction=(await db.query(`INSERT INTO store_transactions(user_id,product_id,product_type,item_name,points_amount,payment_method,direction,balance_after,idempotency_key,metadata) VALUES($1,$2,'vip',$3,5000,'points','debit',$4,$5,jsonb_build_object('billingPeriod','month','eurCents',500)) RETURNING id`,[req.userId,product.id,product.name,result.rows[0].points,idempotencyKey])).rows[0]
+    await db.query(`INSERT INTO vip_membership_history(user_id,source,starts_at,expires_at,store_transaction_id) VALUES($1,'points',$2,$3,$4)`,[req.userId,startsAt,result.rows[0].vip_expires_at,transaction.id])
+    if(locked.notification_preferences?.vipUpdates!==false)await db.query(`INSERT INTO notifications(user_id,type,title,message,event_key,action_path) VALUES($1,'vip',$2,$3,$4,'/vip') ON CONFLICT(user_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,[req.userId,locked.is_premium?'VIP Renewed':'VIP Activated',`VIP is active until ${new Date(result.rows[0].vip_expires_at).toISOString()}.`,`vip:${transaction.id}`])
+    if(locked.notification_preferences?.walletTransactions!==false)await db.query(`INSERT INTO notifications(user_id,type,title,message,event_key,action_path) VALUES($1,'wallet','FL Wallet Transaction',$2,$3,'/store') ON CONFLICT(user_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,[req.userId,`5,000 FL Points were debited. Balance: ${result.rows[0].points}.`,`wallet:${transaction.id}`])
     await db.query('COMMIT')
-    return res.json({ profile: toProfile(result.rows[0]) })
+    return res.json({profile:toProfile(result.rows[0]),transactionId:transaction.id,idempotent:false,balance:result.rows[0].points,vipExpiresAt:result.rows[0].vip_expires_at})
   } catch (err: any) {
     await db.query('ROLLBACK')
     return sendDatabaseError(res,err)
@@ -1573,15 +1580,7 @@ app.post('/user/vip/purchase', requireAuth, async (req: AuthRequest, res) => {
 })
 
 app.post('/user/vip/cancel', requireAuth, async (req: AuthRequest, res) => {
-  try {
-    const result = await pool.query(
-      `UPDATE users SET is_premium=false, vip_since=NULL, vip_method=NULL WHERE id=$1 RETURNING *`,
-      [req.userId]
-    )
-    return res.json({ profile: toProfile(result.rows[0]) })
-  } catch (err: any) {
-    return sendInternalError(res, err)
-  }
+  return res.status(410).json({error:'Prepaid VIP periods cannot be cancelled or refunded through this endpoint',code:'VIP_CANCELLATION_UNAVAILABLE'})
 })
 
 // =====================================================
@@ -1651,25 +1650,30 @@ app.post('/user/frame/purchase', requireAuth, async (req: AuthRequest, res) => {
   const db=await pool.connect()
   try {
     const { frameId } = req.body
+    const idempotencyKey=String(req.get('Idempotency-Key')||req.body?.idempotencyKey||'').trim()
     if(typeof frameId!=='string'||!frameId)return res.status(400).json({error:'Invalid frame purchase'})
+    if(!/^[A-Za-z0-9_-]{8,128}$/.test(idempotencyKey))return res.status(400).json({error:'A valid idempotency key is required',code:'IDEMPOTENCY_KEY_REQUIRED'})
     await db.query('BEGIN')
+    const replay=(await db.query('SELECT id,product_id FROM store_transactions WHERE user_id=$1 AND idempotency_key=$2 FOR UPDATE',[req.userId,idempotencyKey])).rows[0]
+    if(replay){if(replay.product_id!==frameId){await db.query('ROLLBACK');return res.status(409).json({error:'Idempotency key was already used for another product',code:'IDEMPOTENCY_CONFLICT'})}const current=(await db.query('SELECT * FROM users WHERE id=$1',[req.userId])).rows[0];await db.query('COMMIT');return res.json({profile:toProfile(current),transactionId:replay.id,idempotent:true})}
     const frame=(await db.query('SELECT id,name,price_points,vip_only,is_active,metadata FROM frames WHERE id=$1 FOR SHARE',[frameId])).rows[0]
     if(!frame||!frame.is_active){await db.query('ROLLBACK');return res.status(404).json({error:'Frame is unavailable'})}
     if(frame.metadata?.purchasable===false){await db.query('ROLLBACK');return res.status(403).json({error:'This frame is not available for purchase',code:'FRAME_NOT_PURCHASABLE'})}
-    const result = await db.query(
-      `UPDATE users u SET points=u.points-f.price_points,owned_frames=array_append(COALESCE(u.owned_frames,'{}'::text[]),f.id)
-       FROM frames f WHERE u.id=$1 AND f.id=$2 AND f.is_active=true AND (NOT f.vip_only OR u.is_premium=true)
-       AND u.points>=f.price_points AND NOT(f.id=ANY(COALESCE(u.owned_frames,'{}'::text[]))) RETURNING u.*`,
-      [req.userId,frameId]
-    )
-    if(!result.rows[0]){const u=(await db.query('SELECT points,owned_frames,is_premium FROM users WHERE id=$1',[req.userId])).rows[0];await db.query('ROLLBACK');if(!u)return res.status(404).json({error:'User not found'});if(u.owned_frames?.includes(frameId))return res.status(409).json({error:'Frame already owned'});if(frame.vip_only&&!u.is_premium)return res.status(403).json({error:'VIP status required'});return res.status(400).json({error:`Insufficient points. Have ${u.points}, need ${frame.price_points}`})}
-    await db.query(
-      `INSERT INTO store_transactions(user_id,product_id,product_type,item_name,points_amount,payment_method)
-       VALUES($1,$2,'frame',$3,$4,'points')`,
-      [req.userId,frame.id,frame.name,frame.price_points],
-    )
+    if(frame.price_points==null){await db.query('ROLLBACK');return res.status(403).json({error:'This frame has no configured FL price',code:'FRAME_PRICE_UNAVAILABLE'})}
+    const locked=(await db.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',[req.userId])).rows[0]
+    if(!locked){await db.query('ROLLBACK');return res.status(404).json({error:'User not found'})}
+    const concurrentReplay=(await db.query('SELECT id,product_id FROM store_transactions WHERE user_id=$1 AND idempotency_key=$2',[req.userId,idempotencyKey])).rows[0]
+    if(concurrentReplay){if(concurrentReplay.product_id!==frameId){await db.query('ROLLBACK');return res.status(409).json({error:'Idempotency key was already used for another product',code:'IDEMPOTENCY_CONFLICT'})}await db.query('COMMIT');return res.json({profile:toProfile(locked),transactionId:concurrentReplay.id,idempotent:true,balance:locked.points})}
+    if(locked.owned_frames?.includes(frameId)){await db.query('ROLLBACK');return res.status(409).json({error:'Frame already owned',code:'FRAME_ALREADY_OWNED'})}
+    const activeVip=Boolean(locked.is_premium&&(!locked.vip_expires_at||new Date(locked.vip_expires_at).getTime()>Date.now()))
+    if(frame.vip_only&&!activeVip){await db.query('ROLLBACK');return res.status(403).json({error:'Active VIP status required',code:'VIP_REQUIRED'})}
+    if(Number(locked.points)<Number(frame.price_points)){await db.query('ROLLBACK');return res.status(400).json({error:`Insufficient points. Have ${locked.points}, need ${frame.price_points}`,code:'INSUFFICIENT_POINTS'})}
+    const result=await db.query(`UPDATE users SET points=points-$1,owned_frames=array_append(COALESCE(owned_frames,'{}'::text[]),$2) WHERE id=$3 RETURNING *`,[frame.price_points,frame.id,req.userId])
+    const transaction=(await db.query(`INSERT INTO store_transactions(user_id,product_id,product_type,item_name,points_amount,payment_method,direction,balance_after,idempotency_key) VALUES($1,$2,'frame',$3,$4,'points','debit',$5,$6) RETURNING id`,[req.userId,frame.id,frame.name,frame.price_points,result.rows[0].points,idempotencyKey])).rows[0]
+    if(locked.notification_preferences?.shopPurchases!==false)await db.query(`INSERT INTO notifications(user_id,type,title,message,event_key,action_path) VALUES($1,'shop','Purchase Confirmed',$2,$3,'/store') ON CONFLICT(user_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,[req.userId,`${frame.name} was added to your collection.`,`shop:${transaction.id}`])
+    if(locked.notification_preferences?.walletTransactions!==false)await db.query(`INSERT INTO notifications(user_id,type,title,message,event_key,action_path) VALUES($1,'wallet','FL Wallet Transaction',$2,$3,'/store') ON CONFLICT(user_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,[req.userId,`${frame.price_points} FL Points were debited. Balance: ${result.rows[0].points}.`,`wallet:${transaction.id}`])
     await db.query('COMMIT')
-    return res.json({ profile: toProfile(result.rows[0]) })
+    return res.json({profile:toProfile(result.rows[0]),transactionId:transaction.id,idempotent:false,balance:result.rows[0].points})
   } catch (err: any) {
     await db.query('ROLLBACK')
     return sendDatabaseError(res,err)
@@ -1719,9 +1723,11 @@ app.get('/users/:userId/profile',optionalAuth,async(req:AuthRequest,res)=>{
     const access=await canViewUserProfile(req.userId,req.params.userId)
     if(!access.exists)return res.status(404).json({error:'Profile not found'})
     if(!access.allowed)return res.status(403).json({error:'This profile is not visible to you',code:'PROFILE_PRIVATE'})
+    const gameId=String(req.query.game_id||'hl1')
+    if(!isSupportedGameId(gameId))return res.status(400).json({error:'Invalid game ID',code:'INVALID_GAME_ID'})
     const result=await pool.query(
       `SELECT id,username,${displayNameSql('users')} AS display_name,bio,level,experience,wins,losses,total_kills,total_deaths,equipped_frame,
-              is_premium,steam_verified,country_code,created_at,CASE WHEN show_online_status THEN last_seen ELSE NULL END AS last_seen,(${onlineUserPredicate('users')}) AS is_online,
+              preferred_theme,is_premium,steam_verified,country_code,created_at,CASE WHEN show_online_status THEN last_seen ELSE NULL END AS last_seen,CASE WHEN show_online_status THEN (${onlineUserPredicate('users')}) ELSE false END AS is_online,
               COALESCE(CASE WHEN avatar_source='custom' THEN NULLIF(custom_avatar_url,'') END,steam_avatar) AS resolved_avatar
        FROM users WHERE id=$1 AND deleted_at IS NULL`,[req.params.userId])
     const u=result.rows[0]
@@ -1730,9 +1736,42 @@ app.get('/users/:userId/profile',optionalAuth,async(req:AuthRequest,res)=>{
        WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1) LIMIT 1`,
       [req.userId,u.id]
     )).rows[0]:null
+    const [stats,medals,badges,matches,blockedByMe]=await Promise.all([
+      pool.query(`SELECT rating,level,experience,wins,losses,kills,deaths,matches_played,placement_complete FROM user_game_stats WHERE user_id=$1 AND game_id=$2`,[u.id,gameId]),
+      pool.query(`SELECT d.id,d.level,d.name,d.asset_url,m.earned_at,m.rating_at_award FROM user_competitive_medals m JOIN competitive_medal_definitions d ON d.id=m.medal_id WHERE m.user_id=$1 AND m.game_id=$2 ORDER BY d.level DESC`,[u.id,gameId]),
+      pool.query(`SELECT d.id,d.name,d.asset_url,b.custom_title,b.assigned_at FROM user_special_badges b JOIN profile_special_badges d ON d.id=b.badge_id WHERE b.user_id=$1 ORDER BY b.assigned_at DESC`,[u.id]),
+      pool.query(`SELECT id,game_id,game_mode,selected_map,score_p1,score_p2,winner_id,completed_at FROM matches WHERE status='completed' AND game_id=$2 AND (player1_id=$1 OR player2_id=$1) ORDER BY completed_at DESC NULLS LAST,id DESC LIMIT 10`,[u.id,gameId]),
+      req.userId?pool.query('SELECT 1 FROM user_blocks WHERE blocker_id=$1 AND blocked_user_id=$2',[req.userId,u.id]):Promise.resolve({rows:[]}),
+    ])
     const friendshipStatus=!relationship?'none':relationship.status==='accepted'?'friends':relationship.status==='pending'&&relationship.user_id===req.userId?'request_sent':relationship.status==='pending'?'request_received':'none'
-    return res.json({profile:{id:u.id,username:u.username,displayName:u.display_name,bio:u.bio,level:u.level,experience:u.experience,wins:u.wins,losses:u.losses,totalKills:u.total_kills,totalDeaths:u.total_deaths,equippedFrame:u.equipped_frame,isPremium:u.is_premium,steamVerified:u.steam_verified,countryCode:u.country_code,createdAt:u.created_at,lastSeen:u.last_seen,isOnline:u.is_online,resolvedAvatar:u.resolved_avatar,friendshipStatus,friendshipId:relationship?.id??null}})
+    const gameStats=stats.rows[0]||null
+    return res.json({profile:{id:u.id,username:u.username,displayName:u.display_name,bio:u.bio,level:u.level,experience:u.experience,equippedFrame:u.equipped_frame,preferredTheme:u.preferred_theme,isPremium:Boolean(u.is_premium),steamVerified:u.steam_verified,countryCode:u.country_code,createdAt:u.created_at,lastSeen:u.last_seen,isOnline:u.is_online,resolvedAvatar:u.resolved_avatar,friendshipStatus,friendshipId:relationship?.id??null,blockedByMe:Boolean(blockedByMe.rows[0]),gameId,competitive:gameStats?{rating:gameStats.rating,level:gameStats.level,wins:gameStats.wins,losses:gameStats.losses,kills:gameStats.kills,deaths:gameStats.deaths,matchesPlayed:gameStats.matches_played,placementComplete:gameStats.placement_complete}:null,medals:medals.rows,badges:badges.rows,matches:matches.rows}})
   }catch(err:any){return sendDatabaseError(res,err)}
+})
+
+app.get('/players',requireAuth,async(req:AuthRequest,res)=>{
+  try{
+    const search=String(req.query.search||'').trim().slice(0,64)
+    const gameId=String(req.query.game_id||'hl1')
+    const rank=Math.max(0,Number.parseInt(String(req.query.rank||'0'),10)||0)
+    const sort=String(req.query.sort||'rating')
+    const page=Math.max(1,Number.parseInt(String(req.query.page||'1'),10)||1)
+    const pageSize=Math.min(50,Math.max(8,Number.parseInt(String(req.query.page_size||'20'),10)||20))
+    if(!isSupportedGameId(gameId))return res.status(400).json({error:'Invalid game ID',code:'INVALID_GAME_ID'})
+    if(!['rating','activity','joined'].includes(sort))return res.status(400).json({error:'Invalid player sort',code:'INVALID_SORT'})
+    if(rank>11)return res.status(400).json({error:'Invalid competitive rank',code:'INVALID_RANK'})
+    const pattern=`%${search.replace(/[\\%_]/g,'\\$&')}%`
+    const order=sort==='activity'?`"activityAt" DESC NULLS LAST,id`:sort==='joined'?`"joinedAt" DESC,id`:'rating DESC NULLS LAST,id'
+    const result=await pool.query(`WITH visible AS (
+      SELECT u.id,u.username,${displayNameSql('u')} AS "displayName",COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS "resolvedAvatar",u.equipped_frame AS "equippedFrame",u.level AS "xpLevel",u.is_premium AS "isPremium",u.created_at AS "joinedAt",CASE WHEN u.show_online_status THEN u.last_seen END AS "activityAt",CASE WHEN u.show_online_status THEN (${onlineUserPredicate('u')}) ELSE false END AS "isOnline",gs.rating,gs.wins,gs.losses,gs.placement_complete AS "placementComplete",medal.level AS "competitiveRank",f.id AS "requestId",CASE WHEN f.status='accepted' THEN 'friends' WHEN f.status='pending' AND f.user_id=$2 THEN 'request_sent' WHEN f.status='pending' THEN 'request_received' ELSE 'none' END AS "friendshipStatus"
+      FROM users u LEFT JOIN user_game_stats gs ON gs.user_id=u.id AND gs.game_id=$3
+      LEFT JOIN LATERAL(SELECT d.level FROM user_competitive_medals um JOIN competitive_medal_definitions d ON d.id=um.medal_id WHERE um.user_id=u.id AND um.game_id=$3 ORDER BY d.level DESC LIMIT 1) medal ON true
+      LEFT JOIN LATERAL(SELECT id,user_id,friend_id,status FROM friendships WHERE (user_id=$2 AND friend_id=u.id) OR (user_id=u.id AND friend_id=$2) LIMIT 1) f ON true
+      WHERE u.id<>$2 AND u.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$2 AND b.blocked_user_id=u.id) OR (b.blocker_id=u.id AND b.blocked_user_id=$2)) AND (COALESCE(u.profile_visibility,'public')<>'private' OR f.status='accepted') AND ($1='' OR u.username ILIKE $4 ESCAPE '\\' OR ${displayNameSql('u')} ILIKE $4 ESCAPE '\\' OR u.steam_id=$1) AND ($5=0 OR medal.level=$5)
+    ) SELECT *,COUNT(*) OVER()::int total_count FROM visible ORDER BY ${order} LIMIT $6 OFFSET $7`,[search,req.userId,gameId,pattern,rank,pageSize,(page-1)*pageSize])
+    const total=Number(result.rows[0]?.total_count||0)
+    return res.json({players:result.rows.map(({total_count,...player})=>player),pagination:{page,pageSize,total,totalPages:Math.ceil(total/pageSize)},filters:{gameId,rank,sort}})
+  }catch(error:any){return sendDatabaseError(res,error)}
 })
 
 // =====================================================
@@ -1753,7 +1792,7 @@ app.get('/leaderboard', async (req, res) => {
 
     const [seasonsResult,gamesResult,countriesResult]=await Promise.all([
       pool.query("SELECT id,name,season_type,game_id,start_date,end_date,status FROM ladder_seasons ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'upcoming' THEN 1 ELSE 2 END,start_date DESC"),
-      Promise.resolve({rows:supportedGameIds.map(game_id=>({game_id}))}),
+      pool.query('SELECT DISTINCT game_id FROM user_game_stats WHERE placement_complete=true ORDER BY game_id'),
       pool.query("SELECT DISTINCT country_code FROM users WHERE deleted_at IS NULL AND country_code IS NOT NULL ORDER BY country_code"),
     ])
     const seasons=seasonsResult.rows
@@ -1818,7 +1857,7 @@ app.get('/leaderboard', async (req, res) => {
       pagination:{page,pageSize,total,totalPages:Math.ceil(total/pageSize)},
       filters:{games:gamesResult.rows.map(row=>row.game_id),countries:countriesResult.rows.map(row=>row.country_code),seasons},
       scope,season:selectedSeason,
-      rankingMetric:scope==='seasonal'?'points':'experience',
+      rankingMetric:scope==='seasonal'?'points':'rating',
     })
   } catch (err: any) {
     return sendDatabaseError(res,err)
@@ -1932,7 +1971,8 @@ app.post('/party/invite',requireAuth,async(req:AuthRequest,res)=>{
     if(recent>=10){await db.query('ROLLBACK');return res.status(429).json({error:'Party invite limit reached.',code:'PARTY_INVITE_RATE_LIMIT'})}
     const invite=(await db.query(`INSERT INTO party_invites(party_id,inviter_id,invitee_id) VALUES($1,$2,$3)
       ON CONFLICT(party_id,invitee_id) WHERE status='pending' DO UPDATE SET expires_at=NOW()+INTERVAL '15 minutes' RETURNING id`,[party.id,req.userId,inviteeId])).rows[0]
-    await db.query(`INSERT INTO notifications(user_id,type,title,message,related_user_id,read) VALUES($1,'party_invite','Party Invite','A friend invited you to a party.',$2,false)`,[inviteeId,req.userId]);await db.query('COMMIT')
+    const invitee=(await db.query('SELECT notification_preferences FROM users WHERE id=$1',[inviteeId])).rows[0]
+    if(invitee?.notification_preferences?.partyInvites!==false)await db.query(`INSERT INTO notifications(user_id,type,title,message,related_user_id,read,event_key,action_path) VALUES($1,'party_invite','Party Invite','A friend invited you to a party.',$2,false,$3,'/matchmaking') ON CONFLICT(user_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,[inviteeId,req.userId,`party-invite:${invite.id}`]);await db.query('COMMIT')
     return res.status(201).json({inviteId:invite.id})
   }catch(error:any){await db.query('ROLLBACK');return sendDatabaseError(res,error)}finally{db.release()}
 })
@@ -2072,7 +2112,7 @@ const pairQueuedPlayer=async(db:any,userId:string)=>{
      VALUES($1,$1,$2,$3,$4,NULL,ARRAY[]::TEXT[],'pending',$5,$6,$7) RETURNING *`,
     [own.game_mode,own.game_id,player1,player2,own.preferred_region,own.team_size,own.total_players])).rows[0]
   const participants=teams.flatMap(team=>team.members.map((member:string)=>({userId:member,teamNumber:team.teamNumber,partyId:team.groups.find((group:any)=>group?.members?.map(String).includes(member))?.party_id||null})))
-  for(const participant of participants){await db.query('INSERT INTO match_participants(match_id,user_id,team_number,party_id) VALUES($1,$2,$3,$4)',[match.id,participant.userId,participant.teamNumber,participant.partyId]);await db.query('INSERT INTO match_acceptances(match_id,user_id) VALUES($1,$2)',[match.id,participant.userId]);await db.query(`INSERT INTO notifications(user_id,type,title,message,related_match_id) VALUES($1,'match_found','Match Found!','Your team match is waiting for acceptance.',$2)`,[participant.userId,match.id])}
+  for(const participant of participants){await db.query('INSERT INTO match_participants(match_id,user_id,team_number,party_id) VALUES($1,$2,$3,$4)',[match.id,participant.userId,participant.teamNumber,participant.partyId]);await db.query('INSERT INTO match_acceptances(match_id,user_id) VALUES($1,$2)',[match.id,participant.userId]);await db.query(`INSERT INTO notifications(user_id,type,title,message,related_match_id,event_key,action_path) SELECT id,'match_found','Match Found!','Your team match is waiting for acceptance.',$2,$3,'/matchmaking' FROM users WHERE id=$1 AND COALESCE((notification_preferences->>'matchFound')::boolean,true) ON CONFLICT(user_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,[participant.userId,match.id,`match:${match.id}:${participant.userId}`])}
   const queueIds=teams.flatMap(team=>team.groups.map((group:any)=>group.id));await db.query('DELETE FROM queue_entries WHERE id=ANY($1::uuid[])',[queueIds])
   const partyIds=[...new Set(teams.flatMap(team=>team.groups.map((group:any)=>group.party_id).filter(Boolean)))];if(partyIds.length)await db.query("UPDATE parties SET queue_status='matched',updated_at=NOW() WHERE id=ANY($1::uuid[])",[partyIds])
 }
@@ -2551,7 +2591,7 @@ app.post('/tournament/:id/register', requireAuth, async (req: AuthRequest, res) 
     const eligibility=gameEligibilityError(u,t.game_id)
     if(eligibility){await db.query('ROLLBACK');return res.status(eligibility.status).json(eligibility)}
     if(t.status!=='registration'||(t.registration_deadline&&new Date(t.registration_deadline).getTime()<=Date.now())){await db.query('ROLLBACK');return res.status(409).json({error:'Tournament registration is closed',code:'TOURNAMENT_REGISTRATION_CLOSED'})}
-    if (t.requires_vip && !u.is_premium){await db.query('ROLLBACK');return res.status(403).json({ error: 'VIP status required' })}
+    if(t.requires_vip&&!Boolean(u.is_premium&&(!u.vip_expires_at||new Date(u.vip_expires_at).getTime()>Date.now()))){await db.query('ROLLBACK');return res.status(403).json({error:'Active VIP status required',code:'VIP_REQUIRED'})}
     const current=Number((await db.query('SELECT COUNT(*)::int count FROM tournament_participants WHERE tournament_id=$1',[tid])).rows[0].count)
     if(current>=Number(t.max_participants)){await db.query('ROLLBACK');return res.status(409).json({ error: 'Tournament is full',code:'TOURNAMENT_FULL' })}
     const existing = await db.query(
@@ -2740,7 +2780,8 @@ app.post('/chat/:recipientId', requireAuth, async (req: AuthRequest, res) => {
       await db.query(
         `INSERT INTO notifications
            (user_id,type,title,message,related_user_id,related_chat_message_id,related_conversation_id,read)
-         VALUES ($1,'message','New secure message',$2,$3,$4,$5,false)
+         SELECT id,'message','New secure message',$2,$3,$4,$5,false FROM users
+         WHERE id=$1 AND COALESCE((notification_preferences->>'messages')::boolean,true)
          ON CONFLICT (user_id,related_conversation_id)
            WHERE type='message' AND read=false AND related_conversation_id IS NOT NULL
          DO UPDATE SET
@@ -2998,7 +3039,12 @@ const getVisibleUnreadNotificationCount=async(db:any,userId:string)=>Number((awa
 
 app.get('/notifications', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const [result,unread] = await Promise.all([pool.query(
+    const page=Math.max(1,Number.parseInt(String(req.query.page||'1'),10)||1)
+    const pageSize=Math.min(50,Math.max(1,Number.parseInt(String(req.query.page_size||'20'),10)||20))
+    const filter=req.query.filter==='unread'?'unread':'all'
+    const offset=(page-1)*pageSize
+    const visibility=`n.user_id=$1 AND ($2::text='all' OR n.read=false) AND (n.type<>'message' OR cm.id IS NOT NULL) AND (n.type<>'friend_request' OR EXISTS (SELECT 1 FROM friendships f WHERE f.id=n.related_friendship_id AND f.friend_id=n.user_id AND f.status='pending'))`
+    const [result,totalResult,unread] = await Promise.all([pool.query(
       `SELECT
          n.id, n.user_id, n.title,
          CASE WHEN n.type='system' AND n.title='Friend Request Accepted' THEN 'friend_accepted' ELSE n.type END AS type,
@@ -3009,28 +3055,18 @@ app.get('/notifications', requireAuth, async (req: AuthRequest, res) => {
          END AS message,
          n.read, n.related_user_id, n.related_match_id,
          n.related_chat_message_id, n.related_friendship_id,
-         n.related_conversation_id, n.created_at,
+         n.related_conversation_id, n.created_at,n.action_path,
          COALESCE(${displayNameSql('sender')}, cm.username) AS sender_name
        FROM notifications n
        LEFT JOIN chat_messages cm ON cm.id=n.related_chat_message_id
        LEFT JOIN users sender ON sender.id=cm.user_id
-       WHERE n.user_id=$1
-         AND (n.type<>'message' OR cm.id IS NOT NULL)
-         AND (
-           n.type<>'friend_request'
-           OR EXISTS (
-             SELECT 1
-             FROM friendships f
-             WHERE f.id=n.related_friendship_id
-               AND f.friend_id=n.user_id
-               AND f.status='pending'
-           )
-         )
+       WHERE ${visibility}
        ORDER BY n.created_at DESC
-      LIMIT 50`,
-      [req.userId]
-    ),getVisibleUnreadNotificationCount(pool,req.userId!)])
-    return res.json({ notifications: result.rows, unreadCount: unread })
+      LIMIT $3 OFFSET $4`,
+      [req.userId,filter,pageSize,offset]
+    ),pool.query(`SELECT COUNT(*)::int count FROM notifications n LEFT JOIN chat_messages cm ON cm.id=n.related_chat_message_id WHERE ${visibility}`,[req.userId,filter]),getVisibleUnreadNotificationCount(pool,req.userId!)])
+    const total=Number(totalResult.rows[0]?.count||0)
+    return res.json({ notifications: result.rows, unreadCount: unread,pagination:{page,pageSize,total,totalPages:Math.ceil(total/pageSize)} })
   } catch (err: any) {
     return sendInternalError(res, err)
   }

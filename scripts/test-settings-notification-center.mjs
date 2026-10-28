@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict'
+import {readFile} from 'node:fs/promises'
+
+const server=await readFile(new URL('../src/server/index.ts',import.meta.url),'utf8')
+const config=await readFile(new URL('../src/pages/Configuration.tsx',import.meta.url),'utf8')
+const notifications=await readFile(new URL('../src/pages/Notifications.tsx',import.meta.url),'utf8')
+const header=await readFile(new URL('../src/components/Header.tsx',import.meta.url),'utf8')
+const migration=await readFile(new URL('../src/server/051_notification_center.sql',import.meta.url),'utf8')
+
+assert.match(server,/UPDATE notifications SET read=true WHERE id=\$1 AND user_id=\$2/)
+assert.match(server,/DELETE FROM notifications WHERE id=\$1 AND user_id=\$2/)
+assert.match(server,/page_size[\s\S]*filter[\s\S]*LIMIT \$3 OFFSET \$4/)
+assert.match(server,/notification_preferences\?\.partyInvites!==false/)
+assert.match(server,/notification_preferences\?\.vipUpdates!==false/)
+assert.match(server,/VIP Expired/)
+assert.match(server,/notification_preferences\?\.shopPurchases!==false/)
+assert.match(server,/notification_preferences\?\.walletTransactions!==false/)
+assert.match(server,/notification_preferences->>'matchFound'/)
+assert.match(server,/notification_preferences->>'messages'/)
+assert.match(server,/ON CONFLICT\(user_id,event_key\)/)
+assert.match(migration,/UNIQUE INDEX IF NOT EXISTS notifications_user_event_unique/)
+assert.match(config,/ACTIVE SESSIONS/)
+assert.match(config,/authAPI\.revokeSession/)
+assert.doesNotMatch(config,/session\.token/)
+assert.match(config,/Party Invites/)
+assert.match(header,/RECENT NOTIFICATIONS/)
+assert.match(header,/pageSize:5/)
+assert.match(notifications,/pagination\.totalPages/)
+assert.match(notifications,/MARK ALL READ/)
+assert.match(notifications,/notificationView/)
+
+console.log('Settings and notification center checks passed (21 assertions).')

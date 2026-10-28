@@ -163,8 +163,13 @@ export const userAPI = {
   getProfile: async () =>
     apiFetch('/user/profile'),
 
-  getPublicProfile: async (userId: string) =>
-    apiFetch(`/users/${userId}/profile`),
+  getPublicProfile: async (userId: string,gameId='hl1') =>
+    apiFetch(`/users/${userId}/profile?game_id=${encodeURIComponent(gameId)}`),
+
+  discoverPlayers:async(filters:{search?:string;gameId:string;rank?:number;sort?:'rating'|'activity'|'joined';page?:number;pageSize?:number})=>{
+    const params=new URLSearchParams({search:filters.search||'',game_id:filters.gameId,rank:String(filters.rank||0),sort:filters.sort||'rating',page:String(filters.page||1),page_size:String(filters.pageSize||20)})
+    return apiFetch(`/players?${params.toString()}`)
+  },
 
   updateProfile: async (updates: Record<string, any>) =>
     apiFetch('/user/profile', { method: 'PUT', body: JSON.stringify(updates) }),
@@ -172,14 +177,14 @@ export const userAPI = {
   changeDisplayName: async (displayName: string) =>
     apiFetch('/user/display-name', { method: 'POST', body: JSON.stringify({ displayName }) }),
 
-  upgradeToVIP: async (productId: string) =>
-    apiFetch('/user/vip/purchase', { method: 'POST', body: JSON.stringify({ productId, method: 'points' }) }),
+  upgradeToVIP: async (productId: string,idempotencyKey:string) =>
+    apiFetch('/user/vip/purchase', { method: 'POST',headers:{'Idempotency-Key':idempotencyKey},body: JSON.stringify({ productId, method: 'points' }) }),
 
   cancelVIP: async () =>
     apiFetch('/user/vip/cancel', { method: 'POST' }),
 
-  purchaseFrame: async (frameId: string) =>
-    apiFetch('/user/frame/purchase', { method: 'POST', body: JSON.stringify({ frameId }) }),
+  purchaseFrame: async (frameId: string,idempotencyKey:string) =>
+    apiFetch('/user/frame/purchase', { method: 'POST',headers:{'Idempotency-Key':idempotencyKey},body: JSON.stringify({ frameId }) }),
 
   equipBadge: async (badgeId: string) =>
     apiFetch('/user/badge/equip', { method: 'POST', body: JSON.stringify({ badgeId }) }),
@@ -325,8 +330,8 @@ export const chatAPI = {
 // =====================================================
 
 export const notificationsAPI = {
-  getNotifications: async () =>
-    apiFetch('/notifications'),
+  getNotifications: async ({page=1,pageSize=20,filter='all'}:{page?:number;pageSize?:number;filter?:'all'|'unread'}={}) =>
+    apiFetch(`/notifications?page=${page}&page_size=${pageSize}&filter=${filter}`),
 
   markAsRead: async (notificationId: string) =>
     apiFetch(`/notifications/${notificationId}/read`, { method: 'PUT' }),

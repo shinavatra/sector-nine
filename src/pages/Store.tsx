@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Crown, ImageOff, Loader2, RefreshCw, ShieldCheck, ShoppingBag } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "../components/ui/badge";
@@ -10,6 +10,7 @@ import { storeAPI, userAPI } from "../utils/api";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { FramedAvatar } from "../components/FramedAvatar";
 import { playerInitials } from "../utils/displayName";
+import { AlertDialog,AlertDialogAction,AlertDialogCancel,AlertDialogContent,AlertDialogDescription,AlertDialogFooter,AlertDialogHeader,AlertDialogTitle } from "../components/ui/alert-dialog";
 
 interface StoreProps {
   onNavigate?: (page: string) => void;
@@ -27,8 +28,7 @@ type StoreProduct={
   vip_only:boolean
   featured:boolean
   purchasable:boolean
-  metadata?:{assetUrl?:string|null;thumbnailUrl?:string|null;purchasable?:boolean}
-  metadata?:{benefits?:string[]}
+  metadata?:{assetUrl?:string|null;thumbnailUrl?:string|null;purchasable?:boolean;benefits?:string[]}
 }
 type StoreFrame={
   id:string
@@ -39,6 +39,8 @@ type StoreFrame={
   price_points:number
   vip_only:boolean
   featured:boolean
+  purchasable:boolean
+  metadata?:{assetUrl?:string|null;thumbnailUrl?:string|null;purchasable?:boolean}
 }
 export function Store({ onNavigate, isPremium = false }: StoreProps) {
   const {user,adoptProfile}=useUser()
@@ -48,13 +50,17 @@ export function Store({ onNavigate, isPremium = false }: StoreProps) {
   const [error,setError]=useState('')
   const [purchasing,setPurchasing]=useState<string|null>(null)
   const [success,setSuccess]=useState('')
+  const [purchases,setPurchases]=useState<any[]>([])
+  const [pendingFrame,setPendingFrame]=useState<StoreFrame|null>(null)
+  const purchaseKeys=useRef(new Map<string,string>())
 
   const load=async()=>{
     setLoading(true);setError('')
     try{
-      const response:any=await storeAPI.getCatalog()
+      const [response,history]:any[]=await Promise.all([storeAPI.getCatalog(),storeAPI.getPurchaseHistory()])
       setProducts(Array.isArray(response?.products)?response.products:[])
       setFrames(Array.isArray(response?.frames)?response.frames:[])
+      setPurchases(Array.isArray(history?.purchases)?history.purchases:[])
     }catch(reason:unknown){
       setError(reason instanceof Error?reason.message:'Unable to load the Store catalog.')
     }finally{setLoading(false)}
@@ -64,11 +70,16 @@ export function Store({ onNavigate, isPremium = false }: StoreProps) {
   const buyFrame=async(frame:StoreFrame)=>{
     setPurchasing(frame.id);setSuccess('')
     try{
-      const response:any=await userAPI.purchaseFrame(frame.id)
+      const key=purchaseKeys.current.get(frame.id)||crypto.randomUUID()
+      purchaseKeys.current.set(frame.id,key)
+      const response:any=await userAPI.purchaseFrame(frame.id,key)
       if(!response?.profile)throw new Error('The server did not return the updated profile.')
       adoptProfile(response.profile)
+      purchaseKeys.current.delete(frame.id)
+      setPendingFrame(null)
       setSuccess(`${frame.name} was added to your frame collection.`)
       toast.success('Frame purchased',{description:`${frame.name} is now owned.`})
+      void load()
     }catch(reason:unknown){
       const message=reason instanceof Error?reason.message:'Unable to purchase this frame.'
       setError(message)
@@ -92,9 +103,10 @@ export function Store({ onNavigate, isPremium = false }: StoreProps) {
 
     {loading?<div className="grid min-h-[50vh] place-items-center"><div className="flex items-center gap-3 font-mono text-gray-400"><Loader2 className="size-6 animate-spin text-orange-400"/>Loading PostgreSQL catalog...</div></div>
       :<Tabs defaultValue="vip" className="space-y-6">
-        <TabsList className="grid h-auto w-full grid-cols-2 border border-orange-900/20 bg-black/40">
+        <TabsList className="grid h-auto w-full grid-cols-3 border border-orange-900/20 bg-black/40">
           <TabsTrigger value="vip" className="font-mono data-[state=active]:bg-yellow-900/20 data-[state=active]:text-yellow-400">VIP</TabsTrigger>
           <TabsTrigger value="frames" className="font-mono data-[state=active]:bg-orange-900/20 data-[state=active]:text-orange-400">PROFILE FRAMES</TabsTrigger>
+          <TabsTrigger value="history" className="font-mono data-[state=active]:bg-orange-900/20 data-[state=active]:text-orange-400">HISTORY</TabsTrigger>
         </TabsList>
 
         <TabsContent value="vip" className="space-y-5">
@@ -121,7 +133,7 @@ export function Store({ onNavigate, isPremium = false }: StoreProps) {
             return <Card key={frame.id} className="border-orange-900/20 bg-black/40">
               <CardHeader className="text-center"><FrameStorePreview frame={frame} avatar={user?.resolvedAvatar} initials={playerInitials(user)}/><CardTitle className="text-base text-orange-300">{frame.name}</CardTitle><div className="flex flex-wrap justify-center gap-2"><Badge variant="outline">{frame.rarity}</Badge>{frame.featured&&<Badge className="bg-orange-950 text-orange-300">Featured</Badge>}{rewardOnly&&<Badge variant="outline">Reward only</Badge>}</div></CardHeader>
               <CardContent><p className="mb-4 min-h-10 text-center text-sm text-gray-400">{frame.description||'Profile frame'}</p>
-                <Button className="w-full" disabled={owned||rewardOnly||unavailable||insufficient||purchasing===frame.id} onClick={()=>buyFrame(frame)}>
+                <Button className="w-full" disabled={owned||rewardOnly||unavailable||insufficient||purchasing===frame.id} onClick={()=>setPendingFrame(frame)}>
                   {purchasing===frame.id?<><Loader2 className="mr-2 size-4 animate-spin"/>Purchasing...</>:owned?'Owned':rewardOnly?'Reward only':unavailable?'VIP required':insufficient?`${frame.price_points.toLocaleString()} PTS`:frame.price_points===0?'Claim':`${frame.price_points.toLocaleString()} PTS`}
                 </Button>
               </CardContent>
@@ -129,7 +141,12 @@ export function Store({ onNavigate, isPremium = false }: StoreProps) {
           })}</div>:<EmptyState title="No frames available" description="There are no active profile frames in PostgreSQL."/>}
         </TabsContent>
 
+        <TabsContent value="history">
+          <Card className="border-orange-900/20 bg-black/40"><CardHeader><CardTitle className="font-mono text-orange-400">FL POINTS TRANSACTIONS</CardTitle></CardHeader><CardContent>{purchases.length?<div className="space-y-2">{purchases.map(purchase=>{const debit=purchase.direction!=='credit';return <div key={purchase.id} className="flex flex-col gap-2 rounded border border-orange-900/20 bg-black/25 p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-sm text-gray-200">{purchase.item_name}</p><p className="text-xs text-gray-500">{purchase.created_at?new Date(purchase.created_at).toLocaleString():'Date unavailable'} · {purchase.status}{purchase.balance_after!=null?` · Balance ${Number(purchase.balance_after).toLocaleString()}`:''}</p></div><span className={`font-mono text-sm ${debit?'text-red-300':'text-green-300'}`}>{debit?'-':'+'}{Number(purchase.points_amount||0).toLocaleString()} FL Points</span></div>})}</div>:<EmptyState title="No transaction history" description="Completed Store and VIP point transactions will appear here."/>}</CardContent></Card>
+        </TabsContent>
+
       </Tabs>}
+    <AlertDialog open={Boolean(pendingFrame)} onOpenChange={open=>{if(!open&&!purchasing)setPendingFrame(null)}}><AlertDialogContent className="border-orange-900/40 bg-[#0b0b0b]"><AlertDialogHeader><AlertDialogTitle className="font-mono text-orange-300">CONFIRM FRAME PURCHASE</AlertDialogTitle><AlertDialogDescription>Purchase {pendingFrame?.name} for {Number(pendingFrame?.price_points||0).toLocaleString()} FL Points? The frame will be added to Owned Frames but will not be equipped automatically.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={Boolean(purchasing)}>CANCEL</AlertDialogCancel><AlertDialogAction disabled={!pendingFrame||Boolean(purchasing)} onClick={event=>{event.preventDefault();if(pendingFrame)void buyFrame(pendingFrame)}}>{purchasing?'PURCHASING...':'CONFIRM PURCHASE'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </div>
 }
 

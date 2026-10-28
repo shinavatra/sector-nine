@@ -23,6 +23,8 @@ import { FramedAvatar } from "../components/FramedAvatar";
 import { displayPlayerName } from "../utils/displayName";
 import { isAdminUser, showPlayerProgression } from "../utils/userRole";
 import { RetroXpProgress } from "../components/RetroXpProgress";
+import { useGame } from "../contexts/GameContext";
+import { statsAPI } from "../utils/api";
 
 interface ProfileProps {
   onNavigate?: (page: string) => void;
@@ -48,10 +50,13 @@ const rarityClass: Record<string, string> = {
 
 export function Profile({ onNavigate, isPremium }: ProfileProps) {
   const { user } = useUser();
+  const { selectedGame } = useGame();
   const [catalog, setCatalog] = useState<CatalogBadge[]>([]);
   const [achievementsLoading, setAchievementsLoading] = useState(true);
   const [achievementsError, setAchievementsError] = useState("");
   const [customization, setCustomization] = useState<any>(null);
+  const [gameStats,setGameStats]=useState<any>(null);
+  const [gameStatsLoading,setGameStatsLoading]=useState(true);
 
   useEffect(() => {
     let active = true;
@@ -82,6 +87,8 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
     return()=>{active=false};
   },[user?.id,user?.equippedFrame]);
 
+  useEffect(()=>{let active=true;setGameStatsLoading(true);statsAPI.getUserStats(selectedGame.id).then((response:any)=>{if(active)setGameStats(response?.stats||null)}).catch(()=>{if(active)setGameStats(null)}).finally(()=>{if(active)setGameStatsLoading(false)});return()=>{active=false}},[selectedGame.id,user?.id]);
+
   const ownedBadgeIds = useMemo(() => new Set(user?.ownedBadges || []), [user?.ownedBadges]);
   const earnedAchievements = useMemo(
     () => catalog.filter((achievement) => ownedBadgeIds.has(achievement.id)),
@@ -103,11 +110,11 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
   const name = displayPlayerName(user);
   const isAdmin = isAdminUser(user);
   const hasPlayerProgression = showPlayerProgression(user);
-  const wins = Number(user.stats?.wins || 0);
-  const losses = Number(user.stats?.losses || 0);
-  const matches = Number(user.stats?.matchesPlayed || wins + losses);
-  const kills = Number(user.stats?.kills || 0);
-  const deaths = Number(user.stats?.deaths || 0);
+  const wins = Number(gameStats?.wins || 0);
+  const losses = Number(gameStats?.losses || 0);
+  const matches = Number(gameStats?.matches_played || wins + losses);
+  const kills = Number(gameStats?.total_kills || 0);
+  const deaths = Number(gameStats?.total_deaths || 0);
   const winRate = matches > 0 ? Math.round((wins / matches) * 100) : 0;
   const kda = deaths > 0 ? (kills / deaths).toFixed(2) : kills.toFixed(2);
 
@@ -127,7 +134,7 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
         <div>
           <h1 className="font-mono text-3xl font-bold text-orange-400">PERSONNEL PROFILE</h1>
           <p className="mt-1 font-mono text-sm text-gray-400">
-            Identity, clearance, performance, and achievement record
+            Identity, clearance, and {selectedGame.name} competitive record
           </p>
         </div>
         <Button
@@ -279,11 +286,13 @@ export function Profile({ onNavigate, isPremium }: ProfileProps) {
           <CardTitle className="font-mono text-orange-400">QUICK STATS</CardTitle>
         </CardHeader>
         <CardContent className="profile-stat-grid min-w-0">
-          <QuickStat icon={<Swords />} label="Matches" value={matches} />
-          <QuickStat icon={<Trophy />} label="Wins" value={wins} />
-          <QuickStat icon={<Target />} label="Win rate" value={`${winRate}%`} />
-          <QuickStat icon={<Crosshair />} label="Kills" value={kills} />
-          <QuickStat icon={<Flame />} label="K/D" value={kda} />
+          <QuickStat icon={<Swords />} label="Matches" value={gameStatsLoading?'—':matches} />
+          <QuickStat icon={<Trophy />} label="Wins" value={gameStatsLoading?'—':wins} />
+          <QuickStat icon={<Target />} label="Win rate" value={gameStatsLoading?'—':`${winRate}%`} />
+          <QuickStat icon={<Crosshair />} label="Kills" value={gameStatsLoading?'—':kills} />
+          <QuickStat icon={<Flame />} label="K/D" value={gameStatsLoading?'—':kda} />
+          <QuickStat icon={<Trophy />} label="Competitive rank" value={gameStatsLoading?'—':gameStats?.rank?`#${gameStats.rank}`:'Unranked'} />
+          <QuickStat icon={<Award />} label="Rating" value={gameStatsLoading?'—':Number(gameStats?.rating||0)} />
           <QuickStat icon={<Award />} label="Achievements" value={ownedBadgeIds.size} />
         </CardContent>
       </Card>

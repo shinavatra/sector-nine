@@ -53,7 +53,7 @@ const pageFallback=<div className="grid min-h-[55vh] place-items-center font-mon
 
 const pagePaths: Record<string, string> = {
   auth: '/', hub: '/hub', lobby: '/matchmaking', tournament: '/tournaments', stats: '/stats',
-  store: '/store', profile: '/profile', notifications:'/notifications', achievements:'/achievements', configuration: '/configuration', support: '/support',
+  store: '/store', matches:'/matches', 'vip-subscription':'/vip-subscription', profile: '/profile', notifications:'/notifications', achievements:'/achievements', configuration: '/configuration', support: '/support',
   'forgot-password': '/forgot-password', 'new-password': '/new-password', 'steam-callback': '/auth/steam/callback', admin: '/admin',
 };
 const authFlowPages = ['auth', 'forgot-password', 'new-password', 'steam-callback'];

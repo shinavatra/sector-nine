@@ -11,6 +11,8 @@ import { useUser } from "../contexts/UserContext";
 import { displayPlayerName, playerInitials } from "../utils/displayName";
 import { isAdminUser, showPlayerProgression } from "../utils/userRole";
 import { useGame } from "../contexts/GameContext";
+import { notificationsAPI } from "../utils/api";
+import { notifyNotificationsChanged, subscribeToNotificationChanges } from "../utils/notificationEvents";
 
 interface HeaderProps {
   onNavigate?: (page: string) => void;
@@ -24,6 +26,9 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
   const { user } = useUser();
   const {selectedGame,availableGames,setSelectedGame,lockedReason,loading:gameSaving}=useGame();
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const [notificationOpen,setNotificationOpen]=React.useState(false);
+  const [recentNotifications,setRecentNotifications]=React.useState<any[]>([]);
+  const [notificationsLoading,setNotificationsLoading]=React.useState(false);
   const playerName = displayPlayerName(user, "Player");
   const isAdmin = isAdminUser(user);
   const hasPlayerProgression = showPlayerProgression(user);
@@ -36,10 +41,14 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
     onNavigate?.(page);
   };
   React.useEffect(() => setMobileOpen(false), [currentPage]);
+  const loadRecentNotifications=React.useCallback(async()=>{if(!user)return;setNotificationsLoading(true);try{const response:any=await notificationsAPI.getNotifications({page:1,pageSize:5,filter:'all'});setRecentNotifications(Array.isArray(response?.notifications)?response.notifications:[])}finally{setNotificationsLoading(false)}},[user?.id]);
+  React.useEffect(()=>{if(notificationOpen)void loadRecentNotifications()},[notificationOpen,loadRecentNotifications]);
+  React.useEffect(()=>subscribeToNotificationChanges(()=>{if(notificationOpen)void loadRecentNotifications()}),[notificationOpen,loadRecentNotifications]);
+  const openNotification=async(item:any)=>{if(!item.read){const result:any=await notificationsAPI.markAsRead(String(item.id));notifyNotificationsChanged(result.unreadCount)}setNotificationOpen(false);const path=typeof item.action_path==='string'?item.action_path:'';if(path==='/store')onNavigate?.('store');else if(path==='/vip')onNavigate?.('vip-subscription');else if(path==='/matchmaking')onNavigate?.('lobby');else if(item.type==='friend_request')onNavigate?.('configuration');else onNavigate?.('notifications')};
   const navItems = [
     { id: 'hub', label: 'HUB' }, { id: 'lobby', label: 'MATCHMAKING' },
     { id: 'tournament', label: 'TOURNAMENTS' }, { id: 'stats', label: 'STATS' },
-    { id: 'store', label: 'STORE' }, { id: 'profile', label: 'PROFILE' },
+    { id: 'matches', label: 'MATCHES' }, { id: 'store', label: 'SHOP' }, { id: 'vip-subscription', label: 'VIP' }, { id: 'profile', label: 'PROFILE' }, { id:'achievements',label:'COLLECTION' },
     { id: 'configuration', label: 'CONFIGURATION' }, { id: 'notifications', label: 'NOTIFICATIONS' },
   ];
   const isActive = (page: string) => currentPage === page || (page === 'tournament' && currentPage.startsWith('tournaments/'));
@@ -79,7 +88,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
           </div>
 
           <nav className="primary-desktop-nav items-center justify-center gap-2 xl:gap-4" aria-label="Primary navigation">
-            {navItems.slice(0, 5).map((page) => (
+            {navItems.filter(page=>['hub','lobby','stats','matches','store'].includes(page.id)).map((page) => (
               <a
                 key={page.id}
                 href={routeFor(page.id)}
@@ -96,14 +105,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
           </nav>
 
           <div className="header-actions flex items-center justify-end space-x-3">
-            <a
-              href="/notifications"
-              aria-label="Notifications"
-              className="rounded-md p-2 text-gray-300 hover:text-orange-400 hover:bg-orange-900/10"
-              onClick={(event) => follow(event, 'notifications')}
-            >
-              <span className="relative block"><Bell className="w-5 h-5" />{notificationUnreadCount>0&&<span className="absolute -right-2 -top-2 min-w-4 rounded-full bg-red-500 px-1 text-center text-[10px] font-bold leading-4 text-white">{notificationUnreadCount>99?'99+':notificationUnreadCount}</span>}</span>
-            </a>
+            <DropdownMenu open={notificationOpen} onOpenChange={setNotificationOpen}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Notifications" className="text-gray-300 hover:bg-orange-900/10 hover:text-orange-400"><span className="relative block"><Bell className="size-5" />{notificationUnreadCount>0&&<span className="absolute -right-2 -top-2 min-w-4 rounded-full bg-red-500 px-1 text-center text-[10px] font-bold leading-4 text-white">{notificationUnreadCount>99?'99+':notificationUnreadCount}</span>}</span></Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-[min(92vw,24rem)] border-orange-900/30 bg-[#0b0b0d] p-2"><div className="flex items-center justify-between px-2 py-2"><span className="font-mono text-sm text-orange-300">RECENT NOTIFICATIONS</span><Badge variant="outline">{notificationUnreadCount} unread</Badge></div><DropdownMenuSeparator className="bg-orange-900/20"/>{notificationsLoading?<p className="p-4 text-center text-sm text-gray-500">Loading…</p>:recentNotifications.length?recentNotifications.map(item=><DropdownMenuItem key={item.id} onSelect={()=>void openNotification(item)} className="mb-1 block cursor-pointer rounded border border-orange-900/10 p-3"><div className="flex items-start justify-between gap-3"><span className="font-mono text-xs text-orange-300">{item.title}</span>{!item.read&&<span className="mt-1 size-2 shrink-0 rounded-full bg-orange-400"/>}</div><p className="mt-1 line-clamp-2 text-xs text-gray-400">{item.message}</p></DropdownMenuItem>):<p className="p-4 text-center text-sm text-gray-500">No notifications.</p>}<DropdownMenuSeparator className="bg-orange-900/20"/><DropdownMenuItem onSelect={()=>{setNotificationOpen(false);onNavigate?.('notifications')}} className="justify-center font-mono text-xs text-orange-300">VIEW ALL NOTIFICATIONS</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
