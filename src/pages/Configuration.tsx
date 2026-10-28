@@ -330,23 +330,8 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-gray-500 font-mono">Scopes competitive navigation and data.</p></div>
-                <Label className="text-gray-400 font-mono">Theme Selection</Label>
-<Select
-  value={preferredTheme}
-  onValueChange={async (value) => {
-    try {
-      await saveThemePreferences('manual', value as ThemeId);
-      setDraftThemeMode('manual');
-      setDraftTheme(value as ThemeId);
-      setSaveNotice('Theme preference saved');
-    } catch (error) {
-      toast.error('Theme update failed', {
-        description: error instanceof Error ? error.message : 'Unable to save theme',
-      });
-    }
-  }}
-  disabled={isSavingTheme}
->
+                <div className="space-y-2"><Label className="text-gray-400 font-mono">Theme Selection</Label><Select value={preferredTheme} onValueChange={async value=>{try{await saveThemePreferences('manual',value as ThemeId);setDraftThemeMode('manual');setDraftTheme(value as ThemeId);setSaveNotice('Theme preference saved')}catch(error){toast.error('Theme update failed',{description:error instanceof Error?error.message:'Unable to save theme'})}}} disabled={isSavingTheme}><SelectTrigger aria-label="Theme Selection" className="w-full border-orange-900/20 bg-black/20 font-mono text-gray-300"><SelectValue/></SelectTrigger><SelectContent className="border-orange-900/30 bg-[#111113] text-gray-200">{themeDefinitions.map(theme=><SelectItem key={theme.id} value={theme.id} disabled={!availableThemes.includes(theme.id)}>{theme.name}</SelectItem>)}</SelectContent></Select><p className="text-xs text-gray-500 font-mono">Independent manual interface theme.</p></div>
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">

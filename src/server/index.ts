@@ -1720,6 +1720,7 @@ app.post('/user/frame/equip', requireAuth, async (req: AuthRequest, res) => {
 app.get('/users/:userId/profile',optionalAuth,async(req:AuthRequest,res)=>{
   try{
     if(!validUserId(req.params.userId))return res.status(404).json({error:'Profile not found'})
+    if(req.userId&&req.userId!==req.params.userId){const ownBlock=(await pool.query('SELECT 1 FROM user_blocks WHERE blocker_id=$1 AND blocked_user_id=$2',[req.userId,req.params.userId])).rows[0];if(ownBlock){const blocked=(await pool.query(`SELECT id,username,${displayNameSql('users')} AS display_name FROM users WHERE id=$1 AND deleted_at IS NULL`,[req.params.userId])).rows[0];if(!blocked)return res.status(404).json({error:'Profile not found'});return res.json({profile:{id:blocked.id,username:blocked.username,displayName:blocked.display_name,blockedByMe:true,restricted:true}})}}
     const access=await canViewUserProfile(req.userId,req.params.userId)
     if(!access.exists)return res.status(404).json({error:'Profile not found'})
     if(!access.allowed)return res.status(403).json({error:'This profile is not visible to you',code:'PROFILE_PRIVATE'})
@@ -1727,7 +1728,7 @@ app.get('/users/:userId/profile',optionalAuth,async(req:AuthRequest,res)=>{
     if(!isSupportedGameId(gameId))return res.status(400).json({error:'Invalid game ID',code:'INVALID_GAME_ID'})
     const result=await pool.query(
       `SELECT id,username,${displayNameSql('users')} AS display_name,bio,level,experience,wins,losses,total_kills,total_deaths,equipped_frame,
-              preferred_theme,is_premium,steam_verified,country_code,created_at,CASE WHEN show_online_status THEN last_seen ELSE NULL END AS last_seen,CASE WHEN show_online_status THEN (${onlineUserPredicate('users')}) ELSE false END AS is_online,
+              preferred_theme,is_premium,vip_expires_at,steam_verified,country_code,created_at,CASE WHEN show_online_status THEN last_seen ELSE NULL END AS last_seen,CASE WHEN show_online_status THEN (${onlineUserPredicate('users')}) ELSE false END AS is_online,
               COALESCE(CASE WHEN avatar_source='custom' THEN NULLIF(custom_avatar_url,'') END,steam_avatar) AS resolved_avatar
        FROM users WHERE id=$1 AND deleted_at IS NULL`,[req.params.userId])
     const u=result.rows[0]
@@ -1745,7 +1746,7 @@ app.get('/users/:userId/profile',optionalAuth,async(req:AuthRequest,res)=>{
     ])
     const friendshipStatus=!relationship?'none':relationship.status==='accepted'?'friends':relationship.status==='pending'&&relationship.user_id===req.userId?'request_sent':relationship.status==='pending'?'request_received':'none'
     const gameStats=stats.rows[0]||null
-    return res.json({profile:{id:u.id,username:u.username,displayName:u.display_name,bio:u.bio,level:u.level,experience:u.experience,equippedFrame:u.equipped_frame,preferredTheme:u.preferred_theme,isPremium:Boolean(u.is_premium),steamVerified:u.steam_verified,countryCode:u.country_code,createdAt:u.created_at,lastSeen:u.last_seen,isOnline:u.is_online,resolvedAvatar:u.resolved_avatar,friendshipStatus,friendshipId:relationship?.id??null,blockedByMe:Boolean(blockedByMe.rows[0]),gameId,competitive:gameStats?{rating:gameStats.rating,level:gameStats.level,wins:gameStats.wins,losses:gameStats.losses,kills:gameStats.kills,deaths:gameStats.deaths,matchesPlayed:gameStats.matches_played,placementComplete:gameStats.placement_complete}:null,medals:medals.rows,badges:badges.rows,matches:matches.rows}})
+    return res.json({profile:{id:u.id,username:u.username,displayName:u.display_name,bio:u.bio,level:u.level,experience:u.experience,equippedFrame:u.equipped_frame,preferredTheme:u.preferred_theme,isPremium:Boolean(u.is_premium&&(!u.vip_expires_at||new Date(u.vip_expires_at).getTime()>Date.now())),steamVerified:u.steam_verified,countryCode:u.country_code,createdAt:u.created_at,lastSeen:u.last_seen,isOnline:u.is_online,resolvedAvatar:u.resolved_avatar,friendshipStatus,friendshipId:relationship?.id??null,blockedByMe:Boolean(blockedByMe.rows[0]),gameId,competitive:gameStats?{rating:gameStats.rating,level:gameStats.level,wins:gameStats.wins,losses:gameStats.losses,kills:gameStats.kills,deaths:gameStats.deaths,matchesPlayed:gameStats.matches_played,placementComplete:gameStats.placement_complete}:null,medals:medals.rows,badges:badges.rows,matches:matches.rows}})
   }catch(err:any){return sendDatabaseError(res,err)}
 })
 
@@ -1753,7 +1754,8 @@ app.get('/players',requireAuth,async(req:AuthRequest,res)=>{
   try{
     const search=String(req.query.search||'').trim().slice(0,64)
     const gameId=String(req.query.game_id||'hl1')
-    const rank=Math.max(0,Number.parseInt(String(req.query.rank||'0'),10)||0)
+    const rankRaw=String(req.query.rank||'0');if(!/^\d{1,2}$/.test(rankRaw))return res.status(400).json({error:'Invalid competitive rank',code:'INVALID_RANK'})
+    const rank=Number(rankRaw)
     const sort=String(req.query.sort||'rating')
     const page=Math.max(1,Number.parseInt(String(req.query.page||'1'),10)||1)
     const pageSize=Math.min(50,Math.max(8,Number.parseInt(String(req.query.page_size||'20'),10)||20))
@@ -1763,7 +1765,7 @@ app.get('/players',requireAuth,async(req:AuthRequest,res)=>{
     const pattern=`%${search.replace(/[\\%_]/g,'\\$&')}%`
     const order=sort==='activity'?`"activityAt" DESC NULLS LAST,id`:sort==='joined'?`"joinedAt" DESC,id`:'rating DESC NULLS LAST,id'
     const result=await pool.query(`WITH visible AS (
-      SELECT u.id,u.username,${displayNameSql('u')} AS "displayName",COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS "resolvedAvatar",u.equipped_frame AS "equippedFrame",u.level AS "xpLevel",u.is_premium AS "isPremium",u.created_at AS "joinedAt",CASE WHEN u.show_online_status THEN u.last_seen END AS "activityAt",CASE WHEN u.show_online_status THEN (${onlineUserPredicate('u')}) ELSE false END AS "isOnline",gs.rating,gs.wins,gs.losses,gs.placement_complete AS "placementComplete",medal.level AS "competitiveRank",f.id AS "requestId",CASE WHEN f.status='accepted' THEN 'friends' WHEN f.status='pending' AND f.user_id=$2 THEN 'request_sent' WHEN f.status='pending' THEN 'request_received' ELSE 'none' END AS "friendshipStatus"
+      SELECT u.id,u.username,${displayNameSql('u')} AS "displayName",COALESCE(CASE WHEN u.avatar_source='custom' THEN NULLIF(u.custom_avatar_url,'') END,u.steam_avatar) AS "resolvedAvatar",u.equipped_frame AS "equippedFrame",u.level AS "xpLevel",(u.is_premium AND (u.vip_expires_at IS NULL OR u.vip_expires_at>NOW())) AS "isPremium",u.created_at AS "joinedAt",CASE WHEN u.show_online_status THEN u.last_seen END AS "activityAt",CASE WHEN u.show_online_status THEN (${onlineUserPredicate('u')}) ELSE false END AS "isOnline",gs.rating,gs.wins,gs.losses,gs.placement_complete AS "placementComplete",medal.level AS "competitiveRank",f.id AS "requestId",CASE WHEN f.status='accepted' THEN 'friends' WHEN f.status='pending' AND f.user_id=$2 THEN 'request_sent' WHEN f.status='pending' THEN 'request_received' ELSE 'none' END AS "friendshipStatus"
       FROM users u LEFT JOIN user_game_stats gs ON gs.user_id=u.id AND gs.game_id=$3
       LEFT JOIN LATERAL(SELECT d.level FROM user_competitive_medals um JOIN competitive_medal_definitions d ON d.id=um.medal_id WHERE um.user_id=u.id AND um.game_id=$3 ORDER BY d.level DESC LIMIT 1) medal ON true
       LEFT JOIN LATERAL(SELECT id,user_id,friend_id,status FROM friendships WHERE (user_id=$2 AND friend_id=u.id) OR (user_id=u.id AND friend_id=$2) LIMIT 1) f ON true

@@ -20,6 +20,7 @@ const lazyPage = <T extends Record<string, unknown>>(loader: () => Promise<T>, n
   lazy(async () => ({ default: (await loader())[name] as ComponentType<any> }));
 const Profile=lazyPage(()=>import("./pages/Profile"),"Profile");
 const PublicProfile=lazyPage(()=>import("./pages/PublicProfile"),"PublicProfile");
+const PlayerDiscovery=lazyPage(()=>import("./pages/PlayerDiscovery"),"PlayerDiscovery");
 const Notifications=lazyPage(()=>import("./pages/Notifications"),"Notifications");
 const Achievements=lazyPage(()=>import("./pages/Achievements"),"Achievements");
 const ForgotPassword=lazyPage(()=>import("./pages/ForgotPassword"),"ForgotPassword");
@@ -53,7 +54,7 @@ const pageFallback=<div className="grid min-h-[55vh] place-items-center font-mon
 
 const pagePaths: Record<string, string> = {
   auth: '/', hub: '/hub', lobby: '/matchmaking', tournament: '/tournaments', stats: '/stats',
-  store: '/store', matches:'/matches', 'vip-subscription':'/vip-subscription', profile: '/profile', notifications:'/notifications', achievements:'/achievements', configuration: '/configuration', support: '/support',
+  store: '/store', matches:'/matches', 'vip-subscription':'/vip-subscription', profile: '/profile', discovery:'/players', notifications:'/notifications', achievements:'/achievements', configuration: '/configuration', support: '/support',
   'forgot-password': '/forgot-password', 'new-password': '/new-password', 'steam-callback': '/auth/steam/callback', admin: '/admin',
 };
 const authFlowPages = ['auth', 'forgot-password', 'new-password', 'steam-callback'];
@@ -237,6 +238,8 @@ const handleLogin = async (isNewUser: boolean = false) => {
         return <Suspense fallback={<div className="grid min-h-[55vh] place-items-center font-mono text-sm text-gray-400">LOADING STATISTICS...</div>}><Stats onNavigate={setCurrentPage} /></Suspense>;
       case 'profile':
         return <Profile onNavigate={setCurrentPage} isPremium={user?.isPremium || false} />;
+      case 'discovery':
+        return <PlayerDiscovery onNavigate={setCurrentPage}/>;
       case 'notifications':
         return <Notifications onNavigate={setCurrentPage} />;
       case 'achievements':

@@ -51,7 +51,7 @@ interface LeaderboardResponse {
 
 const selectClass = "border-orange-900/30 bg-black/80 text-gray-200 font-mono";
 
-export function Leaderboard() {
+export function Leaderboard({onNavigate}:{onNavigate?:(page:string)=>void}) {
   const { selectedGame } = useGame();
   const { user } = useUser();
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
@@ -200,7 +200,7 @@ export function Leaderboard() {
               {players.map(player => {
                 const isCurrentUser=player.id===user?.id;
                 return (
-                <button key={player.id} type="button" onClick={() => openProfile(player.id)} className={`flex w-full min-w-0 items-center gap-4 rounded-lg border p-4 text-left transition-colors ${rankColor(player.rank)} ${isCurrentUser?'ring-2 ring-green-500/60 bg-green-950/20':''}`}>
+                <button key={player.id} type="button" onClick={() => onNavigate?.(isCurrentUser?'profile':`profile/${encodeURIComponent(player.id)}`)} className={`flex w-full min-w-0 items-center gap-4 rounded-lg border p-4 text-left transition-colors ${rankColor(player.rank)} ${isCurrentUser?'ring-2 ring-green-500/60 bg-green-950/20':''}`}>
                   <div className="flex shrink-0 items-center gap-3">
                     <div className="flex flex-col items-center gap-1">
                       {rankIcon(player.rank)}

@@ -37,7 +37,7 @@ export function Stats({ onNavigate }: StatsProps) {
         <p className="text-gray-400 font-mono mt-1">Comprehensive analysis of experimental performance</p>
       </div>
 
-      <div className="mb-8"><Leaderboard /></div>
+      <div className="mb-8"><Leaderboard onNavigate={onNavigate}/></div>
 
       {/* Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">

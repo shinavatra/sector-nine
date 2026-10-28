@@ -33,7 +33,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
   const isAdmin = isAdminUser(user);
   const hasPlayerProgression = showPlayerProgression(user);
   
-  const routeFor = (page: string) => ({ hub: '/hub', lobby: '/matchmaking', tournament: '/tournaments', stats: '/stats', store: '/store', notifications: '/notifications', profile: '/profile', achievements:'/achievements', configuration: '/configuration' }[page] || `/${page}`);
+  const routeFor = (page: string) => ({ hub: '/hub', lobby: '/matchmaking', tournament: '/tournaments', stats: '/stats', store: '/store', notifications: '/notifications', profile: '/profile', discovery:'/players', achievements:'/achievements', configuration: '/configuration' }[page] || `/${page}`);
   const follow = (event: React.MouseEvent<HTMLAnchorElement>, page: string) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
@@ -49,7 +49,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
     { id: 'hub', label: 'HUB' }, { id: 'lobby', label: 'MATCHMAKING' },
     { id: 'tournament', label: 'TOURNAMENTS' }, { id: 'stats', label: 'STATS' },
     { id: 'matches', label: 'MATCHES' }, { id: 'store', label: 'SHOP' }, { id: 'vip-subscription', label: 'VIP' }, { id: 'profile', label: 'PROFILE' }, { id:'achievements',label:'COLLECTION' },
-    { id: 'configuration', label: 'CONFIGURATION' }, { id: 'notifications', label: 'NOTIFICATIONS' },
+    { id:'discovery',label:'FIND PLAYERS' }, { id: 'configuration', label: 'CONFIGURATION' }, { id: 'notifications', label: 'NOTIFICATIONS' },
   ];
   const isActive = (page: string) => currentPage === page || (page === 'tournament' && currentPage.startsWith('tournaments/'));
   
