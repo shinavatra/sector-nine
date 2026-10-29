@@ -125,14 +125,14 @@ export function Store({ onNavigate, isPremium = false }: StoreProps) {
         </TabsContent>
 
         <TabsContent value="frames">
-          {frames.length?<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">{frames.map(frame=>{
+          {frames.length?<div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">{frames.map(frame=>{
             const owned=ownedFrames.has(frame.id)
             const unavailable=frame.vip_only&&!vipActive
             const rewardOnly=frame.purchasable===false
             const insufficient=userPoints<Number(frame.price_points)
-            return <Card key={frame.id} className="border-orange-900/20 bg-black/40">
-              <CardHeader className="text-center"><FrameStorePreview frame={frame} avatar={user?.resolvedAvatar} initials={playerInitials(user)}/><CardTitle className="text-base text-orange-300">{frame.name}</CardTitle><div className="flex flex-wrap justify-center gap-2"><Badge variant="outline">{frame.rarity}</Badge>{frame.featured&&<Badge className="bg-orange-950 text-orange-300">Featured</Badge>}{rewardOnly&&<Badge variant="outline">Reward only</Badge>}</div></CardHeader>
-              <CardContent><p className="mb-4 min-h-10 text-center text-sm text-gray-400">{frame.description||'Profile frame'}</p>
+            return <Card key={frame.id} className="flex h-full flex-col border-orange-900/20 bg-black/40">
+              <CardHeader className="gap-3 pb-3 text-center"><FrameStorePreview frame={frame} avatar={user?.customAvatarUrl||user?.steamAvatar} initials={playerInitials(user)}/><CardTitle className="text-base text-orange-300">{frame.name}</CardTitle><div className="flex min-h-6 flex-wrap justify-center gap-2"><Badge variant="outline">{frame.rarity}</Badge>{frame.featured&&<Badge className="bg-orange-950 text-orange-300">Featured</Badge>}{rewardOnly&&<Badge variant="outline">Reward only</Badge>}</div></CardHeader>
+              <CardContent className="flex flex-1 flex-col pt-0"><p className="mb-4 line-clamp-2 min-h-10 text-center text-sm text-gray-400">{frame.description||'Profile frame'}</p>
                 <Button className="w-full" disabled={owned||rewardOnly||unavailable||insufficient||purchasing===frame.id} onClick={()=>setPendingFrame(frame)}>
                   {purchasing===frame.id?<><Loader2 className="mr-2 size-4 animate-spin"/>Purchasing...</>:owned?'Owned':rewardOnly?'Reward only':unavailable?'VIP required':insufficient?`${frame.price_points.toLocaleString()} PTS`:frame.price_points===0?'Claim':`${frame.price_points.toLocaleString()} PTS`}
                 </Button>
@@ -154,7 +154,7 @@ function FrameStorePreview({frame,avatar,initials}:{frame:StoreFrame;avatar?:str
   const [broken,setBroken]=useState(false)
   const asset=frame.metadata?.thumbnailUrl||frame.metadata?.assetUrl
   if(!asset||broken)return <div className="mx-auto mb-3 grid h-28 w-28 place-items-center rounded border border-red-900/40 bg-red-950/10 text-red-300"><div><ImageOff className="mx-auto size-6"/><span className="mt-1 block text-[10px]">PREVIEW MISSING</span></div></div>
-  return <div className="mx-auto mb-3 grid h-28 w-28 place-items-center"><FramedAvatar frameId={frame.id} className="size-20"><Avatar className="size-20"><AvatarImage src={avatar||''} alt="Profile avatar"/><AvatarFallback>{initials}</AvatarFallback></Avatar></FramedAvatar><img src={asset} alt="" className="hidden" onError={()=>setBroken(true)}/></div>
+  return <div className="mx-auto grid h-32 w-32 place-items-center overflow-visible rounded-md border border-orange-900/15 bg-black/30"><FramedAvatar frameId={frame.id} assetUrl={asset} onFrameError={()=>setBroken(true)} className="size-24"><Avatar className="size-24"><AvatarImage src={avatar||undefined} alt="Profile avatar" className="object-cover"/><AvatarFallback className="bg-neutral-900 text-lg text-orange-300">{initials}</AvatarFallback></Avatar></FramedAvatar></div>
 }
 
 function EmptyState({title,description}:{title:string;description:string}){

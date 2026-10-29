@@ -47,8 +47,8 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
   const openNotification=async(item:any)=>{if(!item.read){const result:any=await notificationsAPI.markAsRead(String(item.id));notifyNotificationsChanged(result.unreadCount)}setNotificationOpen(false);const path=typeof item.action_path==='string'?item.action_path:'';if(path==='/store')onNavigate?.('store');else if(path==='/vip')onNavigate?.('vip-subscription');else if(path==='/matchmaking')onNavigate?.('lobby');else if(item.type==='friend_request')onNavigate?.('configuration');else onNavigate?.('notifications')};
   const navItems = [
     { id: 'hub', label: 'HUB' }, { id: 'lobby', label: 'MATCHMAKING' },
-    { id: 'tournament', label: 'TOURNAMENTS' }, { id: 'stats', label: 'STATS' },
-    { id: 'matches', label: 'MATCHES' }, { id: 'store', label: 'SHOP' }, { id: 'vip-subscription', label: 'VIP' }, { id: 'profile', label: 'PROFILE' }, { id:'achievements',label:'COLLECTION' },
+    { id: 'stats', label: 'STATS' }, { id: 'tournament', label: 'TOURNAMENTS' },
+    { id: 'store', label: 'SHOP' }, { id: 'vip-subscription', label: 'VIP' }, { id: 'profile', label: 'PROFILE' }, { id:'achievements',label:'COLLECTION' },
     { id:'discovery',label:'FIND PLAYERS' }, { id: 'configuration', label: 'CONFIGURATION' }, { id: 'notifications', label: 'NOTIFICATIONS' },
   ];
   const isActive = (page: string) => currentPage === page || (page === 'tournament' && currentPage.startsWith('tournaments/'));
@@ -88,7 +88,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
           </div>
 
           <nav className="primary-desktop-nav items-center justify-center gap-2 xl:gap-4" aria-label="Primary navigation">
-            {navItems.filter(page=>['hub','lobby','stats','matches','store'].includes(page.id)).map((page) => (
+            {navItems.filter(page=>['hub','lobby','stats','tournament','store'].includes(page.id)).map((page) => (
               <a
                 key={page.id}
                 href={routeFor(page.id)}

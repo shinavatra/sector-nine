@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Checkbox } from "../components/ui/checkbox";
 import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription } from "../components/ui/alert";
-import { Globe, Zap, Map as MapIcon, Users, CheckCircle, AlertTriangle, Link2 } from "lucide-react";
+import { Globe, Zap, Map as MapIcon, Users, CheckCircle, AlertTriangle } from "lucide-react";
 import { matchmakingAPI, reportAPI } from "../utils/api";
 import { toast } from "sonner";
 import { GameQueue, type MatchmakingSnapshot } from "../components/GameQueue";
@@ -15,7 +15,6 @@ import { useGame } from "../contexts/GameContext";
 import { SUPPORTED_REGIONS, isSupportedRegionId, type SupportedRegionId } from "../shared/regions";
 import type { ReactNode } from "react";
 import { useUser } from "../contexts/UserContext";
-import { initiateSteamLogin } from "../utils/steamAuth";
 
 interface LobbyProps {
   onNavigate: (page: string) => void;
@@ -186,7 +185,11 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
       setQueue(response);
       toast.info(response.state==="searching"?"Searching for opponent...":"Match found",{description:"Matchmaking state was saved by the backend"});
     } catch (error: any) {
-      if (error.message?.includes("banned")) {
+      if (error.code === "STEAM_NOT_LINKED" || error.message?.toLowerCase().includes("connect your steam")) {
+        toast.error("Steam Account Required", {
+          description: "Connect Steam in Account Settings / Connected Accounts before entering matchmaking.",
+        });
+      } else if (error.message?.includes("banned")) {
         // Server returned 403 with ban info — refresh ban state
         await checkBanStatus();
         toast.error("Matchmaking Suspended", { description: error.message });
@@ -263,7 +266,6 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
 
         <div className="max-w-4xl mx-auto">
           <PartyPanel/>
-          {!user?.steamId&&<Alert className="mb-6 border-orange-700/50 bg-orange-950/50 text-orange-100"><Link2 className="h-4 w-4"/><AlertDescription className="flex flex-col gap-3 font-mono sm:flex-row sm:items-center sm:justify-between"><span>Connect Steam through verified OpenID before entering matchmaking.</span><Button type="button" size="sm" onClick={()=>void initiateSteamLogin('link').catch(error=>toast.error('Steam connection failed',{description:error instanceof Error?error.message:'Unable to start Steam authentication'}))}>CONNECT STEAM</Button></AlertDescription></Alert>}
           {optionsError && (
             <Alert className="mb-6 border-red-700/50 bg-red-950/70 text-red-100">
               <AlertTriangle className="h-4 w-4" />

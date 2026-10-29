@@ -1,67 +1,303 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Coins, Gamepad2, Loader2, Swords, Trophy, Users } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
-import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
+import { PlayerProfile } from "../components/PlayerProfile";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { FramedAvatar } from "../components/FramedAvatar";
-import { RetroXpProgress } from "../components/RetroXpProgress";
-import { useGame } from "../contexts/GameContext";
+import { Button } from "../components/ui/button";
+import { Play, Trophy, MessageCircle, Youtube, Twitter, Twitch, Calendar, Snowflake, Flower, Sun, Leaf, ExternalLink } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
-import { partyAPI, statsAPI } from "../utils/api";
-import { displayPlayerName, playerInitials } from "../utils/displayName";
+import { statsAPI } from "../utils/api";
+import { NewsFeed } from "../components/NewsFeed";
+import { useState, useEffect } from "react";
+import heroImage from '../assets/sector-nine-hub-hero.jpg';
+import { displayPlayerName } from "../utils/displayName";
+import { isAdminUser } from "../utils/userRole";
+import { useGame } from "../contexts/GameContext";
 
-interface HubProps { onNavigate?: (page: string) => void }
-type DashboardData={stats:any|null;matches:any[];party:any|null;invites:any[]}
-const safeNumber=(value:unknown)=>Number.isFinite(Number(value))?Number(value):0
-
-export function Hub({onNavigate}:HubProps){
-  const{user,onlineFriends}=useUser()
-  const{selectedGame}=useGame()
-  const[data,setData]=useState<DashboardData>({stats:null,matches:[],party:null,invites:[]})
-  const[loading,setLoading]=useState(true)
-  const[error,setError]=useState('')
-
-  useEffect(()=>{
-    let active=true
-    setLoading(true);setError('')
-    Promise.allSettled([statsAPI.getUserStats(selectedGame.id),statsAPI.getMatchHistory(selectedGame.id),partyAPI.get()])
-      .then(results=>{if(!active)return;const[statsResult,historyResult,partyResult]=results;const stats=statsResult.status==='fulfilled'?statsResult.value:null,history=historyResult.status==='fulfilled'?historyResult.value:null,party=partyResult.status==='fulfilled'?partyResult.value:null;setData({stats:stats?.stats||null,matches:Array.isArray(history?.matches)?history.matches.slice(0,5):[],party:party?.party||null,invites:Array.isArray(party?.invites)?party.invites:[]});const failed=results.filter(result=>result.status==='rejected');if(failed.length)setError(`${failed.length} dashboard section${failed.length===1?'':'s'} could not be loaded.`)})
-      .finally(()=>{if(active)setLoading(false)})
-    return()=>{active=false}
-  },[selectedGame.id])
-
-  if(!user)return null
-  const stats=data.stats,wins=safeNumber(stats?.wins),losses=safeNumber(stats?.losses),rating=safeNumber(stats?.rating)
-  const competitiveRank=stats?.rank==null?'UNRANKED':`#${safeNumber(stats.rank)}`
-
-  return <main className="page-container page-container-wide container mx-auto px-4 py-8">
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-      <div><p className="font-mono text-xs text-green-400">PERSONNEL DASHBOARD</p><h1 className="mt-1 font-mono text-3xl font-bold text-orange-400">WELCOME, {displayPlayerName(user).toUpperCase()}</h1><p className="mt-1 font-mono text-sm text-gray-400">Live account data for {selectedGame.name}</p></div>
-      <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>onNavigate?.('profile')}>VIEW PROFILE</Button><Button onClick={()=>onNavigate?.('lobby')}>MATCHMAKING</Button></div>
-    </div>
-    {error&&<div role="alert" className="mb-5 rounded border border-red-900/40 bg-red-950/20 p-4 font-mono text-sm text-red-200">Dashboard data failed to load: {error}</div>}
-    {loading?<div className="grid min-h-[50vh] place-items-center"><div className="flex items-center gap-3 font-mono text-gray-400"><Loader2 className="size-6 animate-spin text-orange-400"/>Loading account data...</div></div>:<>
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(18rem,.7fr)]">
-        <Card className="border-orange-900/20 bg-black/40"><CardContent className="p-5 sm:p-6"><div className="flex flex-col gap-5 sm:flex-row sm:items-center">
-          <FramedAvatar frameId={user.equippedFrame}><Avatar className="size-24 border-2 border-orange-900/40"><AvatarImage src={user.resolvedAvatar}/><AvatarFallback>{playerInitials(user)}</AvatarFallback></Avatar></FramedAvatar>
-          <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate font-mono text-2xl text-orange-300">{displayPlayerName(user)}</h2><Badge variant="outline" className={user.isPremium?'border-yellow-700/50 text-yellow-300':'text-gray-500'}>{user.isPremium?'VIP ACTIVE':'STANDARD'}</Badge></div><p className="mt-1 font-mono text-sm text-gray-500">{user.steamId?'Steam connected':'Steam not connected'}</p><RetroXpProgress className="mt-4" level={user.level} totalXp={user.experience}/></div>
-        </div></CardContent></Card>
-        <Card className="border-yellow-900/30 bg-black/40"><CardHeader><CardTitle className="flex items-center gap-2 font-mono text-yellow-300"><Coins className="size-5"/>ACCOUNT STATUS</CardTitle></CardHeader><CardContent className="space-y-3"><DataRow label="FL Points" value={safeNumber(user.points).toLocaleString()}/><DataRow label="VIP" value={user.isPremium?'Active':'Inactive'}/><DataRow label="Selected game" value={selectedGame.shortName}/><Button className="w-full" variant="outline" onClick={()=>onNavigate?.('store')}>OPEN SHOP</Button></CardContent></Card>
-      </div>
-      <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4"><Metric icon={<Trophy/>} label="Competitive rank" value={competitiveRank}/><Metric icon={<Gamepad2/>} label="Rating" value={rating}/><Metric icon={<Swords/>} label="Wins / Losses" value={`${wins} / ${losses}`}/><Metric icon={<Users/>} label="Friends online" value={onlineFriends.length}/></section>
-      <div className="mt-5 grid items-start gap-5 lg:grid-cols-3">
-        <Card className="border-orange-900/20 bg-black/40 lg:col-span-2"><CardHeader className="flex-row items-center justify-between"><CardTitle className="font-mono text-orange-400">RECENT MATCHES</CardTitle><Button size="sm" variant="ghost" onClick={()=>onNavigate?.('matches')}>VIEW ALL</Button></CardHeader><CardContent>{data.matches.length?<div className="space-y-2">{data.matches.map(match=><RecentMatch key={match.id} match={match} userId={user.id}/>)}</div>:<Empty text={`No completed ${selectedGame.shortName} matches.`}/>}</CardContent></Card>
-        <div className="space-y-5">
-          <Card className="border-green-900/25 bg-black/40"><CardHeader><CardTitle className="flex items-center gap-2 font-mono text-green-400"><Users className="size-5"/>FRIENDS ONLINE</CardTitle></CardHeader><CardContent>{onlineFriends.length?<div className="space-y-2">{onlineFriends.slice(0,6).map(friend=><button key={friend.id} className="flex w-full items-center gap-3 rounded border border-green-900/20 bg-green-950/10 p-2 text-left" onClick={()=>onNavigate?.(`profile/${encodeURIComponent(friend.id)}`)}><FramedAvatar frameId={friend.equippedFrame}><Avatar className="size-9"><AvatarImage src={friend.resolvedAvatar||''}/><AvatarFallback>{playerInitials(friend)}</AvatarFallback></Avatar></FramedAvatar><span className="min-w-0 flex-1 truncate text-sm text-gray-200">{displayPlayerName(friend)}</span><span className="size-2 rounded-full bg-green-400"/></button>)}</div>:<Empty text="No friends are online."/>}<Button className="mt-3 w-full" size="sm" variant="outline" onClick={()=>onNavigate?.('configuration')}>MANAGE FRIENDS</Button></CardContent></Card>
-          <Card className="border-orange-900/20 bg-black/40"><CardHeader><CardTitle className="font-mono text-orange-400">PARTY STATUS</CardTitle></CardHeader><CardContent>{data.party?<div className="space-y-3"><DataRow label="Members" value={`${data.party.members?.length||0}`}/><DataRow label="Queue" value={String(data.party.queue_status||'idle').toUpperCase()}/><DataRow label="Leader" value={data.party.isLeader?'You':'Party member'}/>{data.party.members?.map((member:any)=><div key={member.user_id} className="flex items-center justify-between gap-2 text-xs"><span className="truncate text-gray-300">{member.display_name||member.username}</span><span className={member.ready?'text-green-400':'text-gray-500'}>{member.ready?'READY':'NOT READY'}</span></div>)}</div>:<Empty text={data.invites.length?`${data.invites.length} pending party invite(s).`:'You are not in a party.'}/>}<Button className="mt-3 w-full" size="sm" variant="outline" onClick={()=>onNavigate?.('lobby')}>OPEN PARTY</Button></CardContent></Card>
-        </div>
-      </div>
-    </>}
-  </main>
+interface HubProps {
+  onNavigate?: (page: string) => void;
 }
 
-function Metric({icon,label,value}:{icon:ReactNode;label:string;value:string|number}){return <Card className="border-orange-900/20 bg-black/40"><CardContent className="p-4"><div className="mb-2 text-orange-400 [&>svg]:size-5">{icon}</div><p className="font-mono text-xs text-gray-500">{label}</p><p className="mt-1 font-mono text-xl text-gray-100">{value}</p></CardContent></Card>}
-function DataRow({label,value}:{label:string;value:string}){return <div className="flex items-center justify-between gap-3 border-b border-orange-900/15 pb-2 text-sm"><span className="text-gray-500">{label}</span><strong className="text-right font-mono text-gray-200">{value}</strong></div>}
-function Empty({text}:{text:string}){return <p className="rounded border border-dashed border-orange-900/25 p-5 text-center font-mono text-sm text-gray-500">{text}</p>}
-function RecentMatch({match,userId}:{match:any;userId:string}){const isP1=match.player1_id===userId,won=match.winner_id===userId,myScore=isP1?match.score_p1:match.score_p2,otherScore=isP1?match.score_p2:match.score_p1,opponent=isP1?(match.player2_display_name||match.player2_username):(match.player1_display_name||match.player1_username);return <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-orange-900/20 bg-black/25 p-3"><div><div className="flex items-center gap-2"><Badge variant="outline" className={won?'border-green-800 text-green-300':'border-red-900 text-red-300'}>{won?'WIN':'LOSS'}</Badge><span className="font-mono text-sm text-gray-200">vs {opponent}</span></div><p className="mt-1 text-xs text-gray-500">{match.selected_map||'Map not recorded'} · {match.completed_at?new Date(match.completed_at).toLocaleString():'Date not recorded'}</p></div><strong className="font-mono text-lg text-orange-300">{myScore} - {otherScore}</strong></div>}
+export function Hub({ onNavigate }: HubProps) {
+  const { user } = useUser();
+  const { selectedGame } = useGame();
+  const [platformStats, setPlatformStats] = useState<any>(null);
+  const [gameStats, setGameStats] = useState<any>(null);
+
+  useEffect(() => {
+    statsAPI.getPlatformStats()
+      .then(data => setPlatformStats(data))
+      .catch(() => {/* non-critical */});
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    statsAPI.getUserStats(selectedGame.id)
+      .then(data => { if (active) setGameStats(data?.stats || null); })
+      .catch(() => { if (active) setGameStats(null); });
+    return () => { active = false; };
+  }, [selectedGame.id]);
+
+  const numberOrZero = (value: unknown) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  };
+  const wins = numberOrZero(gameStats?.wins ?? user?.stats?.wins ?? user?.wins);
+  const losses = numberOrZero(gameStats?.losses ?? user?.stats?.losses ?? user?.losses);
+  const kills = numberOrZero(gameStats?.kills ?? user?.stats?.kills ?? user?.totalKills);
+  const deaths = numberOrZero(gameStats?.deaths ?? user?.stats?.deaths ?? user?.totalDeaths);
+  const level = numberOrZero(user?.level);
+  const experience = numberOrZero(user?.experience);
+  const playerName = displayPlayerName(user, "Operative");
+  const isAdmin = isAdminUser(user);
+  // Create player data from normalized, real profile values.
+  const playerData = {
+    name: playerName,
+    avatar: user?.resolvedAvatar || "",
+    rank: user?.isPremium ? "VIP RESEARCHER" : `LEVEL ${user?.level || 0} RESEARCHER`,
+    level,
+    totalXp: Math.max(0, experience),
+    wins,
+    losses,
+    kda: deaths > 0 ? (kills / deaths).toFixed(2) : kills > 0 ? kills.toFixed(2) : "0.00",
+    mainGames: [selectedGame.name],
+    equippedFrame: user?.equippedFrame,
+    isOnline: true,
+    isPremium: user?.isPremium ?? false,
+    isAdmin,
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Hero Section */}
+      <div className="theme-hero relative h-80 bg-gradient-to-r from-orange-900/20 to-green-900/10 overflow-hidden border-b border-orange-900/20">
+        <img
+          src={heroImage}
+          alt="Combat Operations"
+          className="theme-hero-media absolute inset-0 w-full h-full object-cover opacity-15"
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/80 to-black/40" />
+        <div className="relative container mx-auto px-4 h-full flex items-center">
+          <div className="max-w-3xl">
+            <div className="text-green-400 font-mono text-sm mb-2">SYSTEM STATUS: OPERATIONAL</div>
+            <h1 className="text-5xl font-bold mb-4 text-orange-400">SECTOR NINE INITIATIVE</h1>
+            <p className="text-lg text-gray-400 font-mono leading-relaxed">
+              QUANTUM GAMING PROTOCOLS ONLINE.<br />
+              COMPETITIVE MATCHMAKING & TOURNAMENTS.
+            </p>
+            <div className="mt-6 text-orange-400 font-mono text-sm animate-pulse">
+              &gt; AWAITING PERSONNEL DEPLOYMENT...
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="page-container page-container-wide container mx-auto px-4 py-8">
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12 lg:gap-8">
+          {/* Left Sidebar */}
+          <div className="lg:col-span-3 space-y-6">
+            <PlayerProfile player={playerData} />
+
+            <Card className="bg-black/40 border-orange-900/20">
+              <CardHeader><CardTitle className="text-orange-400 font-mono">HLTV FEED</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                <div className="py-6 text-center"><p className="text-sm font-mono text-gray-400">CONNECTING TO FEED...</p></div>
+                <Button variant="outline" className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono" onClick={() => window.open("https://hltv.org", "_blank")}>
+                  <ExternalLink className="mr-2 h-4 w-4" />VIEW MORE ON HLTV
+                </Button>
+              </CardContent>
+            </Card>
+
+
+          </div>
+
+          {/* Main Content */}
+          <div className="lg:col-span-6 space-y-6">
+            {/* Platform Stats at top */}
+            <Card className="bg-black/40 border-orange-900/20">
+              <CardHeader>
+                <CardTitle className="text-orange-400 font-mono">PLATFORM STATUS</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="text-center p-3 bg-black/20 border border-orange-900/20 rounded-lg">
+                    <div className="text-2xl font-bold text-orange-400 font-mono">{platformStats ? platformStats.totalPlayers.toLocaleString() : "---"}</div>
+                    <div className="text-xs text-gray-400 font-mono">Registered Players</div>
+                  </div>
+                  <div className="text-center p-3 bg-black/20 border border-orange-900/20 rounded-lg">
+                    <div className="text-2xl font-bold text-green-400 font-mono">{platformStats ? platformStats.activeMatches : "---"}</div>
+                    <div className="text-xs text-gray-400 font-mono">Active Matches</div>
+                  </div>
+                  <div className="text-center p-3 bg-black/20 border border-orange-900/20 rounded-lg">
+                    <div className="text-2xl font-bold text-blue-400 font-mono">{platformStats ? platformStats.totalMatches.toLocaleString() : "---"}</div>
+                    <div className="text-xs text-gray-400 font-mono">Total Matches</div>
+                  </div>
+                  <div className="text-center p-3 bg-black/20 border border-orange-900/20 rounded-lg">
+                    <div className="text-2xl font-bold text-purple-400 font-mono">{platformStats ? platformStats.activeTournaments : "---"}</div>
+                    <div className="text-xs text-gray-400 font-mono">Tournaments</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <NewsFeed />
+          </div>
+
+          {/* Right Sidebar */}
+          <div className="hub-right-rail lg:col-span-3 space-y-6">
+            {/* VIP Subscription */}
+            <Card className="gap-4 bg-gradient-to-br from-yellow-900/20 via-orange-900/20 to-green-900/20 border-yellow-900/30">
+              <CardHeader className="px-5 pt-5">
+                <CardTitle className="text-yellow-400 font-mono flex items-center">
+                  <Trophy className="w-5 h-5 mr-2" />
+                  VIP SUBSCRIPTION
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-5 pb-5">
+                <div className="space-y-4">
+                  <div className="text-center py-3">
+                    <div className="text-2xl font-bold text-yellow-400 font-mono mb-1">
+                      View current Store offer
+                    </div>
+                    <div className="text-xs text-gray-400 font-mono">per month</div>
+                  </div>
+                  <Button
+                    onClick={() => onNavigate?.('vip-subscription')}
+                    className="w-full bg-gradient-to-r from-yellow-400 to-orange-400 text-black hover:from-yellow-500 hover:to-orange-500 font-mono"
+                  >
+                    GET VIP ACCESS
+                  </Button>
+                  <div className="text-xs text-gray-400 font-mono text-center">
+                    Tournament access • +50 XP per win • 1000 bonus points
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Competitive Ladders */}
+            <Card className="gap-4 bg-black/40 border-orange-900/20">
+              <CardHeader className="px-5 pt-5">
+                <CardTitle className="text-orange-400 font-mono flex items-center">
+                  <Trophy className="w-5 h-5 mr-2" />
+                  COMPETITIVE LADDERS
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 px-5 pb-5">
+                <Button
+                  variant="outline"
+                  className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start h-auto py-4"
+                  onClick={() => onNavigate?.('monthly-ladder')}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <div className="flex items-center space-x-3">
+                      <Calendar className="w-5 h-5 text-green-400" />
+                      <div className="text-left">
+                        <div className="font-bold">MONTHLY LADDER</div>
+                        <div className="text-xs text-gray-400">Resets 1st of month</div>
+                      </div>
+                    </div>
+                    <Play className="w-4 h-4" />
+                  </div>
+                </Button>
+
+                {(() => {
+                  const now = new Date();
+                  const month = now.getMonth();
+                  let seasonName = 'WINTER';
+                  let seasonIcon = Snowflake;
+                  let seasonPage = 'winter-ladder';
+                  let borderColor = 'border-blue-900/30';
+                  let textColor = 'text-blue-400';
+                  let hoverColor = 'hover:bg-blue-900/10';
+
+                  if (month >= 2 && month <= 4) {
+                    seasonName = 'SPRING';
+                    seasonIcon = Flower;
+                    seasonPage = 'spring-ladder';
+                    borderColor = 'border-pink-900/30';
+                    textColor = 'text-pink-400';
+                    hoverColor = 'hover:bg-pink-900/10';
+                  } else if (month >= 5 && month <= 7) {
+                    seasonName = 'SUMMER';
+                    seasonIcon = Sun;
+                    seasonPage = 'summer-ladder';
+                    borderColor = 'border-yellow-900/30';
+                    textColor = 'text-yellow-400';
+                    hoverColor = 'hover:bg-yellow-900/10';
+                  } else if (month >= 8 && month <= 10) {
+                    seasonName = 'AUTUMN';
+                    seasonIcon = Leaf;
+                    seasonPage = 'autumn-ladder';
+                    borderColor = 'border-amber-900/30';
+                    textColor = 'text-amber-400';
+                    hoverColor = 'hover:bg-amber-900/10';
+                  }
+
+                  const SeasonIcon = seasonIcon;
+
+                  return (
+                    <Button
+                      variant="outline"
+                      className={`w-full ${borderColor} ${textColor} ${hoverColor} font-mono justify-start h-auto py-4`}
+                      onClick={() => onNavigate?.(seasonPage)}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <div className="flex items-center space-x-3">
+                          <SeasonIcon className={`w-5 h-5`} />
+                          <div className="text-left">
+                            <div className="font-bold">{seasonName} SEASON</div>
+                            <div className="text-xs text-gray-400">Current season</div>
+                          </div>
+                        </div>
+                        <Play className="w-4 h-4" />
+                      </div>
+                    </Button>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+
+            {/* Social Media */}
+            <Card className="gap-4 bg-black/40 border-orange-900/20">
+              <CardHeader className="px-5 pt-5">
+                <CardTitle className="text-orange-400 font-mono">FOLLOW US</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 px-5 pb-5">
+                <Button
+                  variant="outline"
+                  className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
+                  onClick={() => window.open('https://twitter.com/sectorninehl', '_blank')}
+                >
+                  <Twitter className="w-4 h-4 mr-2" />
+                  @SECTORNINEHL
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
+                  onClick={() => window.open('https://youtube.com/@sectornineinitiative', '_blank')}
+                >
+                  <Youtube className="w-4 h-4 mr-2" />
+                  SECTOR NINE INITIATIVE
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
+                  onClick={() => window.open('https://twitch.tv/sectorninehl', '_blank')}
+                >
+                  <Twitch className="w-4 h-4 mr-2" />
+                  SECTORNINEHL
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
+                  onClick={() => window.open('https://discord.gg/sectornine', '_blank')}
+                >
+                  <MessageCircle className="w-4 h-4 mr-2" />
+                  DISCORD COMMUNITY
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
