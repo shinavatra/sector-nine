@@ -111,6 +111,7 @@
     "test:friends-party": "node scripts/test-friends-party-integration.mjs",
     "test:secure-comms-realtime": "node scripts/test-secure-comms-realtime.mjs",
     "test:player-presence": "node scripts/test-player-presence.mjs",
+    "test:live-server-browser": "npm run build:server && node scripts/test-live-server-browser.mjs",
     "test:friends-party:e2e": "npm run build:server && node scripts/test-friends-party-integration-e2e.mjs",
     "test:party-matchmaking:e2e": "npm run build:server && node scripts/test-party-matchmaking-e2e.mjs",
     "test:theme-layout-assets": "npm run build && node scripts/test-theme-layout-assets.mjs",

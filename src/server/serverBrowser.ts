@@ -22,11 +22,16 @@ export interface ServerBrowserRow {
   current_match_id?:string|null
   current_match_status?:string|null
   profile_matchmaking_enabled?:boolean|null
+  has_host_profile?:boolean|null
 }
 
 const privateIpv4=(host:string)=>{
   const octets=host.split('.').map(Number)
-  return octets[0]===10||octets[0]===127||(octets[0]===169&&octets[1]===254)||(octets[0]===172&&octets[1]>=16&&octets[1]<=31)||(octets[0]===192&&octets[1]===168)||octets[0]===0
+  return octets[0]===0||octets[0]===10||octets[0]===127||octets[0]>=224||
+    (octets[0]===100&&octets[1]>=64&&octets[1]<=127)||(octets[0]===169&&octets[1]===254)||
+    (octets[0]===172&&octets[1]>=16&&octets[1]<=31)||(octets[0]===192&&[0,168].includes(octets[1]))||
+    (octets[0]===198&&[18,19].includes(octets[1]))||(octets[0]===198&&octets[1]===51&&octets[2]===100)||
+    (octets[0]===203&&octets[1]===0&&octets[2]===113)
 }
 
 export const isSafePublicServerHost=(value:unknown)=>{
@@ -35,7 +40,7 @@ export const isSafePublicServerHost=(value:unknown)=>{
   const version=isIP(host)
   if(version===4)return !privateIpv4(host)
   if(version===6)return !(host==='::'||host==='::1'||host.startsWith('fc')||host.startsWith('fd')||host.startsWith('fe8')||host.startsWith('fe9')||host.startsWith('fea')||host.startsWith('feb'))
-  return true
+  return host.includes('.')
 }
 
 export function mapServerBrowserRow(row:ServerBrowserRow,now=new Date(),staleSeconds=SERVER_HEARTBEAT_STALE_SECONDS){
@@ -49,7 +54,7 @@ export function mapServerBrowserRow(row:ServerBrowserRow,now=new Date(),staleSec
   const liveStatus:LiveServerStatus=stale||unhealthy?'offline':activeMatch||hasMatch?'in_match':storedStatus==='starting'?'starting':'online'
   const availability:ServerAvailability=liveStatus==='offline'?'offline':activeMatch?'active_match':hasMatch?'reserved':row.profile_matchmaking_enabled?'idle':'reachable'
   const endpoint=normalizePublicServerEndpoint(row.public_host,row.public_port)
-  const protectedCompetitive=Boolean(row.profile_matchmaking_enabled||hasMatch)
+  const protectedCompetitive=Boolean(row.has_host_profile||row.profile_matchmaking_enabled||hasMatch)
   const publicEndpoint=endpoint&&isSafePublicServerHost(endpoint.host)&&!protectedCompetitive?endpoint:null
   const currentPlayers=Math.max(0,Number(row.current_players)||0)
   const maxPlayers=Math.max(0,Number(row.max_slots)||0)

@@ -27,6 +27,7 @@ import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_DAYS, RefreshSessionError, 
 import { assignGroupsToTeams, groupsConflict, type QueueGroup, type TeamAssignment } from './teamMatchmaking'
 import { gameAdapter,hostableAdapter } from './gameAdapters'
 import { realtimeHub } from './realtime'
+import { mapServerBrowserRow,SERVER_HEARTBEAT_STALE_SECONDS } from './serverBrowser'
 
 dotenv.config()
 
@@ -759,6 +760,13 @@ app.post('/game-server/:id/heartbeat',async(req,res)=>{
       await db.query('INSERT INTO game_server_agent_reports(server_id,report_id,report_type,match_id,payload_hash) VALUES($1,$2,$3,$4,$5)',[server.id,report.reportId,report.type,match.id,payloadHash])
     }
     await db.query('COMMIT')
+    try{
+      const liveServer=(await pool.query(`SELECT s.id,s.name,s.game_id,s.game_mode,s.region,s.public_host,s.public_port,s.max_slots,s.status,s.current_players,s.current_map,s.last_heartbeat,s.current_match_id,m.status current_match_status,
+        EXISTS(SELECT 1 FROM host_server_profiles hp WHERE hp.game_server_id=s.id AND hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id) has_host_profile,
+        EXISTS(SELECT 1 FROM host_server_profiles hp WHERE hp.game_server_id=s.id AND hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id AND hp.matchmaking_enabled) profile_matchmaking_enabled
+        FROM game_servers s LEFT JOIN matches m ON m.id=s.current_match_id WHERE s.id=$1`,[server.id])).rows[0]
+      if(liveServer)realtimeHub.broadcast('server.status',{server:mapServerBrowserRow(liveServer)})
+    }catch(error:any){logEvent('warn','server_status_publish_failed',{serverId:server.id,message:error?.message||'unknown error'})}
     if(match&&['match_running','match_completed'].includes(report.type))await Promise.all([publishPresence(String(match.player1_id),true),publishPresence(String(match.player2_id),true)])
     logEvent('info','host_agent_report_accepted',{serverId:server.id,matchId:match?.id||null,reportType:report.type,playerCount:report.playerCount,reportId:report.type==='match_completed'?report.reportId:undefined})
     return res.json({ok:true,matchId:match?.id||null,idempotent:false})
@@ -840,15 +848,16 @@ app.post('/game-server/:id/events',async(req,res)=>{
   }catch(error:any){await db.query('ROLLBACK');if(error instanceof HostAgentEventError){logEvent('warn','host_agent_event_rejected',{serverId:req.params.id,eventId:event.eventId,code:error.code,sourceSequence:event.sequence});return res.status(error.status).json({error:error.message,code:error.code})}return sendDatabaseError(res,error)}finally{db.release()}
 })
 
-app.get('/game-servers/status',async(req,res)=>{
+app.get('/game-servers/status',requireAuth,async(req,res)=>{
   const gameId=String(req.query.game_id||'hl1')
-  if(!isSupportedGameId(gameId))return res.status(400).json({error:'Invalid game ID',code:'INVALID_GAME_ID'})
+  if(gameId!=='all'&&!isSupportedGameId(gameId))return res.status(400).json({error:'Invalid game ID',code:'INVALID_GAME_ID'})
   try{
-    const servers=await pool.query(
-      `SELECT id,name,game_id,region,public_host,public_port,max_slots,status,current_players,current_map,last_heartbeat,
-              CASE WHEN jsonb_typeof(telemetry->'players')='array' THEN telemetry->'players' ELSE '[]'::jsonb END players
-       FROM game_servers WHERE game_id=$1 ORDER BY region,name`,[gameId])
-    return res.json({servers:servers.rows})
+    const servers=await pool.query(`SELECT s.id,s.name,s.game_id,s.game_mode,s.region,s.public_host,s.public_port,s.max_slots,s.status,s.current_players,s.current_map,s.last_heartbeat,s.current_match_id,m.status current_match_status,
+      EXISTS(SELECT 1 FROM host_server_profiles hp WHERE hp.game_server_id=s.id AND hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id) has_host_profile,
+      EXISTS(SELECT 1 FROM host_server_profiles hp WHERE hp.game_server_id=s.id AND hp.host_id=s.host_id AND hp.profile_id=s.host_profile_id AND hp.matchmaking_enabled) profile_matchmaking_enabled
+      FROM game_servers s LEFT JOIN matches m ON m.id=s.current_match_id
+      WHERE ($1='all' OR s.game_id=$1) AND s.game_id IN ('hl1','cs16','cod4','l4d2') ORDER BY s.region,s.name`,[gameId])
+    return res.json({servers:servers.rows.map(row=>mapServerBrowserRow(row)),generatedAt:new Date().toISOString(),staleAfterSeconds:SERVER_HEARTBEAT_STALE_SECONDS})
   }catch(err:any){return sendDatabaseError(res,err)}
 })
 

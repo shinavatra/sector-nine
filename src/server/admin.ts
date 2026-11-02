@@ -10,6 +10,7 @@ import { adminAuthorizationRejection } from './adminAuthorization'
 import { normalizeServerEndpoint } from '../shared/serverEndpoint'
 import { createPairingCode,hashSecret,PAIRING_TTL_MINUTES } from './hostAgentAuth'
 import { deriveLiveMatchStatus,liveMatchDurationSeconds } from './liveMatchStatus'
+import { SERVER_HEARTBEAT_STALE_SECONDS } from './serverBrowser'
 
 interface AdminRequest extends Request { adminId?: string }
 const int = (value: unknown, fallback: number, max = 100) => Math.min(max, Math.max(1, Number(value) || fallback))
@@ -298,7 +299,7 @@ export function createAdminRouter(pool: Pool, jwtSecret: string) {
     }catch(e:any){res.status(e.message==='User not found'?404:400).json({error:e.message})}
   })
 
-  const safeServerColumns="id,host_id,host_profile_id,(SELECT name FROM hosts WHERE hosts.id=game_servers.host_id) AS host_name,game_id,game_mode,game,region,name,public_host,public_port,rcon_host,rcon_port,max_slots,status,playit_tunnel,current_match_id,current_players,current_map,last_heartbeat,last_error,telemetry,created_at,updated_at,(rcon_secret_encrypted IS NOT NULL AND rcon_secret_encrypted<>'') AS has_rcon,(server_token_hash IS NOT NULL AND server_token_hash<>'') AS agent_token_configured"
+  const safeServerColumns=`id,host_id,host_profile_id,(SELECT name FROM hosts WHERE hosts.id=game_servers.host_id) AS host_name,game_id,game_mode,game,region,name,public_host,public_port,rcon_host,rcon_port,max_slots,status,playit_tunnel,current_match_id,current_players,current_map,last_heartbeat,last_error,telemetry,created_at,updated_at,(rcon_secret_encrypted IS NOT NULL AND rcon_secret_encrypted<>'') AS has_rcon,(server_token_hash IS NOT NULL AND server_token_hash<>'') AS agent_token_configured,(last_heartbeat IS NULL OR last_heartbeat<NOW()-make_interval(secs=>${SERVER_HEARTBEAT_STALE_SECONDS})) AS is_stale,CASE WHEN last_heartbeat IS NULL OR last_heartbeat<NOW()-make_interval(secs=>${SERVER_HEARTBEAT_STALE_SECONDS}) OR status IN ('offline','error','unhealthy','disabled','maintenance') THEN 'offline' WHEN current_match_id IS NOT NULL THEN 'in_match' WHEN status='starting' THEN 'starting' ELSE 'online' END AS live_status`
   const safeHostColumns="id,name,region,description,CASE WHEN enabled AND credential_hash IS NOT NULL AND credential_revoked_at IS NULL AND last_seen_at>NOW()-INTERVAL '30 seconds' THEN 'online' ELSE 'offline' END AS status,enabled,agent_version,last_seen_at,capabilities,profiles,created_at,updated_at,(credential_hash IS NOT NULL AND credential_revoked_at IS NULL) AS credential_configured,pairing_expires_at,(SELECT COUNT(*)::int FROM host_server_profiles WHERE host_id=hosts.id AND removed_at IS NULL) AS profile_count,(SELECT COUNT(*)::int FROM game_servers WHERE host_id=hosts.id AND current_match_id IS NOT NULL) AS active_match_count"
   const safeProfileColumns="id,host_id,profile_id,name,game_id,game_mode,local_port,telemetry_port,reported_state,reported_match_id,approval_status,matchmaking_enabled,game_server_id,lifecycle_status,last_seen_at,removed_at,created_at,updated_at"
   router.get('/hosts',async(_req,res)=>{try{res.json({items:(await pool.query(`SELECT ${safeHostColumns} FROM hosts ORDER BY created_at DESC`)).rows})}catch(e:any){sendError(res,e)}})

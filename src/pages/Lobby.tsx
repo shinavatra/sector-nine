@@ -11,6 +11,7 @@ import { matchmakingAPI, reportAPI } from "../utils/api";
 import { toast } from "sonner";
 import { GameQueue, type MatchmakingSnapshot } from "../components/GameQueue";
 import { PartyPanel } from "../components/PartyPanel";
+import { ServerBrowser } from "../components/ServerBrowser";
 import { useGame } from "../contexts/GameContext";
 import { SUPPORTED_REGIONS, isSupportedRegionId, type SupportedRegionId } from "../shared/regions";
 import type { ReactNode } from "react";
@@ -517,6 +518,7 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
               </div>
             </CardContent>
           </Card>
+          <ServerBrowser defaultGameId={selectedGame.id}/>
         </div>
       </div>
     </div>

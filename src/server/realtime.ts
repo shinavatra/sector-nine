@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import type { Request,Response } from 'express'
 
-export type RealtimeEventType='connected'|'chat.message'|'notification.changed'|'party.invite'|'party.changed'|'presence.changed'|'presence.snapshot'
+export type RealtimeEventType='connected'|'chat.message'|'notification.changed'|'party.invite'|'party.changed'|'presence.changed'|'presence.snapshot'|'server.status'
 export type RealtimeEvent={id:string;type:RealtimeEventType;createdAt:string;payload:Record<string,unknown>}
 
 type Client={id:string;response:Response;heartbeat:ReturnType<typeof setInterval>}
@@ -42,6 +42,12 @@ export class RealtimeHub{
   publish(userIds:Iterable<string>,type:Exclude<RealtimeEventType,'connected'>,payload:Record<string,unknown>={}){
     const event=this.event(type,payload)
     for(const userId of new Set(Array.from(userIds,String))){for(const client of this.clients.get(userId)?.values()||[])this.send(client,event)}
+    return event
+  }
+
+  broadcast(type:Exclude<RealtimeEventType,'connected'>,payload:Record<string,unknown>={}){
+    const event=this.event(type,payload)
+    for(const clients of this.clients.values())for(const client of clients.values())this.send(client,event)
     return event
   }
 
