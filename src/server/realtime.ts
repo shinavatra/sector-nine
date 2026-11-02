@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import type { Request,Response } from 'express'
 
-export type RealtimeEventType='connected'|'chat.message'|'notification.changed'|'party.invite'|'party.changed'|'presence.changed'|'presence.snapshot'|'server.status'
+export type RealtimeEventType='connected'|'chat.message'|'notification.changed'|'party.invite'|'party.changed'|'presence.changed'|'presence.snapshot'|'server.status'|'match.changed'
 export type RealtimeEvent={id:string;type:RealtimeEventType;createdAt:string;payload:Record<string,unknown>}
 
 type Client={id:string;response:Response;heartbeat:ReturnType<typeof setInterval>}

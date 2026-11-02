@@ -4,7 +4,7 @@ import SourceRcon from 'rcon-srcds'
 import { hl1EngineMapName } from './hl1MatchContract'
 
 type Db=Pool|PoolClient
-type ServerRow={id:string;game_id:string;rcon_host:string;rcon_port:number;rcon_secret_encrypted:string;current_match_id?:string|null}
+type ServerRow={id:string;game_id:string;rcon_host:string;rcon_port:number;rcon_secret_encrypted:string;current_match_id?:string|null;host_id?:string|null}
 
 const encryptionKey=()=>{
   const raw=process.env.RCON_ENCRYPTION_KEY||''
@@ -59,7 +59,7 @@ export const parseServerStatus=(raw:string)=>{
   return{map,playerCount:declared?Number(declared[1]):players.length,players,raw:raw.slice(0,20000)}
 }
 
-const serverColumns='id,game_id,rcon_host,rcon_port,rcon_secret_encrypted,current_match_id'
+const serverColumns='id,game_id,rcon_host,rcon_port,rcon_secret_encrypted,current_match_id,host_id'
 
 export const probeServer=async(db:Db,server:ServerRow)=>{
   try{
@@ -77,7 +77,11 @@ export const provisionMatchServer=async(db:Db,matchId:string)=>{
   const row=(await db.query(
     `SELECT s.${serverColumns.split(',').join(',s.')},m.selected_map,m.game_mode,m.status match_status
      FROM matches m JOIN game_servers s ON s.id=m.server_id WHERE m.id=$1`,[matchId])).rows[0]
-  if(!row||!row.rcon_secret_encrypted||!row.selected_map||row.match_status!=='pending')return false
+  if(!row||!row.selected_map||row.match_status!=='pending')return false
+  // Host-managed instances consume the authenticated assignment and report the loaded map through telemetry.
+  // RCON provisioning is retained only for legacy unmanaged servers.
+  if(row.host_id)return true
+  if(!row.rcon_secret_encrypted)return false
   const engineMap=row.game_id==='hl1'?hl1EngineMapName(row.selected_map):row.selected_map
   if(!engineMap)throw new Error('Selected map has no trusted engine mapping')
   if(!/^[a-zA-Z0-9_]+$/.test(engineMap))throw new Error('Selected map contains unsupported characters')

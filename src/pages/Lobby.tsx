@@ -16,6 +16,7 @@ import { useGame } from "../contexts/GameContext";
 import { SUPPORTED_REGIONS, isSupportedRegionId, type SupportedRegionId } from "../shared/regions";
 import type { ReactNode } from "react";
 import { useUser } from "../contexts/UserContext";
+import { subscribeRealtime } from "../utils/realtime";
 
 interface LobbyProps {
   onNavigate: (page: string) => void;
@@ -125,8 +126,9 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
       }catch{/* Preserve the last confirmed backend state during transient failures. */}
     };
     matchmakingAPI.getStatus().then(state=>active&&setQueue(state)).catch(()=>{});
+    const unsubscribe=subscribeRealtime(event=>{if(event.type==='match.changed')void synchronize()});
     const poll=window.setInterval(synchronize,3000);
-    return()=>{active=false;window.clearInterval(poll)};
+    return()=>{active=false;unsubscribe();window.clearInterval(poll)};
   },[]);
 
   useEffect(() => {

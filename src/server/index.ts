@@ -28,6 +28,7 @@ import { assignGroupsToTeams, groupsConflict, type QueueGroup, type TeamAssignme
 import { gameAdapter,hostableAdapter } from './gameAdapters'
 import { realtimeHub } from './realtime'
 import { mapServerBrowserRow,SERVER_HEARTBEAT_STALE_SECONDS } from './serverBrowser'
+import { deriveParticipantMatchLifecycle } from './matchLifecycle'
 
 dotenv.config()
 
@@ -768,6 +769,7 @@ app.post('/game-server/:id/heartbeat',async(req,res)=>{
       if(liveServer)realtimeHub.broadcast('server.status',{server:mapServerBrowserRow(liveServer)})
     }catch(error:any){logEvent('warn','server_status_publish_failed',{serverId:server.id,message:error?.message||'unknown error'})}
     if(match&&['match_running','match_completed'].includes(report.type))await Promise.all([publishPresence(String(match.player1_id),true),publishPresence(String(match.player2_id),true)])
+    if(match)realtimeHub.publish([String(match.player1_id),String(match.player2_id)],'match.changed',{matchId:match.id,reportType:report.type})
     logEvent('info','host_agent_report_accepted',{serverId:server.id,matchId:match?.id||null,reportType:report.type,playerCount:report.playerCount,reportId:report.type==='match_completed'?report.reportId:undefined})
     return res.json({ok:true,matchId:match?.id||null,idempotent:false})
   }catch(err:any){await db.query('ROLLBACK');if(err instanceof HostAgentProtocolError||err instanceof TrustedMatchResultError){logEvent('warn','host_agent_report_rejected',{serverId:req.params.id,reportType:report.type,code:err.code});return res.status(err.status).json({error:err.message,code:err.code})}return sendDatabaseError(res,err)}finally{db.release()}
@@ -2088,7 +2090,11 @@ const getMatchmakingState=async(db:any,userId:string)=>{
     `SELECT m.*,mine.status AS viewer_acceptance,counts.accepted_count,counts.pending_count,
             opponent.id AS opponent_id,opponent.username AS opponent_username,${displayNameSql('opponent')} AS opponent_display_name,
             gs.id AS assigned_server_id,gs.name AS server_name,gs.region AS server_region,
-            gs.public_host AS server_host,gs.public_port AS server_port
+            gs.public_host AS server_host,gs.public_port AS server_port,gs.current_players AS server_current_players,
+            gs.current_map AS server_current_map,gs.last_heartbeat AS server_last_heartbeat,gs.last_error AS server_last_error,
+            gs.host_id,host.enabled AS host_enabled,host.last_seen_at AS host_last_seen_at,
+            hp.reported_state AS profile_reported_state,hp.reported_match_id AS profile_reported_match_id,
+            hp.lifecycle_status AS profile_lifecycle_status,hp.last_seen_at AS profile_last_seen_at
      FROM match_acceptances mine
      JOIN matches m ON m.id=mine.match_id
      JOIN users opponent ON opponent.id=CASE WHEN m.player1_id=$1 THEN m.player2_id ELSE m.player1_id END
@@ -2098,6 +2104,8 @@ const getMatchmakingState=async(db:any,userId:string)=>{
        FROM match_acceptances WHERE match_id=m.id
      ) counts ON TRUE
      LEFT JOIN game_servers gs ON gs.id=m.server_id
+     LEFT JOIN hosts host ON host.id=gs.host_id
+     LEFT JOIN host_server_profiles hp ON hp.game_server_id=gs.id AND hp.host_id=gs.host_id AND hp.profile_id=gs.host_profile_id
      WHERE mine.user_id=$1 AND m.status IN('pending','in_progress')
      ORDER BY m.created_at DESC LIMIT 1`,[userId])).rows[0]
   if(!match)return{state:'idle'}
@@ -2108,21 +2116,24 @@ const getMatchmakingState=async(db:any,userId:string)=>{
   const mapPool=(await db.query('SELECT maps FROM game_map_pools WHERE game_id=$1 AND game_mode=$2 AND is_active',[match.game_id,match.game_mode])).rows[0]?.maps||[]
   const remainingMaps=(match.maps||[]).filter((map:string)=>!bans.some((ban:any)=>ban.map_id===map))
   const requiredPlayers=Number(match.total_players||2)
-  const state=match.server_id?'server_assigned':match.accepted_count<requiredPlayers?(match.accepted_count>0?'accepting':'found'):match.selected_map?'accepted':selections.length<2?'map_selecting':'map_banning'
+  const lifecycle=match.server_id?deriveParticipantMatchLifecycle(match):null
+  const state=match.server_id?(lifecycle?.phase==='in_progress'?'in_progress':lifecycle?.phase==='waiting_for_players'?'waiting_players':lifecycle?.phase==='ready'?'server_assigned':lifecycle?.phase==='server_error'?'server_error':'server_starting'):match.accepted_count<requiredPlayers?(match.accepted_count>0?'accepting':'found'):match.selected_map?'accepted':selections.length<2?'map_selecting':'map_banning'
   const publicEndpoint=normalizePublicServerEndpoint(match.server_host,match.server_port)
-  return{state,match,viewerAccepted:match.viewer_acceptance==='accepted',acceptedCount:match.accepted_count,totalPlayers:requiredPlayers,
+  const publicMatch={id:match.id,game_id:match.game_id,game_mode:match.game_mode,selected_map:match.selected_map,maps:match.maps,opponent_id:match.opponent_id,opponent_username:match.opponent_username,opponent_display_name:match.opponent_display_name}
+  return{state,match:publicMatch,viewerAccepted:match.viewer_acceptance==='accepted',acceptedCount:match.accepted_count,totalPlayers:requiredPlayers,
     mapSelection:match.accepted_count===requiredPlayers?{requiredCount:5,availableMaps:mapPool,viewerMaps:ownSelection?.maps||[],viewerConfirmed:Boolean(ownSelection),opponentConfirmed:Boolean(opponentSelection),opponentSelectedCount:opponentSelection?.maps?.length||0,unavailableMaps:opponentSelection?.maps||[]}:null,
     mapBan:selections.length===2?{pool:match.maps||[],remainingMaps,bans,currentTurnUserId:match.map_ban_turn_user_id,isViewerTurn:String(match.map_ban_turn_user_id||'')===userId}:null,
-    server:match.server_id&&publicEndpoint?{id:match.assigned_server_id,name:match.server_name,region:match.server_region,host:publicEndpoint.host,port:publicEndpoint.port}:null}
+    lifecycle:lifecycle?{phase:lifecycle.phase,failureReason:lifecycle.failureReason,currentPlayers:Number(match.server_current_players||0),lastHeartbeat:match.server_last_heartbeat||null}:null,
+    server:match.server_id&&lifecycle?.serverReady&&publicEndpoint?{id:match.assigned_server_id,name:match.server_name,region:match.server_region,host:publicEndpoint.host,port:publicEndpoint.port}:null}
 }
 
 const assignMatchmakingServer=async(db:any,matchId:string)=>{
   const match=(await db.query("SELECT id,game_id,game_mode,server_id,status,matchmaking_region,selected_map,total_players FROM matches WHERE id=$1 FOR UPDATE",[matchId])).rows[0]
-  if(!match||match.status!=='pending'||match.server_id||!match.selected_map)return
+  if(!match||match.status!=='pending'||match.server_id||!match.selected_map)return null
   if(!hostableAdapter(match.game_id,match.game_mode))throw new Error('No trusted host adapter is available for this game and mode.')
   if(!isSupportedRegionId(match.matchmaking_region))throw new Error('Match has no supported matchmaking region.')
   const accepted=Number((await db.query("SELECT COUNT(*)::int count FROM match_acceptances WHERE match_id=$1 AND status='accepted'",[matchId])).rows[0].count)
-  if(accepted!==Number(match.total_players||2))return
+  if(accepted!==Number(match.total_players||2))return null
   const server=(await db.query(
     `SELECT s.id FROM game_servers s
      LEFT JOIN hosts h ON h.id=s.host_id
@@ -2146,12 +2157,70 @@ const assignMatchmakingServer=async(db:any,matchId:string)=>{
        ))
      ORDER BY s.created_at
      FOR UPDATE OF s SKIP LOCKED LIMIT 1`,[match.game_id,match.game_mode,match.matchmaking_region,Number(match.total_players||2)])).rows[0]
-  if(!server)throw new Error(noServerInSelectedRegionError)
+  if(!server)return null
   // Keep the match pending until RCON confirms that the selected map started.
   await db.query("UPDATE matches SET server_id=$1 WHERE id=$2",[server.id,matchId])
   await db.query("UPDATE game_servers SET current_match_id=$1,status='in_use',updated_at=NOW() WHERE id=$2",[matchId,server.id])
   await db.query("UPDATE host_server_profiles SET lifecycle_status='reserved',reported_match_id=$1,updated_at=NOW() WHERE game_server_id=$2",[matchId,server.id])
+  return String(server.id)
 }
+
+const SERVER_START_TIMEOUT_SECONDS=Math.max(45,Math.min(600,Number(process.env.SERVER_START_TIMEOUT_SECONDS)||90))
+const MATCH_ACCEPT_TIMEOUT_SECONDS=Math.max(30,Math.min(600,Number(process.env.MATCH_ACCEPT_TIMEOUT_SECONDS)||90))
+const MATCH_VETO_TIMEOUT_SECONDS=Math.max(120,Math.min(1800,Number(process.env.MATCH_VETO_TIMEOUT_SECONDS)||300))
+
+const recoverFailedMatchServer=async(db:any,matchId:string)=>{
+  const row=(await db.query(`SELECT m.id,m.status,m.game_id,m.selected_map,m.server_id,m.created_at,
+      gs.current_players server_current_players,gs.current_map server_current_map,gs.last_heartbeat server_last_heartbeat,gs.last_error server_last_error,
+      gs.host_id,host.enabled host_enabled,host.last_seen_at host_last_seen_at,
+      hp.reported_state profile_reported_state,hp.reported_match_id profile_reported_match_id,hp.lifecycle_status profile_lifecycle_status,hp.last_seen_at profile_last_seen_at,
+      COALESCE((SELECT MAX(created_at) FROM match_map_bans WHERE match_id=m.id),m.created_at) reservation_started_at
+    FROM matches m LEFT JOIN game_servers gs ON gs.id=m.server_id LEFT JOIN hosts host ON host.id=gs.host_id
+    LEFT JOIN host_server_profiles hp ON hp.game_server_id=gs.id AND hp.host_id=gs.host_id AND hp.profile_id=gs.host_profile_id
+    WHERE m.id=$1 FOR UPDATE OF m`,[matchId])).rows[0]
+  if(!row?.server_id||row.status!=='pending')return false
+  const lifecycle=deriveParticipantMatchLifecycle(row)
+  const startupExpired=lifecycle.phase==='server_starting'&&Date.now()-new Date(row.reservation_started_at).getTime()>SERVER_START_TIMEOUT_SECONDS*1000
+  if(lifecycle.phase!=='server_error'&&!startupExpired)return false
+  await db.query(`INSERT INTO match_events(match_id,sequence,event_type,occurred_at,details)
+    SELECT $1,GREATEST(100,COALESCE(MAX(sequence),0)+1),'system',NOW(),jsonb_build_object('phase','server_reservation_failed','serverId',$2::uuid,'reason',$3::text)
+    FROM match_events WHERE match_id=$1`,[row.id,row.server_id,startupExpired?'startup_timeout':lifecycle.failureReason])
+  await db.query("UPDATE game_servers SET current_match_id=NULL,status='offline',last_error=COALESCE(last_error,$1),updated_at=NOW() WHERE id=$2 AND current_match_id=$3",[startupExpired?'Server startup confirmation timed out':lifecycle.failureReason,row.server_id,row.id])
+  await db.query("UPDATE host_server_profiles SET lifecycle_status='server_error',reported_match_id=NULL,updated_at=NOW() WHERE game_server_id=$1",[row.server_id])
+  await db.query('UPDATE matches SET server_id=NULL WHERE id=$1 AND server_id=$2',[row.id,row.server_id])
+  logEvent('warn','match_server_reservation_recovered',{matchId:row.id,serverId:row.server_id,reason:startupExpired?'startup_timeout':lifecycle.failureReason})
+  return true
+}
+
+const expireAbandonedMatchmaking=async()=>{
+  const db=await pool.connect()
+  try{
+    await db.query('BEGIN')
+    const expired=(await db.query(`SELECT m.id,m.server_id,
+        CASE WHEN EXISTS(SELECT 1 FROM match_acceptances ma WHERE ma.match_id=m.id AND ma.status='pending') THEN 'acceptance_timeout' ELSE 'veto_timeout' END reason
+      FROM matches m WHERE m.status='pending' AND (
+        (m.created_at<NOW()-make_interval(secs=>$1) AND EXISTS(SELECT 1 FROM match_acceptances ma WHERE ma.match_id=m.id AND ma.status='pending')) OR
+        (NOT EXISTS(SELECT 1 FROM match_acceptances ma WHERE ma.match_id=m.id AND ma.status='pending') AND m.selected_map IS NULL AND
+          GREATEST(m.created_at,COALESCE((SELECT MAX(responded_at) FROM match_acceptances ma WHERE ma.match_id=m.id),m.created_at),COALESCE((SELECT MAX(confirmed_at) FROM match_map_selections ms WHERE ms.match_id=m.id),m.created_at),COALESCE((SELECT MAX(created_at) FROM match_map_bans mb WHERE mb.match_id=m.id),m.created_at))<NOW()-make_interval(secs=>$2))
+      ) FOR UPDATE OF m SKIP LOCKED`,[MATCH_ACCEPT_TIMEOUT_SECONDS,MATCH_VETO_TIMEOUT_SECONDS])).rows
+    for(const match of expired){
+      if(match.server_id){await db.query("UPDATE game_servers SET current_match_id=NULL,status=CASE WHEN status='in_use' THEN 'online' ELSE status END,updated_at=NOW() WHERE id=$1 AND current_match_id=$2",[match.server_id,match.id]);await db.query("UPDATE host_server_profiles SET lifecycle_status='idle',reported_match_id=NULL,updated_at=NOW() WHERE game_server_id=$1",[match.server_id])}
+      await db.query(`INSERT INTO match_events(match_id,sequence,event_type,occurred_at,details)
+        SELECT $1,GREATEST(100,COALESCE(MAX(sequence),0)+1),'system',NOW(),jsonb_build_object('phase',$2::text,'reason',$2::text)
+        FROM match_events WHERE match_id=$1`,[match.id,match.reason])
+      await db.query("UPDATE matches SET status='cancelled',completed_at=NOW(),server_id=NULL WHERE id=$1",[match.id])
+      await db.query("UPDATE parties SET queue_status='idle',updated_at=NOW() WHERE id IN(SELECT party_id FROM match_participants WHERE match_id=$1 AND party_id IS NOT NULL)",[match.id])
+      await db.query(`INSERT INTO notifications(user_id,type,title,message,related_match_id,event_key,action_path)
+        SELECT user_id,'system','Match cancelled',CASE WHEN $2='acceptance_timeout' THEN 'The match acceptance window expired.' ELSE 'The map veto timed out.' END,$1,'match-expired:'||$1::text||':'||user_id::text,'/matchmaking'
+        FROM match_participants WHERE match_id=$1 ON CONFLICT(user_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,[match.id,match.reason])
+    }
+    await db.query('COMMIT')
+    for(const match of expired){const users=(await pool.query('SELECT user_id FROM match_participants WHERE match_id=$1',[match.id])).rows.map((row:any)=>String(row.user_id));realtimeHub.publish(users,'notification.changed',{});logEvent('info','abandoned_matchmaking_expired',{matchId:match.id,reason:match.reason})}
+  }catch(error:any){await db.query('ROLLBACK');logEvent('warn','matchmaking_expiry_failed',{message:error?.message||'unknown error'})}finally{db.release()}
+}
+
+const matchmakingRecoveryTimer=setInterval(()=>void expireAbandonedMatchmaking(),30_000)
+matchmakingRecoveryTimer.unref?.()
 
 const pairQueuedPlayer=async(db:any,userId:string)=>{
   await db.query('SELECT pg_advisory_xact_lock($1)',[7392026])
@@ -2321,13 +2390,16 @@ app.get('/matchmaking/options',requireAuth,async(req:AuthRequest,res)=>{
 
 app.post('/matchmaking/sync',requireAuth,async(req:AuthRequest,res)=>{
   const db=await pool.connect()
+  let assignedMatchId:string|null=null
   try{
     await db.query('BEGIN')
     const current=await getMatchmakingState(db,req.userId!)
     if(current.state==='searching')await pairQueuedPlayer(db,req.userId!)
-    const paired=await getMatchmakingState(db,req.userId!)
-    if(paired.match?.id)await assignMatchmakingServer(db,paired.match.id)
+    let paired=await getMatchmakingState(db,req.userId!)
+    if(paired.match?.id){await recoverFailedMatchServer(db,paired.match.id);paired=await getMatchmakingState(db,req.userId!)}
+    if(paired.match?.id&&await assignMatchmakingServer(db,paired.match.id))assignedMatchId=String(paired.match.id)
     await db.query('COMMIT')
+    if(assignedMatchId)await provisionMatchServer(pool,assignedMatchId)
     return res.json(await getMatchmakingState(pool,req.userId!))
   }catch(err:any){await db.query('ROLLBACK');return err?.message===noServerInSelectedRegionError?res.status(409).json({error:noServerInSelectedRegionError,code:'NO_SERVER_IN_SELECTED_REGION'}):sendDatabaseError(res,err)}finally{db.release()}
 })
@@ -2384,6 +2456,7 @@ app.post('/matchmaking/maps',requireAuth,async(req:AuthRequest,res)=>{
 
 app.post('/matchmaking/ban-map',requireAuth,async(req:AuthRequest,res)=>{
   const db=await pool.connect()
+  let assigned=false
   try{
     await db.query('BEGIN')
     const match=(await db.query(
@@ -2405,13 +2478,13 @@ app.post('/matchmaking/ban-map',requireAuth,async(req:AuthRequest,res)=>{
     const nextRemaining=remaining.filter((map:string)=>map!==mapId)
     if(nextRemaining.length===1){
       await db.query('UPDATE matches SET selected_map=$1,map_ban_turn_user_id=NULL WHERE id=$2',[nextRemaining[0],match.id])
-      await assignMatchmakingServer(db,match.id)
+      assigned=Boolean(await assignMatchmakingServer(db,match.id))
     }else{
       const nextUser=String(match.player1_id)===req.userId?match.player2_id:match.player1_id
       await db.query('UPDATE matches SET map_ban_turn_user_id=$1 WHERE id=$2',[nextUser,match.id])
     }
     await db.query('COMMIT')
-    if(nextRemaining.length===1)await provisionMatchServer(pool,match.id)
+    if(nextRemaining.length===1&&assigned)await provisionMatchServer(pool,match.id)
     return res.json(await getMatchmakingState(pool,req.userId!))
   }catch(err:any){await db.query('ROLLBACK');return sendDatabaseError(res,err)}finally{db.release()}
 })

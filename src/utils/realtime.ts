@@ -1,7 +1,7 @@
 import{getApiBaseUrl,getSessionToken,refreshSessionAccessToken}from'./api'
 
 export type RealtimeStatus='connecting'|'connected'|'reconnecting'|'disconnected'
-export type SectorRealtimeEvent={id:string;type:'connected'|'chat.message'|'notification.changed'|'party.invite'|'party.changed'|'presence.changed'|'presence.snapshot'|'server.status';createdAt:string;payload:Record<string,any>}
+export type SectorRealtimeEvent={id:string;type:'connected'|'chat.message'|'notification.changed'|'party.invite'|'party.changed'|'presence.changed'|'presence.snapshot'|'server.status'|'match.changed';createdAt:string;payload:Record<string,any>}
 type EventListener=(event:SectorRealtimeEvent)=>void
 type StatusListener=(status:RealtimeStatus)=>void
 

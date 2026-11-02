@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { displayPlayerName } from "../utils/displayName";
 import { buildConnectCommand, buildSteamConnectUri, normalizePublicServerEndpoint } from "../shared/serverEndpoint";
 
-export type MatchmakingState = "idle" | "searching" | "found" | "accepting" | "map_selecting" | "map_banning" | "accepted" | "server_assigned";
+export type MatchmakingState = "idle" | "searching" | "found" | "accepting" | "map_selecting" | "map_banning" | "accepted" | "server_starting" | "server_assigned" | "waiting_players" | "in_progress" | "server_error";
 
 export interface MatchmakingSnapshot {
   state: MatchmakingState;
@@ -19,6 +19,7 @@ export interface MatchmakingSnapshot {
   mapSelection?: { requiredCount: number; availableMaps: string[]; viewerMaps: string[]; viewerConfirmed: boolean; opponentConfirmed: boolean; opponentSelectedCount: number; unavailableMaps: string[] } | null;
   mapBan?: { pool: string[]; remainingMaps: string[]; bans: Array<{ sequence: number; user_id: string; map_id: string; created_at: string }>; currentTurnUserId: string | null; isViewerTurn: boolean } | null;
   server?: { id: string; name: string; region: string; host: string; port: number } | null;
+  lifecycle?: { phase: string; failureReason: string | null; currentPlayers: number; lastHeartbeat: string | null } | null;
 }
 
 interface GameQueueProps {
@@ -38,7 +39,7 @@ interface GameQueueProps {
 
 const labels: Record<MatchmakingState, string> = {
   idle: "READY", searching: "SEARCHING", found: "MATCH FOUND", accepting: "ACCEPTING",
-  map_selecting: "MAP SELECTION", map_banning: "MAP VETO", accepted: "MAP SELECTED", server_assigned: "SERVER ASSIGNED",
+  map_selecting: "MAP SELECTION", map_banning: "MAP VETO", accepted: "MAP SELECTED", server_starting:"SERVER STARTING",server_assigned: "SERVER READY",waiting_players:"WAITING FOR PLAYERS",in_progress:"MATCH IN PROGRESS",server_error:"SERVER ERROR",
 };
 
 export function GameQueue({ snapshot, busy = false, disabled = false, onStart, onCancel, onAccept, onDecline, onSubmitMaps, onBanMap, selectedGame, connectedRegion, selectedMaps }: GameQueueProps) {
@@ -75,8 +76,11 @@ export function GameQueue({ snapshot, busy = false, disabled = false, onStart, o
         {state === "map_selecting" && <State icon={<Map className="size-7"/>} title="SELECT 5 MAPS" detail={selection?.viewerConfirmed ? "Your five maps are locked. Waiting for your opponent." : `Choose five maps not already claimed by your opponent (${selection?.opponentSelectedCount || 0}/5).`}/>}
         {state === "map_banning" && <State icon={<Map className="size-7"/>} title="MAP VETO" detail={veto?.isViewerTurn ? "Your turn. Ban one map from the remaining pool." : "Opponent's turn. Waiting for their ban."}/>}
         {state === "accepted" && <State icon={<CheckCircle2 className="size-7"/>} title="FINAL MAP SELECTED" detail={`${snapshot.match?.selected_map?.toUpperCase() || "The final map"} remains. Waiting for an available server.`}/>}
-        {state === "server_assigned" && (!snapshot.server||!endpoint) && <State icon={<Loader2 className="size-7 animate-spin"/>} title="WAITING FOR GAME SERVER" detail="Waiting for game server..."/>}
-        {state === "server_assigned" && snapshot.server && endpoint && <div className="rounded border border-green-800/40 bg-green-950/15 p-4 text-center"><Server className="mx-auto size-7 text-green-400"/><p className="mt-2 font-mono font-bold text-green-400">SERVER READY</p><p className="mt-2 font-mono text-sm text-orange-200">{snapshot.server.name}</p><p className="mt-1 font-mono text-xs text-gray-400">{snapshot.server.region}</p><p className="mt-3 break-all rounded border border-orange-900/30 bg-black/40 px-3 py-2 font-mono text-sm text-green-300">{endpoint.endpoint}</p><div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">{steamConnectUri&&<Button asChild className="w-full bg-green-800 text-green-100 hover:bg-green-700 sm:w-auto"><a href={steamConnectUri}><ExternalLink/>CONNECT TO SERVER</a></Button>}<Button type="button" variant="outline" onClick={()=>void copyConnectCommand()} className="w-full border-orange-800/50 text-orange-200 sm:w-auto"><Copy/>COPY CONNECT COMMAND</Button></div><p className="mt-3 text-[11px] font-mono text-gray-500">If Steam does not open, copy the command and paste it into the Half-Life console.</p></div>}
+        {state === "server_starting" && <State icon={<Loader2 className="size-7 animate-spin"/>} title="SERVER STARTING" detail="The Host Agent is loading the selected map. Connection details appear after verified telemetry confirms readiness."/>}
+        {state === "server_error" && <State icon={<Server className="size-7"/>} title="SERVER START FAILED" detail={snapshot.lifecycle?.failureReason||"The assigned server is unavailable. Matchmaking will recover the reservation safely."}/>}
+        {state === "waiting_players" && <State icon={<Users className="size-7"/>} title="WAITING FOR PLAYERS" detail={`${snapshot.lifecycle?.currentPlayers||0}/${snapshot.totalPlayers||2} players detected on the assigned server.`}/>}
+        {state === "in_progress" && <State icon={<Gamepad2 className="size-7"/>} title="MATCH IN PROGRESS" detail="Trusted Host Agent telemetry confirms both competitors and the active match."/>}
+        {["server_assigned","waiting_players","in_progress"].includes(state) && snapshot.server && endpoint && <div className="rounded border border-green-800/40 bg-green-950/15 p-4 text-center"><Server className="mx-auto size-7 text-green-400"/><p className="mt-2 font-mono font-bold text-green-400">{state==='server_assigned'?'SERVER READY':state==='in_progress'?'MATCH SERVER':'ASSIGNED SERVER'}</p><p className="mt-2 font-mono text-sm text-orange-200">{snapshot.server.name}</p><p className="mt-1 font-mono text-xs text-gray-400">{snapshot.server.region}</p><p className="mt-3 break-all rounded border border-orange-900/30 bg-black/40 px-3 py-2 font-mono text-sm text-green-300">{endpoint.endpoint}</p><div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">{steamConnectUri&&<Button asChild className="w-full bg-green-800 text-green-100 hover:bg-green-700 sm:w-auto"><a href={steamConnectUri}><ExternalLink/>CONNECT TO SERVER</a></Button>}<Button type="button" variant="outline" onClick={()=>void copyConnectCommand()} className="w-full border-orange-800/50 text-orange-200 sm:w-auto"><Copy/>COPY CONNECT COMMAND</Button></div><p className="mt-3 text-[11px] font-mono text-gray-500">If Steam does not open, copy the command and paste it into the Half-Life console.</p></div>}
 
         {state === "map_banning" && veto && <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">{veto.remainingMaps.map(map => <Button key={map} type="button" variant="outline" disabled={busy || !veto.isViewerTurn} onClick={() => onBanMap(map)} className="h-auto min-h-10 whitespace-normal border-orange-800/50 px-2 py-2 font-mono text-xs text-orange-200 hover:bg-red-950 hover:text-red-200">{map.toUpperCase()}</Button>)}</div>}
 
