@@ -152,9 +152,9 @@ export function Store({ onNavigate, isPremium = false }: StoreProps) {
 
 function FrameStorePreview({frame,avatar,initials}:{frame:StoreFrame;avatar?:string|null;initials:string}){
   const [broken,setBroken]=useState(false)
-  const asset=frame.metadata?.thumbnailUrl||frame.metadata?.assetUrl
+  const asset=frame.metadata?.assetUrl||frame.metadata?.thumbnailUrl
   if(!asset||broken)return <div className="mx-auto mb-3 grid h-28 w-28 place-items-center rounded border border-red-900/40 bg-red-950/10 text-red-300"><div><ImageOff className="mx-auto size-6"/><span className="mt-1 block text-[10px]">PREVIEW MISSING</span></div></div>
-  return <div className="mx-auto grid h-32 w-32 place-items-center overflow-visible rounded-md border border-orange-900/15 bg-black/30"><FramedAvatar frameId={frame.id} assetUrl={asset} onFrameError={()=>setBroken(true)} className="size-24"><Avatar className="size-24"><AvatarImage src={avatar||undefined} alt="Profile avatar" className="object-cover"/><AvatarFallback className="bg-neutral-900 text-lg text-orange-300">{initials}</AvatarFallback></Avatar></FramedAvatar></div>
+  return <div className="mx-auto grid size-36 place-items-center overflow-visible rounded-md border border-orange-900/15 bg-black/30"><FramedAvatar frameId={frame.id} assetUrl={asset} onFrameError={()=>setBroken(true)} preview className="size-32"><Avatar className="size-full"><AvatarImage src={avatar||undefined} alt="Profile avatar" className="object-cover"/><AvatarFallback className="bg-neutral-900 text-lg text-orange-300">{initials}</AvatarFallback></Avatar></FramedAvatar></div>
 }
 
 function EmptyState({title,description}:{title:string;description:string}){

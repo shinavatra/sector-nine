@@ -20,7 +20,7 @@ const loadFrameStyles=()=>{
   return frameStyleRequest
 }
 
-export function FramedAvatar({frameId,children,className='',assetUrl,onFrameError}:{frameId:string|null|undefined;children:ReactNode;className?:string;assetUrl?:string|null;onFrameError?:()=>void}) {
+export function FramedAvatar({frameId,children,className='',assetUrl,onFrameError,preview=false}:{frameId:string|null|undefined;children:ReactNode;className?:string;assetUrl?:string|null;onFrameError?:()=>void;preview?:boolean}) {
   const [visual,setVisual]=useState<FrameVisual>(()=>frameId&&frameStyleCache?.get(frameId)||{style:'',assetUrl:null})
   useEffect(()=>{
     let active=true
@@ -31,7 +31,7 @@ export function FramedAvatar({frameId,children,className='',assetUrl,onFrameErro
   const resolvedAsset=assetUrl===undefined?visual.assetUrl:assetUrl
   const hasFrame=Boolean(frameId&&frameId!=='fr_basic')
   return <div className={`relative inline-flex shrink-0 ${hasFrame&&!resolvedAsset?(visual.style||'ring-2 ring-orange-400 shadow-lg shadow-orange-500/30'):''} ${className}`}>
-    <div className="h-full w-full overflow-hidden rounded-[18%]">{children}</div>
-    {hasFrame&&resolvedAsset&&<img src={resolvedAsset} alt="" aria-hidden="true" onError={onFrameError} className="pointer-events-none absolute -inset-[12%] z-10 h-[124%] w-[124%] max-w-none object-contain" />}
+    <div className={preview?'flex h-full w-full items-center justify-center p-[14%]':'h-full w-full overflow-hidden rounded-[18%]'}>{children}</div>
+    {hasFrame&&resolvedAsset&&<img src={resolvedAsset} alt="" aria-hidden="true" onError={onFrameError} className={preview?'pointer-events-none absolute inset-0 z-10 h-full w-full max-w-none object-contain':'pointer-events-none absolute -inset-[12%] z-10 h-[124%] w-[124%] max-w-none object-contain'} />}
   </div>
 }

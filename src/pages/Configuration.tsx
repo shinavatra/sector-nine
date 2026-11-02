@@ -7,7 +7,7 @@ import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { ArrowLeft, Settings, Shield, Bell, Check, ChevronDown, User, Save, Loader2, Lock, Palette, ExternalLink, Link2, MonitorSmartphone, Trash2 } from "lucide-react";
+import { ArrowLeft, Settings, Shield, Bell, Check, ChevronDown, User, Save, Loader2, Lock, Palette, ExternalLink, Link2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import { useUser } from "../contexts/UserContext";
@@ -75,8 +75,6 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
   const [notifyVipUpdates,setNotifyVipUpdates]=useState(true);
   const [notifyShopPurchases,setNotifyShopPurchases]=useState(true);
   const [notifyWalletTransactions,setNotifyWalletTransactions]=useState(true);
-  const [sessions,setSessions]=useState<any[]>([]);
-  const [sessionsLoading,setSessionsLoading]=useState(false);
 
   useEffect(() => {
     if (!saveNotice) return;
@@ -112,7 +110,6 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
     setDraftTheme(preferredTheme);
   }, [preferredTheme, themeMode]);
 
-  useEffect(()=>{if(user)void loadSessions()},[user?.id]);
 
   useEffect(() => {
     let active = true;
@@ -228,8 +225,6 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
     } finally { setIsSaving(false); }
   };
 
-  const loadSessions=async()=>{setSessionsLoading(true);try{const response:any=await authAPI.getSessions();setSessions(Array.isArray(response?.sessions)?response.sessions:[])}catch(error){toast.error('Unable to load sessions',{description:error instanceof Error?error.message:'Request failed'})}finally{setSessionsLoading(false)}};
-  const revokeSession=async(sessionId:string)=>{try{await authAPI.revokeSession(sessionId);setSessions(value=>value.filter(session=>session.id!==sessionId));toast.success('Session revoked')}catch(error){toast.error('Unable to revoke session',{description:error instanceof Error?error.message:'Request failed'})}};
 
   const handleChangeDisplayName = async () => {
     if (!canChangeDisplayName) return;
@@ -470,7 +465,7 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
             <CardHeader><CardTitle className="flex items-center gap-2 font-mono text-orange-400"><Link2 className="size-5"/>CONNECTED ACCOUNTS</CardTitle></CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
               <div className="rounded border border-orange-900/20 bg-black/25 p-4"><p className="font-mono text-sm text-gray-300">Email account</p><p className="mt-1 break-all text-xs text-gray-500">{user?.email||'No email address'}</p><Badge variant="outline" className="mt-3 border-green-800/40 text-green-300">CONNECTED</Badge></div>
-              <div className="rounded border border-orange-900/20 bg-black/25 p-4">{user?.steamId?<div className="flex gap-3"><Avatar className="size-12"><AvatarImage src={user.steamAvatar||''}/><AvatarFallback>ST</AvatarFallback></Avatar><div className="min-w-0"><p className="truncate font-mono text-sm text-gray-200">{user.steamPersonaName||'Steam account'}</p><p className="break-all text-xs text-gray-500">{user.steamId}</p><Badge variant="outline" className="mt-2 border-green-800/40 text-green-300">STEAM CONNECTED</Badge>{user.steamProfileUrl&&<a href={user.steamProfileUrl} target="_blank" rel="noreferrer" className="mt-2 flex items-center gap-1 text-xs text-orange-300 hover:underline">View Steam Profile<ExternalLink className="size-3"/></a>}</div></div>:<div><p className="font-mono text-sm text-gray-300">Steam</p><p className="mt-1 text-xs text-gray-500">Connect through verified Steam OpenID to enable ownership checks and matchmaking.</p><Button type="button" onClick={connectSteam} disabled={connectingSteam} className="mt-3 w-full bg-orange-700 text-black hover:bg-orange-600">{connectingSteam?<><Loader2 className="mr-2 size-4 animate-spin"/>CONNECTING...</>:<>CONNECT STEAM ACCOUNT</>}</Button></div>}</div>
+              <div className="rounded border border-orange-900/20 bg-black/25 p-4">{user?.steamId?<div className="flex gap-3"><Avatar className="size-12"><AvatarImage src={user.steamAvatar||''}/><AvatarFallback>ST</AvatarFallback></Avatar><div className="min-w-0"><p className="truncate font-mono text-sm text-gray-200">{user.steamPersonaName||'Steam account'}</p><p className="break-all text-xs text-gray-500">{user.steamId}</p><Badge variant="outline" className="mt-2 border-green-800/40 text-green-300">STEAM CONNECTED</Badge>{user.steamProfileUrl&&<a href={user.steamProfileUrl} target="_blank" rel="noreferrer" className="mt-2 flex items-center gap-1 text-xs text-orange-300 hover:underline">View Steam Profile<ExternalLink className="size-3"/></a>}</div></div>:<div><p className="font-mono text-sm text-gray-300">Steam</p><p className="mt-1 text-xs text-gray-500">Connect through verified Steam OpenID to enable ownership checks and matchmaking.</p><Button type="button" onClick={connectSteam} disabled={connectingSteam} className="mt-4 w-full border border-orange-300 bg-orange-500 font-mono font-bold text-black shadow-[0_0_18px_rgba(249,115,22,0.25)] hover:bg-orange-400 disabled:opacity-60">{connectingSteam?<><Loader2 className="mr-2 size-4 animate-spin"/>CONNECTING...</>:<>CONNECT STEAM ACCOUNT</>}</Button></div>}</div>
             </CardContent>
           </Card>
           </SettingsGroup>
@@ -637,7 +632,6 @@ export function Configuration({ onNavigate }: ConfigurationProps) {
               <Input aria-label="New password" type="password" value={newPassword} onChange={event=>setNewPassword(event.target.value)} placeholder="New password (8+ characters)" className="bg-black/20 border-orange-900/20 font-mono" />
               <Input aria-label="Confirm new password" type="password" value={confirmPassword} onChange={event=>setConfirmPassword(event.target.value)} placeholder="Confirm new password" className="bg-black/20 border-orange-900/20 font-mono" />
               <div className="flex justify-end"><Button onClick={handleChangePassword} disabled={isChangingPassword||!currentPassword||!newPassword}>{isChangingPassword?<><Loader2 className="mr-2 size-4 animate-spin"/>CHANGING...</>:'CHANGE PASSWORD'}</Button></div>
-              <div className="border-t border-orange-900/20 pt-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-mono text-orange-300">ACTIVE SESSIONS</h3><p className="text-xs text-gray-500">Tokens are never displayed.</p></div><Button size="sm" variant="outline" onClick={()=>void loadSessions()} disabled={sessionsLoading}>{sessionsLoading?<Loader2 className="size-4 animate-spin"/>:'REFRESH'}</Button></div>{sessionsLoading&&!sessions.length?<p className="text-sm text-gray-500">Loading sessions…</p>:sessions.length?<div className="space-y-2">{sessions.map(session=><div key={session.id} className="flex flex-col gap-3 rounded border border-orange-900/20 bg-black/25 p-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><p className="flex items-center gap-2 font-mono text-sm text-gray-200"><MonitorSmartphone className="size-4 text-orange-400"/>{session.current?'Current session':'Active session'}</p><p className="truncate text-xs text-gray-500">{session.user_agent||'Unknown device'} · Last used {new Date(session.last_used_at).toLocaleString()}</p></div><Button size="sm" variant="outline" className="border-red-900/30 text-red-300" onClick={()=>void revokeSession(session.id)}><Trash2 className="mr-2 size-3"/>REVOKE</Button></div>)}</div>:<p className="text-sm text-gray-500">No active sessions were returned.</p>}</div>
             </CardContent>
           </Card>
           </SettingsGroup>

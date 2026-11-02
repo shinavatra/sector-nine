@@ -1,0 +1,22 @@
+{
+  "agents": {
+    "sector-nine-ollama-readonly-test": {
+      "agentId": "sector-nine-ollama-readonly-test",
+      "agentType": "reviewer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 1,
+      "config": {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:3b",
+        "endpoint": "http://127.0.0.1:11434",
+        "readOnly": true
+      },
+      "createdAt": "2026-10-29T12:43:41.227Z",
+      "domain": "sector-nine",
+      "model": "haiku",
+      "modelRoutedBy": "router"
+    }
+  },
+  "version": "3.0.0"
+}

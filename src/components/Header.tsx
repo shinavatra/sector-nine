@@ -27,6 +27,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
   const {selectedGame,availableGames,setSelectedGame,lockedReason,loading:gameSaving}=useGame();
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [notificationOpen,setNotificationOpen]=React.useState(false);
+  const [avatarMenuOpen,setAvatarMenuOpen]=React.useState(false);
   const [recentNotifications,setRecentNotifications]=React.useState<any[]>([]);
   const [notificationsLoading,setNotificationsLoading]=React.useState(false);
   const playerName = displayPlayerName(user, "Player");
@@ -38,6 +39,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     setMobileOpen(false);
+    setAvatarMenuOpen(false);
     onNavigate?.(page);
   };
   React.useEffect(() => setMobileOpen(false), [currentPage]);
@@ -107,9 +109,9 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
           <div className="header-actions flex items-center justify-end space-x-3">
             <DropdownMenu open={notificationOpen} onOpenChange={setNotificationOpen}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Notifications" className="text-gray-300 hover:bg-orange-900/10 hover:text-orange-400"><span className="relative block"><Bell className="size-5" />{notificationUnreadCount>0&&<span className="absolute -right-2 -top-2 min-w-4 rounded-full bg-red-500 px-1 text-center text-[10px] font-bold leading-4 text-white">{notificationUnreadCount>99?'99+':notificationUnreadCount}</span>}</span></Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-[min(92vw,24rem)] border-orange-900/30 bg-[#0b0b0d] p-2"><div className="flex items-center justify-between px-2 py-2"><span className="font-mono text-sm text-orange-300">RECENT NOTIFICATIONS</span><Badge variant="outline">{notificationUnreadCount} unread</Badge></div><DropdownMenuSeparator className="bg-orange-900/20"/>{notificationsLoading?<p className="p-4 text-center text-sm text-gray-500">Loading…</p>:recentNotifications.length?recentNotifications.map(item=><DropdownMenuItem key={item.id} onSelect={()=>void openNotification(item)} className="mb-1 block cursor-pointer rounded border border-orange-900/10 p-3"><div className="flex items-start justify-between gap-3"><span className="font-mono text-xs text-orange-300">{item.title}</span>{!item.read&&<span className="mt-1 size-2 shrink-0 rounded-full bg-orange-400"/>}</div><p className="mt-1 line-clamp-2 text-xs text-gray-400">{item.message}</p></DropdownMenuItem>):<p className="p-4 text-center text-sm text-gray-500">No notifications.</p>}<DropdownMenuSeparator className="bg-orange-900/20"/><DropdownMenuItem onSelect={()=>{setNotificationOpen(false);onNavigate?.('notifications')}} className="justify-center font-mono text-xs text-orange-300">VIEW ALL NOTIFICATIONS</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
 
-            <DropdownMenu>
+            <DropdownMenu open={avatarMenuOpen} onOpenChange={setAvatarMenuOpen} modal={false}>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="relative h-10 w-10 rounded-full hover:bg-orange-900/10">
+                <Button type="button" variant="ghost" className="relative h-10 w-10 rounded-full hover:bg-orange-900/10" aria-label="Open account menu" aria-expanded={avatarMenuOpen}>
                   <div className="relative">
                     <FramedAvatar frameId={user?.equippedFrame}>
                       <Avatar className={`h-10 w-10 border-2 ${isPremium?'border-yellow-400/50':'border-orange-900/30'}`}>
@@ -125,7 +127,7 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
                   </div>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-56 bg-black/90 border-orange-900/20" align="end" forceMount>
+              <DropdownMenuContent className="z-[60] w-56 border-orange-900/20 bg-black/95" align="end" sideOffset={8} collisionPadding={12}>
                 <div className="flex items-center justify-start gap-2 p-2">
                   <div className="flex flex-col space-y-1 leading-none">
                     <div className="flex items-center gap-2">

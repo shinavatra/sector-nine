@@ -8,7 +8,7 @@ import { Switch } from "../components/ui/switch";
 import { Bell, AlertTriangle, Trophy, Users, Calendar, Settings, Check, X, Eye, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useUser } from "../contexts/UserContext";
-import { friendsAPI, notificationsAPI } from "../utils/api";
+import { friendsAPI, notificationsAPI, partyAPI } from "../utils/api";
 import { notifyNotificationsChanged, subscribeToNotificationChanges } from "../utils/notificationEvents";
 
 // Initial notifications will be empty - data will come from backend
@@ -19,7 +19,7 @@ const alerts: any[] = [];
 
 const normalizeNotifications=(items:any[]):any[]=>Array.from(new Map<string,any>((Array.isArray(items)?items:[]).filter(item=>item&&typeof item==='object'&&item.id!==undefined&&item.id!==null).map((item:any)=>{
   const createdAt=typeof item.created_at==='string'||item.created_at instanceof Date?new Date(item.created_at):null
-  const normalized={...item,id:String(item.id),title:typeof item.title==='string'&&item.title.trim()?item.title:'Notification',message:typeof item.message==='string'?item.message:'',unread:item.read!==true,read:item.read===true,time:createdAt&&!Number.isNaN(createdAt.getTime())?createdAt.toLocaleString():'Date unavailable',type:item.type==='friend_request'?'friend':item.type==='friend_accepted'?'friendAccepted':typeof item.type==='string'?item.type:'system',action:typeof item.action_path==='string'?'OPEN':item.action}
+  const normalized={...item,id:String(item.id),title:typeof item.title==='string'&&item.title.trim()?item.title:'Notification',message:typeof item.message==='string'?item.message:'',unread:item.read!==true,read:item.read===true,time:createdAt&&!Number.isNaN(createdAt.getTime())?createdAt.toLocaleString():'Date unavailable',type:item.type==='friend_request'?'friend':item.type==='friend_accepted'?'friendAccepted':typeof item.type==='string'?item.type:'system',action:item.type==='party_invite'?undefined:typeof item.action_path==='string'?'OPEN':item.action}
   return[String(item.id),normalized]
 })).values())
 
@@ -39,6 +39,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
   const notificationRequest=useRef(0);
   const [markingAllRead,setMarkingAllRead]=useState(false);
   const [clearingAll,setClearingAll]=useState(false);
+  const [partyActionBusy,setPartyActionBusy]=useState<string|null>(null);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
   const [preferences, setPreferences] = useState({
     matchNotifications: true,
@@ -104,6 +105,15 @@ export function Notifications({ onNavigate }: NotificationsProps) {
     try{const result:any=await friendsAPI.declineRequest(notification.related_friendship_id);setNotifications(previous=>previous.filter(item=>item.id!==notification.id));notifyNotificationsChanged(result.unreadCount);toast.info("Friend request declined", {className: "bg-orange-900/90 border-orange-700 text-orange-100"})}catch(error:any){toast.error('Unable to decline friend request',{description:error.message})}
   };
 
+  const handlePartyInvite=async(notification:any,action:'accept'|'decline')=>{
+    if(!notification.party_invite_actionable||!notification.related_party_invite_id)return void toast.error('This party invitation is no longer available')
+    if(partyActionBusy)return
+    setPartyActionBusy(notification.id)
+    try{const result:any=await partyAPI.respond(notification.related_party_invite_id,action);setNotifications(previous=>previous.filter(item=>item.id!==notification.id));notifyNotificationsChanged(result.unreadCount);toast.success(action==='accept'?'Party invitation accepted':'Party invitation declined')}
+    catch(error:any){toast.error('Party invitation failed',{description:error.message});void loadNotifications()}
+    finally{setPartyActionBusy(null)}
+  }
+
   const handleJoinMatch = async (id: string) => {
     const notification=notifications.find(item=>item.id===id);try{await handleMarkRead(id)}catch(error:any){return void toast.error('Unable to open notification',{description:error.message})}if(notification?.type==='friend'){sessionStorage.setItem('open_friend_requests','1');onNavigate?.('configuration');return}if(notification?.action_path==='/matchmaking')return void onNavigate?.('lobby');if(notification?.action_path==='/store')return void onNavigate?.('store');if(notification?.action_path==='/vip')return void onNavigate?.('vip-subscription');onNavigate?.('notifications')
   };
@@ -168,6 +178,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
       case 'system': return 'bg-gray-900/20 text-gray-400';
       case 'league': return 'bg-orange-900/20 text-orange-400';
       case 'invite': return 'bg-blue-900/20 text-blue-400';
+      case 'party_invite': return 'bg-green-900/20 text-green-400';
       default: return 'bg-gray-900/20 text-gray-400';
     }
   };
@@ -335,6 +346,7 @@ export function Notifications({ onNavigate }: NotificationsProps) {
                         </Button>
                       </div>
                     )}
+                    {notification.type==='party_invite'&&<div className="mt-3 flex flex-wrap items-center gap-2">{notification.party_invite_actionable?<><Button size="sm" disabled={partyActionBusy===notification.id} className="border border-green-900/30 bg-green-900/20 font-mono text-xs text-green-400 hover:bg-green-900/30" onClick={()=>void handlePartyInvite(notification,'accept')}><Check className="mr-1 size-3"/>{partyActionBusy===notification.id?'WORKING...':'ACCEPT'}</Button><Button size="sm" variant="outline" disabled={partyActionBusy===notification.id} className="border-red-900/30 font-mono text-xs text-red-400" onClick={()=>void handlePartyInvite(notification,'decline')}><X className="mr-1 size-3"/>DECLINE</Button></>:<Badge variant="outline" className="border-gray-700 text-gray-400">{String(notification.party_invite_status||'unavailable').toUpperCase()}</Badge>}</div>}
                     {notification.type === 'friendAccepted' && <div className="mt-3"><Button size="sm" variant="outline" className="font-mono text-xs sm:text-sm" onClick={()=>void handleViewProfile(notification)}><Eye className="mr-1 size-3 sm:size-4"/>VIEW PROFILE</Button></div>}
                   </div>
                 </div>

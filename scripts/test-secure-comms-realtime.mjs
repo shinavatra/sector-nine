@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+
+const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),'utf8')
+const server=read('src/server/index.ts')
+const hub=read('src/server/realtime.ts')
+const client=read('src/utils/realtime.ts')
+const chat=read('src/components/GlobalChat.tsx')
+const party=read('src/components/PartyPanel.tsx')
+const app=read('src/App.tsx')
+
+assert.match(server,/app\.get\('\/events',requireAuth/,'SSE endpoint must require authentication')
+assert.match(server,/auth_sessions WHERE id=\$1 AND user_id=\$2 AND revoked_at IS NULL/,'open streams must revalidate their session')
+assert.doesNotMatch(client,/events\?[^'`]*token/i,'access tokens must not be placed in the SSE URL')
+assert.match(client,/Authorization:`Bearer \$\{token\}`/,'SSE must authenticate with the Authorization header')
+assert.match(client,/maxAttempts=6/,'reconnect attempts must be bounded')
+assert.match(client,/seenIds\.has\(event\.id\)/,'replayed events must be deduplicated')
+assert.match(hub,/this\.clients\.get\(userId\)/,'events must target only the intended user connections')
+assert.match(server,/realtimeHub\.publish\(\[req\.userId!,recipientId\],'chat\.message'/,'chat send must publish a real-time event')
+assert.match(server,/realtimeHub\.publish\(\[inviteeId\],'party\.invite'/,'party invites must be delivered immediately')
+assert.match(chat,/CREATE PARTY \+ INVITE/)
+assert.match(chat,/INVITE TO PARTY/)
+assert.match(chat,/IN PARTY/)
+assert.match(chat,/PARTY FULL/)
+assert.match(chat,/RECONNECTING SECURE CHANNEL/)
+assert.doesNotMatch(chat,/Minimize/,'the removed minimize control must stay removed')
+assert.match(party,/subscribeRealtime/,'Party Panel must react to party events')
+assert.match(app,/realtimeStatus==='connected'\?null:window\.setInterval/,'notification polling must pause while real-time is connected')
+
+console.log('Secure Comms real-time contract checks passed')

@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Button } from "../components/ui/button";
 import { Play, Trophy, MessageCircle, Youtube, Twitter, Twitch, Calendar, Snowflake, Flower, Sun, Leaf, ExternalLink } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
-import { statsAPI } from "../utils/api";
+import { platformAPI, statsAPI, type PublicPlatformSettings } from "../utils/api";
 import { NewsFeed } from "../components/NewsFeed";
 import { useState, useEffect } from "react";
 import heroImage from '../assets/sector-nine-hub-hero.jpg';
@@ -20,11 +20,13 @@ export function Hub({ onNavigate }: HubProps) {
   const { selectedGame } = useGame();
   const [platformStats, setPlatformStats] = useState<any>(null);
   const [gameStats, setGameStats] = useState<any>(null);
+  const [publicSettings,setPublicSettings]=useState<PublicPlatformSettings|null>(null);
 
   useEffect(() => {
     statsAPI.getPlatformStats()
       .then(data => setPlatformStats(data))
       .catch(() => {/* non-critical */});
+    platformAPI.getSettings().then(setPublicSettings).catch(() => setPublicSettings(null));
   }, []);
 
   useEffect(() => {
@@ -47,6 +49,14 @@ export function Hub({ onNavigate }: HubProps) {
   const experience = numberOrZero(user?.experience);
   const playerName = displayPlayerName(user, "Operative");
   const isAdmin = isAdminUser(user);
+  const platformName=publicSettings?.displayName||'Sector Nine';
+  const officialLinks=publicSettings?.officialLinks||{twitter:'',youtube:'',twitch:'',discord:''};
+  const socialItems=[
+    {id:'twitter',label:'X / TWITTER',url:officialLinks.twitter,Icon:Twitter},
+    {id:'youtube',label:'YOUTUBE',url:officialLinks.youtube,Icon:Youtube},
+    {id:'twitch',label:'TWITCH',url:officialLinks.twitch,Icon:Twitch},
+    {id:'discord',label:'DISCORD',url:officialLinks.discord,Icon:MessageCircle},
+  ].filter(item=>item.url);
   // Create player data from normalized, real profile values.
   const playerData = {
     name: playerName,
@@ -77,7 +87,7 @@ export function Hub({ onNavigate }: HubProps) {
         <div className="relative container mx-auto px-4 h-full flex items-center">
           <div className="max-w-3xl">
             <div className="text-green-400 font-mono text-sm mb-2">SYSTEM STATUS: OPERATIONAL</div>
-            <h1 className="text-5xl font-bold mb-4 text-orange-400">SECTOR NINE INITIATIVE</h1>
+            <h1 className="text-5xl font-bold mb-4 text-orange-400">{platformName.toUpperCase()}</h1>
             <p className="text-lg text-gray-400 font-mono leading-relaxed">
               QUANTUM GAMING PROTOCOLS ONLINE.<br />
               COMPETITIVE MATCHMAKING & TOURNAMENTS.
@@ -255,46 +265,15 @@ export function Hub({ onNavigate }: HubProps) {
               </CardContent>
             </Card>
 
-            {/* Social Media */}
-            <Card className="gap-4 bg-black/40 border-orange-900/20">
+            {/* Official platform links */}
+            {socialItems.length>0&&<Card className="gap-4 bg-black/40 border-orange-900/20">
               <CardHeader className="px-5 pt-5">
                 <CardTitle className="text-orange-400 font-mono">FOLLOW US</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 px-5 pb-5">
-                <Button
-                  variant="outline"
-                  className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
-                  onClick={() => window.open('https://twitter.com/sectorninehl', '_blank')}
-                >
-                  <Twitter className="w-4 h-4 mr-2" />
-                  @SECTORNINEHL
-                </Button>
-                <Button
-                  variant="outline"
-                  className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
-                  onClick={() => window.open('https://youtube.com/@sectornineinitiative', '_blank')}
-                >
-                  <Youtube className="w-4 h-4 mr-2" />
-                  SECTOR NINE INITIATIVE
-                </Button>
-                <Button
-                  variant="outline"
-                  className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
-                  onClick={() => window.open('https://twitch.tv/sectorninehl', '_blank')}
-                >
-                  <Twitch className="w-4 h-4 mr-2" />
-                  SECTORNINEHL
-                </Button>
-                <Button
-                  variant="outline"
-                  className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start"
-                  onClick={() => window.open('https://discord.gg/sectornine', '_blank')}
-                >
-                  <MessageCircle className="w-4 h-4 mr-2" />
-                  DISCORD COMMUNITY
-                </Button>
+                {socialItems.map(({id,label,url,Icon})=><Button key={id} variant="outline" className="w-full border-orange-900/30 text-orange-400 hover:bg-orange-900/10 font-mono justify-start" onClick={()=>window.open(url,'_blank','noopener,noreferrer')}><Icon className="mr-2 size-4"/>{label}</Button>)}
               </CardContent>
-            </Card>
+            </Card>}
           </div>
         </div>
       </div>

@@ -47,6 +47,8 @@ export const getSessionToken = (): string | null => sessionToken
 const refreshAccessToken = async (): Promise<string | null> => {
   return refreshCoordinator.refresh()
 }
+export const refreshSessionAccessToken=()=>refreshAccessToken()
+export const getApiBaseUrl=()=>API_URL
 
 const performRefreshRequest = async (): Promise<string | null> => {
     if(!API_URL)throw new ApiError('VITE_API_URL is not configured',500,'API_URL_NOT_CONFIGURED')
@@ -99,13 +101,15 @@ export class ApiError extends Error {
 export interface PublicPlatformSettings {
   maintenanceMode: boolean
   registrationEnabled: boolean
+  displayName: string
+  officialLinks: { twitter: string; youtube: string; twitch: string; discord: string }
   announcement: { enabled: boolean; title: string; message: string }
 }
 
 export const platformAPI = {
   getSettings: async (): Promise<PublicPlatformSettings> => {
     const data = await apiFetch('/platform/settings')
-    if (typeof data?.maintenanceMode !== 'boolean' || typeof data?.registrationEnabled !== 'boolean' || typeof data?.announcement?.enabled !== 'boolean' || typeof data?.announcement?.title !== 'string' || typeof data?.announcement?.message !== 'string') {
+    if (typeof data?.maintenanceMode !== 'boolean' || typeof data?.registrationEnabled !== 'boolean' || typeof data?.displayName !== 'string' || !data?.officialLinks || ['twitter','youtube','twitch','discord'].some(key=>typeof data.officialLinks[key]!=='string') || typeof data?.announcement?.enabled !== 'boolean' || typeof data?.announcement?.title !== 'string' || typeof data?.announcement?.message !== 'string') {
       throw new ApiError('Platform settings response is invalid', 502, 'INVALID_PLATFORM_SETTINGS')
     }
     return data
@@ -285,7 +289,7 @@ export const friendsAPI = {
 }
 
 export const partyAPI={
-  get:async()=>apiFetch('/party'),
+  get:async(signal?:AbortSignal)=>apiFetch('/party',{signal}),
   create:async()=>apiFetch('/party',{method:'POST'}),
   invite:async(userId:string)=>apiFetch('/party/invite',{method:'POST',body:JSON.stringify({userId})}),
   respond:async(inviteId:string,action:'accept'|'decline')=>apiFetch(`/party/invites/${inviteId}/${action}`,{method:'POST'}),
@@ -297,11 +301,15 @@ export const partyAPI={
 }
 
 export const presenceAPI = {
-  heartbeat: async () =>
-    apiFetch('/presence/heartbeat', { method: 'POST' }),
+  heartbeat: async (active = false) =>
+    apiFetch('/presence/heartbeat', { method: 'POST',body:JSON.stringify({active}) }),
 
   offline: async () =>
     apiFetch('/presence/offline', { method: 'POST' }),
+  watch:async(userId:string,connectionId:string)=>
+    apiFetch(`/presence/watch/${userId}`,{method:'POST',body:JSON.stringify({connectionId})}),
+  unwatch:async(userId:string,connectionId:string)=>
+    apiFetch(`/presence/watch/${userId}`,{method:'DELETE',body:JSON.stringify({connectionId})}),
 }
 
 // =====================================================

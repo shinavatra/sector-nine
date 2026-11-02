@@ -13,7 +13,8 @@ import { Auth } from "./pages/Auth";
 import { GlobalChat } from "./components/GlobalChat";
 import { Toaster } from "./components/ui/sonner";
 import { getSessionToken, logFrontendAuthEvent, notificationsAPI, platformAPI, type PublicPlatformSettings } from "./utils/api";
-import { subscribeToNotificationChanges } from "./utils/notificationEvents";
+import { notifyNotificationsChanged, subscribeToNotificationChanges } from "./utils/notificationEvents";
+import { subscribeRealtime, type RealtimeStatus } from "./utils/realtime";
 import { isAdminUser } from "./utils/userRole";
 
 const lazyPage = <T extends Record<string, unknown>>(loader: () => Promise<T>, name: keyof T) =>
@@ -70,6 +71,7 @@ function AppContent() {
   const [currentPage, setCurrentPageState] = useState<string>(() => pageFromPath(window.location.pathname));
   const [hasCompletedSteamVerification, setHasCompletedSteamVerification] = useState<boolean>(false);
   const [notificationUnreadCount,setNotificationUnreadCount]=useState(0);
+  const [realtimeStatus,setRealtimeStatus]=useState<RealtimeStatus>('disconnected');
   const [platformSettings,setPlatformSettings]=useState<PublicPlatformSettings|null>(null);
   const [platformSettingsError,setPlatformSettingsError]=useState<string|null>(null);
   const seenFriendNotifications=useRef(new Set<string>());
@@ -102,7 +104,15 @@ function AppContent() {
 
   useEffect(()=>{void refreshPlatformSettings()},[refreshPlatformSettings])
 
-  useEffect(()=>{if(!isAuthenticated){setNotificationUnreadCount(0);seenFriendNotifications.current.clear();notificationsInitialized.current=false;return}let active=true;const poll=async()=>{if(notificationPollInFlight.current){notificationPollQueued.current=true;return}const revision=notificationPollRevision.current;notificationPollInFlight.current=true;try{const data:any=await notificationsAPI.getNotifications();if(!active||revision!==notificationPollRevision.current)return;const items=Array.isArray(data?.notifications)?data.notifications:[];const unread=items.filter((item:any)=>!item.read);setNotificationUnreadCount(typeof data?.unreadCount==='number'?data.unreadCount:unread.length);for(const item of unread.filter((entry:any)=>entry.type==='friend_request')){const id=String(item.id);if(seenFriendNotifications.current.has(id))continue;seenFriendNotifications.current.add(id);if(notificationsInitialized.current)toast(item.message||'New friend request',{action:{label:'Open',onClick:()=>{sessionStorage.setItem('open_friend_requests','1');navigate('configuration')}}})}notificationsInitialized.current=true}catch{/* Keep the last valid badge during transient failures. */}finally{notificationPollInFlight.current=false;if(active&&notificationPollQueued.current){notificationPollQueued.current=false;void poll()}}};const unsubscribe=subscribeToNotificationChanges(unreadCount=>{notificationPollRevision.current+=1;if(typeof unreadCount==='number'){setNotificationUnreadCount(unreadCount);return}void poll()});void poll();const interval=window.setInterval(poll,7000);return()=>{active=false;notificationPollRevision.current+=1;notificationPollQueued.current=false;unsubscribe();window.clearInterval(interval)}},[isAuthenticated,navigate]);
+  useEffect(()=>{
+    if(!isAuthenticated){setRealtimeStatus('disconnected');return}
+    return subscribeRealtime(event=>{
+      if(event.type==='notification.changed'||event.type==='party.invite')notifyNotificationsChanged()
+      if(event.type==='party.invite')toast(`Party invite from ${String(event.payload.inviterName||'a friend')}`,{action:{label:'Open',onClick:()=>navigate('lobby')}})
+    },setRealtimeStatus)
+  },[isAuthenticated,navigate])
+
+  useEffect(()=>{if(!isAuthenticated){setNotificationUnreadCount(0);seenFriendNotifications.current.clear();notificationsInitialized.current=false;return}let active=true;const poll=async()=>{if(notificationPollInFlight.current){notificationPollQueued.current=true;return}const revision=notificationPollRevision.current;notificationPollInFlight.current=true;try{const data:any=await notificationsAPI.getNotifications();if(!active||revision!==notificationPollRevision.current)return;const items=Array.isArray(data?.notifications)?data.notifications:[];const unread=items.filter((item:any)=>!item.read);setNotificationUnreadCount(typeof data?.unreadCount==='number'?data.unreadCount:unread.length);for(const item of unread.filter((entry:any)=>entry.type==='friend_request')){const id=String(item.id);if(seenFriendNotifications.current.has(id))continue;seenFriendNotifications.current.add(id);if(notificationsInitialized.current)toast(item.message||'New friend request',{action:{label:'Open',onClick:()=>{sessionStorage.setItem('open_friend_requests','1');navigate('configuration')}}})}notificationsInitialized.current=true}catch{/* Keep the last valid badge during transient failures. */}finally{notificationPollInFlight.current=false;if(active&&notificationPollQueued.current){notificationPollQueued.current=false;void poll()}}};const unsubscribe=subscribeToNotificationChanges(unreadCount=>{notificationPollRevision.current+=1;if(typeof unreadCount==='number'){setNotificationUnreadCount(unreadCount);return}void poll()});void poll();const interval=realtimeStatus==='connected'?null:window.setInterval(poll,7000);return()=>{active=false;notificationPollRevision.current+=1;notificationPollQueued.current=false;unsubscribe();if(interval!==null)window.clearInterval(interval)}},[isAuthenticated,navigate,realtimeStatus]);
 
  // Check for Steam callback and password reset token on first load
 useEffect(() => {

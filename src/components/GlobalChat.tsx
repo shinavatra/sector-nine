@@ -7,17 +7,18 @@ import { ScrollArea } from "./ui/scroll-area";
 import { Badge } from "./ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
-import { MessageCircle, Send, X, Volume2, VolumeX, Minimize2 } from "lucide-react";
-import { friendsAPI, chatAPI } from "../utils/api";
+import { MessageCircle, Send, X, Volume2, VolumeX, Users } from "lucide-react";
+import { friendsAPI, chatAPI, partyAPI } from "../utils/api";
 import { toast } from "sonner";
 import { useUser } from "../contexts/UserContext";
 import { notifyNotificationsChanged } from "../utils/notificationEvents";
 import { displayPlayerName, playerInitials } from "../utils/displayName";
+import { subscribeRealtime, type RealtimeStatus } from "../utils/realtime";
 
 interface Friend {
   id: string;
   name: string;
-  status: 'online' | 'away' | 'busy' | 'offline';
+  status: 'online' | 'away' | 'in_match' | 'offline';
   avatar: string;
   lastSeen?: string;
   currentMatch?: string;
@@ -42,11 +43,11 @@ interface ChatRoom {
 }
 
 const displayedChatNotificationIds = new Set<string>();
+const presenceOrder=(status:Friend['status'])=>status==='in_match'?0:status==='online'?1:status==='away'?2:3
 
 export function GlobalChat() {
   const { onlineFriends, user } = useUser();
   const [isOpen, setIsOpen] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
   const [activeTab, setActiveTab] = useState("chats");
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState("");
@@ -55,6 +56,9 @@ export function GlobalChat() {
   const [friends, setFriends] = useState<Friend[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [realtimeStatus,setRealtimeStatus]=useState<RealtimeStatus>('disconnected');
+  const [partyState,setPartyState]=useState<any>({party:null,outgoingInvites:[]});
+  const [partyActionBusy,setPartyActionBusy]=useState(false);
   const seenNotificationIds = useRef(displayedChatNotificationIds);
   const unreadInitialized = useRef(false);
   const originalTitle = useRef(document.title);
@@ -116,9 +120,9 @@ export function GlobalChat() {
       }
     };
     void pollUnread();
-    const interval = window.setInterval(pollUnread, 7000);
-    return () => { active = false; window.clearInterval(interval); };
-  }, []);
+    const interval = realtimeStatus==='connected' ? null : window.setInterval(pollUnread, 7000);
+    return () => { active = false; if(interval!==null)window.clearInterval(interval); };
+  }, [realtimeStatus]);
 
   useEffect(() => {
     if (isOpen) {
@@ -131,6 +135,7 @@ export function GlobalChat() {
     setFriends(prev => {
       let changed = false;
       const next = prev.map(friend => {
+        if(friend.status==='in_match'||friend.status==='away')return friend
         const status: Friend['status'] = onlineIds.has(friend.id) ? 'online' : 'offline';
         if (friend.status === status) return friend;
         changed = true;
@@ -149,7 +154,7 @@ export function GlobalChat() {
       const mappedFriends: Friend[] = friendsData.map((f: any) => ({
         id: f.userId,
         name: displayPlayerName(f, 'Unknown'),
-        status: f.isOnline ? 'online' : 'offline',
+        status: f.presenceStatus || (f.isOnline ? 'online' : 'offline'),
         avatar: f.resolvedAvatar || f.steam_avatar || '',
         lastSeen: f.lastSeen || 'Recently'
       }));
@@ -206,6 +211,37 @@ export function GlobalChat() {
     ));
   };
 
+  useEffect(()=>{
+    if(!user?.id)return
+    const refreshParty=()=>partyAPI.get().then(setPartyState).catch(()=>{})
+    void refreshParty()
+    return subscribeRealtime(event=>{
+      if(event.type==='presence.changed'||event.type==='presence.snapshot'){
+        const updates=event.type==='presence.snapshot'?event.payload.players:[event.payload]
+        const map=new Map((Array.isArray(updates)?updates:[]).map((item:any)=>[String(item.userId),String(item.status)]))
+        setFriends(previous=>previous.map(friend=>map.has(friend.id)?{...friend,status:map.get(friend.id) as Friend['status']}:friend).sort((a,b)=>presenceOrder(a.status)-presenceOrder(b.status)||a.name.localeCompare(b.name)))
+        return
+      }
+      if(event.type==='party.changed'||event.type==='party.invite'){void refreshParty();return}
+      if(event.type!=='chat.message')return
+      const raw:any=event.payload.message
+      const senderId=String(event.payload.senderId||raw?.user_id||'')
+      const recipientId=String(event.payload.recipientId||raw?.recipient_id||'')
+      const peerId=senderId===user.id?recipientId:senderId
+      if(!peerId||!raw)return
+      const incoming=senderId!==user.id
+      const activeConversation=isOpen&&selectedChatRef.current===peerId
+      const normalized=normalizeMessage(raw)
+      setChatRooms(previous=>{
+        const existing=previous.find(room=>room.id===peerId)
+        if(existing)return previous.map(room=>room.id===peerId?{...room,messages:mergeMessages(room.messages,[normalized]),unreadCount:incoming&&!activeConversation?room.unreadCount+1:room.unreadCount}:room)
+        return [...previous,{id:peerId,name:String(raw.username||'Unknown'),type:'friend',participants:[String(raw.username||'Unknown')],messages:[normalized],unreadCount:incoming&&!activeConversation?1:0}]
+      })
+      if(incoming&&activeConversation)void markChatAsRead(peerId)
+      else if(incoming&&!isMuted)toast('New secure message',{description:`${raw.username||'A friend'} sent you a message`,action:{label:'Open',onClick:()=>openConversation(peerId,String(raw.username||'Unknown'))}})
+    },setRealtimeStatus)
+  },[user?.id,isOpen,isMuted])
+
   useEffect(() => {
     if (!isOpen || !selectedChat || !user) return;
     const roomId = selectedChat;
@@ -234,24 +270,25 @@ export function GlobalChat() {
     };
 
     void pollConversation();
-    const interval = window.setInterval(() => void pollConversation(), 3000);
+    const interval = realtimeStatus==='connected' ? null : window.setInterval(() => void pollConversation(), 3000);
     return () => {
       active = false;
-      window.clearInterval(interval);
+      if(interval!==null)window.clearInterval(interval);
     };
-  }, [isOpen, selectedChat, user?.id]);
+  }, [isOpen, selectedChat, user?.id,realtimeStatus]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'online': return 'bg-green-400';
       case 'away': return 'bg-yellow-400';
-      case 'busy': return 'bg-red-400';
+      case 'in_match': return 'bg-orange-400';
       case 'offline': return 'bg-gray-400';
       default: return 'bg-gray-400';
     }
   };
 
   const getStatusText = (friend: Friend) => {
+    if (friend.status === 'in_match') return 'In Match';
     if (friend.status === 'online' && friend.currentMatch) {
       return `Playing: ${friend.currentMatch}`;
     }
@@ -334,7 +371,6 @@ export function GlobalChat() {
       messages: []
     }]);
     setIsOpen(true);
-    setIsMinimized(false);
     setSelectedChat(friendId);
     setActiveTab('chats');
     void markChatAsRead(friendId);
@@ -351,6 +387,32 @@ export function GlobalChat() {
     }
     openConversation(friendId, friend.name);
   };
+
+  const handlePartyAction=async()=>{
+    if(!selectedChat||partyActionBusy)return
+    setPartyActionBusy(true)
+    try{
+      let current=partyState
+      if(!current?.party)current=await partyAPI.create()
+      if(!current?.party?.isLeader)throw new Error('Only the party leader can invite friends.')
+      await partyAPI.invite(selectedChat)
+      setPartyState(await partyAPI.get())
+      toast.success('Party invitation sent')
+    }catch(error){toast.error('Unable to send party invitation',{description:error instanceof Error?error.message:'The server rejected the invitation'})}
+    finally{setPartyActionBusy(false)}
+  }
+
+  const selectedPartyState=(()=>{
+    if(!selectedChat)return null
+    const party=partyState?.party
+    if(!party)return{label:'CREATE PARTY + INVITE',disabled:false}
+    if(!party.isLeader)return null
+    if(party.members?.some((member:any)=>String(member.user_id)===selectedChat))return{label:'IN PARTY',disabled:true}
+    if(partyState?.outgoingInvites?.some((invite:any)=>String(invite.invitee_id)===selectedChat))return{label:'INVITED',disabled:true}
+    if(Number(party.members?.length||0)>=Number(party.maxPartySize||5))return{label:'PARTY FULL',disabled:true}
+    if(party.queue_status!=='idle')return{label:'PARTY LOCKED',disabled:true}
+    return{label:'INVITE TO PARTY',disabled:false}
+  })()
 
   const totalUnreadMessages = useMemo(
     () => chatRooms.reduce((total, room) => total + room.unreadCount, 0),
@@ -388,7 +450,7 @@ export function GlobalChat() {
   }
 
   return createPortal(
-    <div className={`fixed bottom-4 right-4 max-w-[calc(100vw-2rem)] transition-all duration-300 ${isMinimized ? 'w-80 h-12' : 'w-96 h-[min(600px,calc(100dvh-2rem))]'}`} style={{zIndex:1000,pointerEvents:'auto'}}>
+    <div className="fixed bottom-4 right-4 h-[min(600px,calc(100dvh-2rem))] w-96 max-w-[calc(100vw-2rem)]" style={{zIndex:1000,pointerEvents:'auto'}}>
       <Card className="bg-black/90 border-orange-900/20 h-full flex flex-col">
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
@@ -415,15 +477,6 @@ export function GlobalChat() {
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="text-gray-400 hover:text-orange-400 h-8 w-8 p-0"
-                onClick={() => setIsMinimized(!isMinimized)}
-              >
-                <Minimize2 className="w-5 h-5" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
                 className="text-gray-400 hover:text-red-400 h-8 w-8 p-0"
                 onClick={() => setIsOpen(false)}
               >
@@ -431,9 +484,9 @@ export function GlobalChat() {
               </Button>
             </div>
           </div>
+          {realtimeStatus!=='connected'&&<div role="status" className="mt-1 text-[10px] font-mono text-amber-400">{realtimeStatus==='reconnecting'||realtimeStatus==='connecting'?'RECONNECTING SECURE CHANNEL…':'SECURE CHANNEL OFFLINE — USING FALLBACK'}</div>}
         </CardHeader>
 
-        {!isMinimized && (
           <CardContent className="flex-1 p-0 flex flex-col">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
               <TabsList className="grid w-full grid-cols-2 bg-black/40 border-b border-orange-900/20 rounded-none">
@@ -450,7 +503,7 @@ export function GlobalChat() {
                   // Chat View
                   <div className="flex-1 flex flex-col">
                     <div className="p-3 border-b border-orange-900/20 bg-black/20">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center space-x-2">
                           <Button
                             variant="ghost"
@@ -464,6 +517,7 @@ export function GlobalChat() {
                             {chatRooms.find(room => room.id === selectedChat)?.name}
                           </span>
                         </div>
+                        {selectedPartyState&&<Button type="button" size="sm" variant="outline" className="h-7 border-orange-900/40 px-2 text-[10px] font-mono text-orange-300" disabled={partyActionBusy||selectedPartyState.disabled} onClick={()=>void handlePartyAction()} title={selectedPartyState.disabled?selectedPartyState.label:undefined}><Users className="mr-1 size-3"/>{partyActionBusy?'LOADING…':selectedPartyState.label}</Button>}
                       </div>
                     </div>
 
@@ -603,7 +657,6 @@ export function GlobalChat() {
               </TabsContent>
             </Tabs>
           </CardContent>
-        )}
       </Card>
     </div>,
     document.body,

@@ -265,7 +265,6 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
         </div>
 
         <div className="max-w-4xl mx-auto">
-          <PartyPanel/>
           {optionsError && (
             <Alert className="mb-6 border-red-700/50 bg-red-950/70 text-red-100">
               <AlertTriangle className="h-4 w-4" />
@@ -293,10 +292,11 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
           )}
 
           <Card className="bg-black/80 border-orange-900/30 backdrop-blur-sm">
-            <CardHeader className="text-center border-b border-orange-900/20">
-              <CardTitle className="text-green-400 font-mono tracking-wide">
+            <CardHeader className="relative flex flex-col gap-3 border-b border-orange-900/20 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle className="text-center text-green-400 font-mono tracking-wide sm:text-left">
                 SECTOR NINE MATCHMAKING
               </CardTitle>
+              <PartyPanel/>
             </CardHeader>
             <CardContent className="p-8">
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">

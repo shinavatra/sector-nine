@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from 'react';
 import { authAPI, friendsAPI, getSessionToken, logFrontendAuthEvent, presenceAPI, SESSION_IDENTITY_CHANGED_EVENT, userAPI } from '../utils/api';
+import{subscribeRealtime,type RealtimeStatus}from'../utils/realtime'
 const defaultAvatar = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%230b0b0b"/%3E%3Ctext x="50" y="68" text-anchor="middle" font-size="62" fill="%23fb923c"%3E%CE%BB%3C/text%3E%3C/svg%3E';
 
 // =====================================================
@@ -233,21 +234,28 @@ export function UserProvider({ children }: { children: ReactNode }) {
     setOnlineFriends([]);
   }, []);
 
+  const [presenceRealtimeStatus,setPresenceRealtimeStatus]=useState<RealtimeStatus>('disconnected')
+  useEffect(()=>{if(!user)return;return subscribeRealtime(event=>{if(event.type==='presence.changed'||event.type==='presence.snapshot')void refreshOnlineFriends().catch(()=>undefined)},setPresenceRealtimeStatus)},[user?.id,refreshOnlineFriends])
+
   useEffect(() => {
     if (!user) return;
     let active = true;
+    let lastActivity=Date.now();
+    const noteActivity=()=>{lastActivity=Date.now()}
     const poll = async () => { if (active) await refreshOnlineFriends().catch(() => undefined); };
-    const heartbeat = async () => { if (active) await presenceAPI.heartbeat().catch(() => undefined); };
+    const heartbeat = async () => { if (active) await presenceAPI.heartbeat(document.visibilityState==='visible'&&Date.now()-lastActivity<60000).catch(() => undefined); };
     void poll();
     void heartbeat();
-    const presenceInterval = window.setInterval(poll, 15000);
-    const heartbeatInterval = window.setInterval(heartbeat, 90000);
+    const presenceInterval = presenceRealtimeStatus==='connected'?null:window.setInterval(poll, 15000);
+    const heartbeatInterval = window.setInterval(heartbeat, 45000);
+    window.addEventListener('pointerdown',noteActivity,{passive:true});window.addEventListener('keydown',noteActivity);window.addEventListener('focus',noteActivity);document.addEventListener('visibilitychange',noteActivity)
     return () => {
       active = false;
-      window.clearInterval(presenceInterval);
+      if(presenceInterval!==null)window.clearInterval(presenceInterval);
       window.clearInterval(heartbeatInterval);
+      window.removeEventListener('pointerdown',noteActivity);window.removeEventListener('keydown',noteActivity);window.removeEventListener('focus',noteActivity);document.removeEventListener('visibilitychange',noteActivity)
     };
-  }, [refreshOnlineFriends, user?.id]);
+  }, [refreshOnlineFriends, user?.id,presenceRealtimeStatus]);
 
   useEffect(() => {
     const initUser = async () => {
