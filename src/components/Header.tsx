@@ -35,18 +35,34 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
   const hasPlayerProgression = showPlayerProgression(user);
   
   const routeFor = (page: string) => ({ hub: '/hub', lobby: '/matchmaking', tournament: '/tournaments', stats: '/stats', store: '/store', notifications: '/notifications', profile: '/profile', discovery:'/players', achievements:'/achievements', configuration: '/configuration' }[page] || `/${page}`);
+  const navigateFromHeader = React.useCallback((page: string) => {
+    setMobileOpen(false);
+    setNotificationOpen(false);
+    setAvatarMenuOpen(false);
+    if (onNavigate) {
+      onNavigate(page);
+      return;
+    }
+    window.location.assign(routeFor(page));
+  }, [onNavigate]);
   const follow = (event: React.MouseEvent<HTMLAnchorElement>, page: string) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    setMobileOpen(false);
-    setAvatarMenuOpen(false);
-    onNavigate?.(page);
+    navigateFromHeader(page);
+  };
+  const handleNotificationOpenChange = (open: boolean) => {
+    setNotificationOpen(open);
+    if (open) setAvatarMenuOpen(false);
+  };
+  const handleAvatarMenuOpenChange = (open: boolean) => {
+    setAvatarMenuOpen(open);
+    if (open) setNotificationOpen(false);
   };
   React.useEffect(() => setMobileOpen(false), [currentPage]);
   const loadRecentNotifications=React.useCallback(async()=>{if(!user)return;setNotificationsLoading(true);try{const response:any=await notificationsAPI.getNotifications({page:1,pageSize:5,filter:'all'});setRecentNotifications(Array.isArray(response?.notifications)?response.notifications:[])}finally{setNotificationsLoading(false)}},[user?.id]);
   React.useEffect(()=>{if(notificationOpen)void loadRecentNotifications()},[notificationOpen,loadRecentNotifications]);
   React.useEffect(()=>subscribeToNotificationChanges(()=>{if(notificationOpen)void loadRecentNotifications()}),[notificationOpen,loadRecentNotifications]);
-  const openNotification=async(item:any)=>{if(!item.read){const result:any=await notificationsAPI.markAsRead(String(item.id));notifyNotificationsChanged(result.unreadCount)}setNotificationOpen(false);const path=typeof item.action_path==='string'?item.action_path:'';if(path==='/store')onNavigate?.('store');else if(path==='/vip')onNavigate?.('vip-subscription');else if(path==='/matchmaking')onNavigate?.('lobby');else if(item.type==='friend_request')onNavigate?.('configuration');else onNavigate?.('notifications')};
+  const openNotification=async(item:any)=>{if(!item.read){const result:any=await notificationsAPI.markAsRead(String(item.id));notifyNotificationsChanged(result.unreadCount)}const path=typeof item.action_path==='string'?item.action_path:'';if(path==='/store')navigateFromHeader('store');else if(path==='/vip')navigateFromHeader('vip-subscription');else if(path==='/matchmaking')navigateFromHeader('lobby');else if(item.type==='friend_request')navigateFromHeader('configuration');else navigateFromHeader('notifications')};
   const navItems = [
     { id: 'hub', label: 'HUB' }, { id: 'lobby', label: 'MATCHMAKING' },
     { id: 'stats', label: 'STATS' }, { id: 'tournament', label: 'TOURNAMENTS' },
@@ -107,9 +123,20 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
           </nav>
 
           <div className="header-actions flex items-center justify-end space-x-3">
-            <DropdownMenu open={notificationOpen} onOpenChange={setNotificationOpen}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Notifications" className="text-gray-300 hover:bg-orange-900/10 hover:text-orange-400"><span className="relative block"><Bell className="size-5" />{notificationUnreadCount>0&&<span className="absolute -right-2 -top-2 min-w-4 rounded-full bg-red-500 px-1 text-center text-[10px] font-bold leading-4 text-white">{notificationUnreadCount>99?'99+':notificationUnreadCount}</span>}</span></Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-[min(92vw,24rem)] border-orange-900/30 bg-[#0b0b0d] p-2"><div className="flex items-center justify-between px-2 py-2"><span className="font-mono text-sm text-orange-300">RECENT NOTIFICATIONS</span><Badge variant="outline">{notificationUnreadCount} unread</Badge></div><DropdownMenuSeparator className="bg-orange-900/20"/>{notificationsLoading?<p className="p-4 text-center text-sm text-gray-500">Loading…</p>:recentNotifications.length?recentNotifications.map(item=><DropdownMenuItem key={item.id} onSelect={()=>void openNotification(item)} className="mb-1 block cursor-pointer rounded border border-orange-900/10 p-3"><div className="flex items-start justify-between gap-3"><span className="font-mono text-xs text-orange-300">{item.title}</span>{!item.read&&<span className="mt-1 size-2 shrink-0 rounded-full bg-orange-400"/>}</div><p className="mt-1 line-clamp-2 text-xs text-gray-400">{item.message}</p></DropdownMenuItem>):<p className="p-4 text-center text-sm text-gray-500">No notifications.</p>}<DropdownMenuSeparator className="bg-orange-900/20"/><DropdownMenuItem onSelect={()=>{setNotificationOpen(false);onNavigate?.('notifications')}} className="justify-center font-mono text-xs text-orange-300">VIEW ALL NOTIFICATIONS</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+            <DropdownMenu open={notificationOpen} onOpenChange={handleNotificationOpenChange} modal={false}>
+              <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" aria-label="Notifications" aria-expanded={notificationOpen} className="text-gray-300 hover:bg-orange-900/10 hover:text-orange-400"><span className="relative block"><Bell className="size-5" />{notificationUnreadCount>0&&<span className="absolute -right-2 -top-2 min-w-4 rounded-full bg-red-500 px-1 text-center text-[10px] font-bold leading-4 text-white">{notificationUnreadCount>99?'99+':notificationUnreadCount}</span>}</span></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" sideOffset={8} collisionPadding={8} className="z-[60] w-80 max-w-[calc(100vw-1rem)] overflow-hidden border-orange-900/30 bg-[#0b0b0d] p-2">
+                <div className="flex items-center justify-between gap-3 px-2 py-2"><span className="font-mono text-sm text-orange-300">RECENT NOTIFICATIONS</span><Badge variant="outline" className="shrink-0">{notificationUnreadCount} unread</Badge></div>
+                <DropdownMenuSeparator className="bg-orange-900/20"/>
+                <div className="max-h-72 overflow-y-auto overscroll-contain py-1">
+                  {notificationsLoading?<p className="px-3 py-6 text-center text-sm text-gray-500">Loading…</p>:recentNotifications.length?recentNotifications.map(item=><DropdownMenuItem key={item.id} onSelect={()=>void openNotification(item)} className="mb-1 block cursor-pointer rounded border border-orange-900/10 p-3"><div className="flex items-start justify-between gap-3"><span className="font-mono text-xs text-orange-300">{item.title}</span>{!item.read&&<span className="mt-1 size-2 shrink-0 rounded-full bg-orange-400"/>}</div><p className="mt-1 line-clamp-2 text-xs text-gray-400">{item.message}</p></DropdownMenuItem>):<p className="px-3 py-6 text-center text-sm text-gray-500">No notifications.</p>}
+                </div>
+                <DropdownMenuSeparator className="bg-orange-900/20"/>
+                <DropdownMenuItem onSelect={()=>navigateFromHeader('notifications')} className="justify-center font-mono text-xs text-orange-300">VIEW ALL NOTIFICATIONS</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-            <DropdownMenu open={avatarMenuOpen} onOpenChange={setAvatarMenuOpen} modal={false}>
+            <DropdownMenu open={avatarMenuOpen} onOpenChange={handleAvatarMenuOpenChange} modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button type="button" variant="ghost" className="relative h-10 w-10 rounded-full hover:bg-orange-900/10" aria-label="Open account menu" aria-expanded={avatarMenuOpen}>
                   <div className="relative">
@@ -148,21 +175,21 @@ export function Header({ onNavigate, currentPage = 'hub', onLogout, isPremium = 
                   </div>
                 </div>
                 <DropdownMenuSeparator className="bg-orange-900/20" />
-                <DropdownMenuItem asChild
-                  className="text-gray-300 hover:text-orange-400 hover:bg-orange-900/10"
+                <DropdownMenuItem onSelect={() => navigateFromHeader('profile')}
+                  className="cursor-pointer text-gray-300 hover:text-orange-400 hover:bg-orange-900/10"
                 >
-                  <a href="/profile" onClick={(event) => follow(event, 'profile')}><User className="mr-2 h-4 w-4" /><span>PERSONNEL FILE</span></a>
+                  <User className="mr-2 h-4 w-4" /><span>PERSONNEL FILE</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild
-                  className="text-gray-300 hover:text-orange-400 hover:bg-orange-900/10"
+                <DropdownMenuItem onSelect={() => navigateFromHeader('configuration')}
+                  className="cursor-pointer text-gray-300 hover:text-orange-400 hover:bg-orange-900/10"
                 >
-                  <a href="/configuration" onClick={(event) => follow(event, 'configuration')}><Settings className="mr-2 h-4 w-4" /><span>CONFIGURATION</span></a>
+                  <Settings className="mr-2 h-4 w-4" /><span>CONFIGURATION</span>
                 </DropdownMenuItem>
-                {isAdmin && <DropdownMenuItem asChild className="text-gray-300 hover:text-orange-400 hover:bg-orange-900/10"><a href="/admin" onClick={(event) => follow(event, 'admin')}><Shield className="mr-2 h-4 w-4"/><span>ADMINISTRATION</span></a></DropdownMenuItem>}
+                {isAdmin && <DropdownMenuItem onSelect={() => navigateFromHeader('admin')} className="cursor-pointer text-gray-300 hover:text-orange-400 hover:bg-orange-900/10"><Shield className="mr-2 h-4 w-4"/><span>ADMINISTRATION</span></DropdownMenuItem>}
                 <DropdownMenuSeparator className="bg-orange-900/20" />
                 <DropdownMenuItem 
                   className="text-gray-300 hover:text-red-400 hover:bg-red-900/10"
-                  onClick={onLogout}
+                  onSelect={() => { setNotificationOpen(false); setAvatarMenuOpen(false); onLogout?.(); }}
                 >
                   <LogOut className="mr-2 h-4 w-4" />
                   <span>DISCONNECT</span>

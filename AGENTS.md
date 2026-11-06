@@ -25,3 +25,13 @@ For each substantial Sector Nine development task:
 - Never put credentials, tokens, private user data, environment files, or database dumps in Ruflo memory, Graphify, or Obsidian.
 - Do not repeat completed analysis or create audits, plans, or reports unless explicitly requested.
 - Do not commit, push, deploy, or run production migrations without explicit approval.
+
+## Automatic background resource workflow
+
+- Before launching local builds, test suites, Host Agent packaging, PostgreSQL E2E, Docker, or Ollama, read the current mode with `powershell -NoProfile -File scripts/background-dev/BackgroundDev.ps1 STATUS`.
+- Queue allowlisted heavy work with `BackgroundDev.ps1 QUEUE <task-id>` so it runs hidden in IDLE mode. In GAMING or PAUSED mode, perform only lightweight analysis/edits and defer heavy local work.
+- Discover jobs with `npm run bg:list`, queue one with `npm run bg:queue -- <task-id>`, inspect it with `npm run bg:job -- <queue-id>`, and wait for its real exit status with `npm run bg:wait -- <queue-id> [timeout-seconds]`.
+- Heavy jobs run sequentially. Build and test task IDs call the existing npm scripts; PostgreSQL E2E remains isolated, and Windows packaging retains its backup/checksum wrapper.
+- Do not invoke `local_ollama` while the reported mode is GAMING or PAUSED. In ACTIVE mode, keep it focused and low-risk; in IDLE it may run when resource headroom remains available.
+- Never bypass this controller for Docker, PostgreSQL E2E, parallel builds, or Host Agent packaging. Critical database, Git, migration, or deployment operations are not auto-queued and must finish transactionally once explicitly started.
+- The controller may reprioritize only PIDs recorded in its owned-worker registry. Never manage unrelated processes, games, user applications, Windows services, or unrelated Node/PostgreSQL instances.

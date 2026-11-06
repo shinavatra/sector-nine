@@ -119,11 +119,19 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
 
   useEffect(() => {
     let active=true;
+    let syncInFlight=false;
+    let syncQueued=false;
     const synchronize=async()=>{
+      if(syncInFlight){syncQueued=true;return}
+      syncInFlight=true;
       try{
         const state=await matchmakingAPI.sync();
         if(active)setQueue(state);
       }catch{/* Preserve the last confirmed backend state during transient failures. */}
+      finally{
+        syncInFlight=false;
+        if(active&&syncQueued){syncQueued=false;void synchronize()}
+      }
     };
     matchmakingAPI.getStatus().then(state=>active&&setQueue(state)).catch(()=>{});
     const unsubscribe=subscribeRealtime(event=>{if(event.type==='match.changed')void synchronize()});
@@ -382,7 +390,7 @@ export function Lobby({ onNavigate, onStartMatch, maintenanceMode = false }: Lob
                   </div>
 
                   <div className="grid gap-4">
-                    {modeRules.map(rule=><Card key={rule.rule_id} className={`border-2 ${selectedMod===rule.game_mode&&selectedTeamSize===Number(rule.team_size)?'border-orange-500 bg-orange-900/20':'border-gray-700 bg-gray-900/30'} ${!rule.matchmaking_available||!rule.server_pipeline_ready?'cursor-not-allowed opacity-60':'cursor-pointer'}`} onClick={()=>{if(rule.matchmaking_available&&rule.server_pipeline_ready){setSelectedMod(rule.game_mode);setSelectedTeamSize(Number(rule.team_size)||1)}}}><CardContent className="flex items-center justify-between gap-4 p-4"><div><h4 className="font-mono text-orange-300">{rule.display_name}</h4><p className="mt-1 text-xs text-gray-500">TEAM {rule.team_size??'TBD'} · TOTAL {rule.total_players??'TBD'} · PARTY {rule.max_party_size??'TBD'}</p>{rule.availability_reason&&<p className="mt-2 text-xs text-amber-300">{rule.availability_reason}</p>}</div><Badge variant="outline" className={rule.matchmaking_available&&rule.server_pipeline_ready?'border-green-700 text-green-300':'border-amber-700 text-amber-300'}>{rule.matchmaking_available&&rule.server_pipeline_ready?'AVAILABLE':'COMING SOON'}</Badge></CardContent></Card>)}
+                    {modeRules.map(rule=><Card key={rule.rule_id} className={`border-2 ${selectedMod===rule.game_mode&&selectedTeamSize===Number(rule.team_size)?'border-orange-500 bg-orange-900/20':'border-gray-700 bg-gray-900/30'} ${!rule.matchmaking_available||!rule.server_pipeline_ready?'cursor-not-allowed opacity-60':'cursor-pointer'}`} onClick={()=>{if(rule.matchmaking_available&&rule.server_pipeline_ready){setSelectedMod(rule.game_mode);setSelectedTeamSize(Number(rule.team_size)||1)}}}><CardContent className="flex items-center justify-between gap-4 p-4"><div><h4 className="font-mono text-orange-300">{rule.display_name}</h4><p className="mt-1 text-xs text-gray-500">TEAM {rule.team_size??'TBD'} · TOTAL {rule.total_players??'TBD'} · PARTY {rule.max_party_size??'TBD'}</p>{rule.availability_reason&&<p className="mt-2 text-xs text-amber-300">{rule.availability_reason}</p>}</div><Badge variant="outline" className={rule.matchmaking_available&&rule.server_pipeline_ready?'border-green-700 text-green-300':'border-amber-700 text-amber-300'}>{rule.matchmaking_available&&rule.server_pipeline_ready?'AVAILABLE':'UNAVAILABLE'}</Badge></CardContent></Card>)}
                     {!modeRules.length&&mods.map(mod => (
                       <Card
                         key={mod.id}

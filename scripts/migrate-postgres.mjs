@@ -23,7 +23,7 @@ if (baselineMode && !baselineThrough) throw new Error('--baseline requires --thr
 
 const pool = new Pool({
   connectionString,
-  ssl: /railway/i.test(connectionString) ? { rejectUnauthorized: false } : undefined,
+  ssl: /railway|proxy\.rlwy\.net/i.test(new URL(connectionString).hostname) ? { rejectUnauthorized: false } : undefined,
 })
 
 const checksum = source => crypto.createHash('sha256').update(source).digest('hex')

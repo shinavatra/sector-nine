@@ -1,0 +1,115 @@
+{
+  "pollSeconds": 7,
+  "idleAfterSeconds": 600,
+  "gamingCooldownSeconds": 30,
+  "idleStableSamples": 3,
+  "idleMaxCpuPercent": 50,
+  "pressureCpuPercent": 85,
+  "minimumIdleMemoryMb": 4096,
+  "pressureMemoryMb": 1536,
+  "idleMaxGpuPercent": 40,
+  "maxIdleHeavyWorkers": 1,
+  "gameProcesses": [
+    "hl", "hlds", "cstrike", "cs2", "cod4mp", "left4dead2",
+    "Marvel-Win64-Shipping", "RobloxPlayerBeta", "FortniteClient-Win64-Shipping",
+    "GTA5", "r5apex", "VALORANT-Win64-Shipping", "RocketLeague", "Overwatch"
+  ],
+  "tasks": {
+    "backend-build": {
+      "name": "Sector Nine backend build",
+      "workingDirectory": "D:\\keshaaa\\sector_nine_final",
+      "executable": "npm.cmd",
+      "arguments": ["run", "build:server"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "frontend-build": {
+      "name": "Sector Nine frontend build",
+      "workingDirectory": "D:\\keshaaa\\sector_nine_final",
+      "executable": "npm.cmd",
+      "arguments": ["run", "build"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "matchmaking-tests": {
+      "name": "Sector Nine matchmaking regressions",
+      "workingDirectory": "D:\\keshaaa\\sector_nine_final",
+      "executable": "npm.cmd",
+      "arguments": ["run", "test:hl1-lifecycle"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "host-agent-protocol-tests": {
+      "name": "Sector Nine Host Agent protocol tests",
+      "workingDirectory": "D:\\keshaaa\\sector_nine_final",
+      "executable": "npm.cmd",
+      "arguments": ["run", "test:host-agent"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "sector-nine-unit-tests": {
+      "name": "Sector Nine focused unit regressions",
+      "workingDirectory": "D:\\keshaaa\\sector_nine_final",
+      "executable": "powershell.exe",
+      "arguments": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "D:\\keshaaa\\sector_nine_final\\scripts\\background-dev\\Invoke-SectorNineTestSuite.ps1", "-Suite", "unit"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "sector-nine-integration-tests": {
+      "name": "Sector Nine integration regressions",
+      "workingDirectory": "D:\\keshaaa\\sector_nine_final",
+      "executable": "powershell.exe",
+      "arguments": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "D:\\keshaaa\\sector_nine_final\\scripts\\background-dev\\Invoke-SectorNineTestSuite.ps1", "-Suite", "integration"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "host-agent-build": {
+      "name": "Host Agent build",
+      "workingDirectory": "D:\\keshaaa\\sector-nine-host-agent",
+      "executable": "npm.cmd",
+      "arguments": ["run", "build"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "host-agent-typecheck": {
+      "name": "Host Agent typecheck",
+      "workingDirectory": "D:\\keshaaa\\sector-nine-host-agent",
+      "executable": "npm.cmd",
+      "arguments": ["run", "typecheck"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "host-agent-tests": {
+      "name": "Host Agent tests",
+      "workingDirectory": "D:\\keshaaa\\sector-nine-host-agent",
+      "executable": "npm.cmd",
+      "arguments": ["test"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "host-agent-package": {
+      "name": "Host Agent Windows package",
+      "workingDirectory": "D:\\keshaaa\\sector_nine_final",
+      "executable": "powershell.exe",
+      "arguments": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "D:\\keshaaa\\sector_nine_final\\scripts\\background-dev\\Build-HostAgentPackageSafe.ps1"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "postgres-e2e": {
+      "name": "Disposable PostgreSQL E2E",
+      "workingDirectory": "D:\\keshaaa\\sector_nine_final",
+      "executable": "powershell.exe",
+      "arguments": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "D:\\keshaaa\\sector_nine_final\\scripts\\background-dev\\Invoke-IsolatedPostgresE2E.ps1"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "postgres-schema-rehearsal": {
+      "name": "Railway backup schema reconciliation rehearsal",
+      "workingDirectory": "D:\\keshaaa\\sector_nine_final",
+      "executable": "powershell.exe",
+      "arguments": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "D:\\keshaaa\\sector_nine_final\\scripts\\background-dev\\Invoke-RailwaySchemaRehearsal.ps1"],
+      "class": "heavy",
+      "idleOnly": true
+    }
+  }
+}
