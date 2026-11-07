@@ -8,3 +8,5 @@ scripts/backups/
 .DS_Store
 Thumbs.db
 graphify-out/
+test-results/
+playwright-report/

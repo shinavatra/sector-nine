@@ -80,6 +80,7 @@
     "bg:queue": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/background-dev/BackgroundDev.ps1 QUEUE",
     "bg:job": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/background-dev/BackgroundDev.ps1 JOB",
     "bg:wait": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/background-dev/BackgroundDev.ps1 WAIT",
+    "test:browser:e2e": "playwright test --config=playwright.config.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",

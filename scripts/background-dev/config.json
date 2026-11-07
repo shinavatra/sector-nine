@@ -110,6 +110,22 @@
       "arguments": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "D:\\keshaaa\\sector_nine_final\\scripts\\background-dev\\Invoke-RailwaySchemaRehearsal.ps1"],
       "class": "heavy",
       "idleOnly": true
+    },
+    "playwright-setup": {
+      "name": "Playwright Chromium setup",
+      "workingDirectory": "D:\\keshaaa\\sector_nine_final",
+      "executable": "powershell.exe",
+      "arguments": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "D:\\keshaaa\\sector_nine_final\\scripts\\background-dev\\Install-PlaywrightChromium.ps1"],
+      "class": "heavy",
+      "idleOnly": true
+    },
+    "playwright-e2e": {
+      "name": "Deployed Sector Nine Playwright E2E",
+      "workingDirectory": "D:\\keshaaa\\sector_nine_final",
+      "executable": "powershell.exe",
+      "arguments": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "D:\\keshaaa\\sector_nine_final\\scripts\\background-dev\\Invoke-DeployedPlaywrightE2E.ps1"],
+      "class": "heavy",
+      "idleOnly": true
     }
   }
 }

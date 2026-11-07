@@ -32,7 +32,7 @@ $runnerSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Run-Backgroun
 Assert-Equal ([bool]($controllerSource -notmatch 'Stop-Process|Suspend-Process')) $true 'controller never terminates or suspends workers'
 Assert-Equal ([bool]($runnerSource -notmatch 'Stop-Process|Suspend-Process')) $true 'runner never terminates or suspends workers'
 Assert-Equal ([int]$config.maxIdleHeavyWorkers) 1 'heavy jobs run sequentially'
-foreach ($taskId in @('frontend-build','backend-build','matchmaking-tests','host-agent-protocol-tests','sector-nine-unit-tests','sector-nine-integration-tests','host-agent-build','host-agent-typecheck','host-agent-tests','host-agent-package','postgres-e2e','postgres-schema-rehearsal')) {
+foreach ($taskId in @('frontend-build','backend-build','matchmaking-tests','host-agent-protocol-tests','sector-nine-unit-tests','sector-nine-integration-tests','host-agent-build','host-agent-typecheck','host-agent-tests','host-agent-package','postgres-e2e','postgres-schema-rehearsal','playwright-setup','playwright-e2e')) {
   Assert-Equal ($null -ne $config.tasks.PSObject.Properties[$taskId]) $true "allowlisted task $taskId"
 }
 $package = Get-Content -Raw -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent | Split-Path -Parent) 'package.json') | ConvertFrom-Json
